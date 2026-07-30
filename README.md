@@ -9,11 +9,15 @@ A local-first Markdown note-taking desktop app built with Tauri 2, React, TypeSc
 - Create and edit notes with autosave
 - YAML front matter for multiple tags
 - Sidebar views for All Notes, Untagged, and individual tags
-- Local search across note titles and tags
+- Local full-text search across titles, filenames, tags, and note bodies, with excerpts
 - Edit/Preview toggle with `Cmd+E` on macOS and `Ctrl+E` on Windows/Linux
-- GitHub-flavored Markdown Preview (tables, task lists, code blocks, links)
+- GitHub-flavored Markdown Preview (tables, task lists, code blocks, links, and relative images)
+- Rename, duplicate, pin, and safely move notes to the library-local trash
+- Quick switcher, split editor/preview, wiki links and backlinks
+- External-change conflict resolution and automatic index refresh
+- Responsive sidebar, keyboard focus shortcuts, and system light/dark appearance
 
-The broader product roadmap is documented in [PRODUCT_SPEC.md](PRODUCT_SPEC.md). Features such as backlinks, templates, version history, external-change conflict handling, and full body-text indexing are not implemented yet.
+The broader product roadmap is documented in [PRODUCT_SPEC.md](PRODUCT_SPEC.md). Templates, import/export, and version-history workflows remain future roadmap work.
 
 ## Prerequisites (Windows)
 
