@@ -1001,6 +1001,7 @@ pub fn run() {
                 // are necessary on macOS for the space around the capture card
                 // to show the app beneath it instead of an opaque rectangle.
                 .background_color(Color(0, 0, 0, 0))
+                .shadow(false)
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .center()
