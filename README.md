@@ -1,109 +1,92 @@
 # Margin
 
-Margin is a calm, local-first home for Markdown notes. Pick a folder, write in ordinary `.md` files, and keep using those files wherever you like.
+**A native, local-first home for Markdown notes.** Margin turns an ordinary folder of `.md` files into a focused workspace—without locking your writing into an account, database, or proprietary format.
 
-[Get the latest release](https://github.com/mikestanaszak/margin/releases/latest) · [See what’s planned](PRODUCT_SPEC.md)
+[Get Margin](https://github.com/mikestanaszak/margin/releases/latest) · [Feature list](PRODUCT_SPEC.md)
 
-![Margin preview workspace](docs/images/preview-workspace.png)
+<p align="center">
+  <img src="docs/images/workspace-current.png" alt="Margin showing a nested folder workspace and a project note in Preview" width="760" />
+</p>
 
-## Install Margin
+## Made for everyday notes
 
-### macOS
+- **Keep your files.** A Margin library is just a folder of UTF-8 Markdown files. Open the same notes in Finder, Explorer, or another editor whenever you want.
+- **Stay oriented.** Browse All notes, Favorites, Trash, and a real nested folder tree. Choosing a parent folder keeps its notes visibly grouped by subfolder.
+- **Write without the Markdown tax.** Work in Preview, Edit, or Split view; use the outline to jump between headings; and use a selection toolbar for common formatting.
+- **Make Preview useful.** Check off tasks directly in Preview, follow Markdown and wiki links, open web links in your default browser, and view highlighted code, images, and tables.
+- **Edit tables like a person.** Hover a Preview table to open its editor, then add, remove, reorder, and fill rows or columns without hand-editing pipes.
+- **Keep filenames understandable.** The first top-level heading becomes the note title and filename, so the folder still makes sense outside Margin.
 
-Install the latest signed release with one command:
+## A calmer way to manage a library
+
+Margin is designed around the little things that make a note app pleasant to live in:
+
+- Create, rename, nest, delete, and resize folders; move notes with a right-click menu.
+- Favorite notes, send them to Trash, restore them, or permanently delete them when you are sure.
+- Search the whole library from the top bar, and use internal Markdown links to open a note in its deepest folder.
+- See linked-from references and an optional heading-only outline without cluttering the editor.
+- Open a note’s location directly in Finder or File Explorer.
+- Use light or dark appearance, following the system by default, and review or change shortcuts in Settings.
+- Keep editing position stable while autosave writes safely in the background.
+
+## Catch thoughts before they disappear
+
+Press **Ctrl+Alt+Shift+Space** on Windows or **Command+Option+Shift+Space** on macOS to open Quick Capture from anywhere. It remembers the library and destination you choose, understands basic list continuation while you type, and saves with **Ctrl/Command+Enter**.
+
+Later, import captures into today’s daily note, append them to any existing note, create a separate note, or choose a folder. This is handy for a daily work log that eventually becomes part of a weekly or yearly record.
+
+<p align="center">
+  <img src="docs/images/quick-capture-current.png" alt="Margin Quick Capture window" width="520" />
+</p>
+
+## Install
+
+### macOS (Apple Silicon)
+
+Install the latest signed release with one command. An existing Margin app is replaced; your notes remain in the library you chose.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mikestanaszak/margin/main/install.sh | bash
 ```
 
-It detects Apple Silicon, verifies the download, and installs **Margin.app** in `/Applications`. If Margin is already there, it safely replaces that app bundle with the new version.
-
-To choose a version or install only for your user:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/mikestanaszak/margin/main/install.sh | MARGIN_VERSION=0.1.0 MARGIN_INSTALL_DIR="$HOME/Applications" bash
-```
-
 ### Windows
 
-Run this in PowerShell to install the latest Windows release:
+Run this in PowerShell. It replaces an existing Margin installation and leaves your notes alone.
 
 ```powershell
 irm https://raw.githubusercontent.com/mikestanaszak/margin/main/install.ps1 | iex
 ```
 
-It closes a running Margin process and replaces an existing Margin installation. You can also download the Windows installer from the [latest release](https://github.com/mikestanaszak/margin/releases/latest). Your notes stay in the folder you choose.
-
-### Linux
-
-Linux packaging is not published yet. You can still run Margin from source—see [Build from source](#build-from-source).
-
-## A simpler Markdown workspace
-
-- Your notes are normal, portable Markdown files—no database or account required.
-- Browse folders, favorites, all notes, and trash without losing your place.
-- Write in Edit, Preview, or Split view. Preview supports tables, syntax-highlighted code, links, and images.
-- Click task checkboxes directly in Preview; Margin saves the change back to the file.
-- Edit Markdown tables with rows and columns instead of hand-aligning pipes.
-- Use a heading as a note title and filename, so files make sense in Finder and Explorer.
-- Keep up with a familiar light or dark appearance, following your system by default.
-
-### Quick capture
-
-Press **Ctrl+Alt+Shift+Space** on Windows/Linux or **Command+Option+Shift+Space** on macOS to bring up a compact capture window—even when Margin is in the background. Type, press **Ctrl+Enter** (or **Command+Enter**) to save, and import captures into a daily note, an existing note, or their own file when you are ready.
-
-![Margin quick capture](docs/images/quick-capture.png)
-
-## Working with notes
-
-Choose a folder to use as your library, then create or open any Markdown note inside it. Margin indexes nested folders automatically and refreshes when files change outside the app.
-
-Use the top search to find text across your library. Internal Markdown links and wiki links open the linked note and reveal its folder. The outline panel is available when you need a quick way to move between headings.
+You can also download an installer from the [latest release](https://github.com/mikestanaszak/margin/releases/latest). Linux packages are not published yet.
 
 ## Shortcuts
 
-Margin uses **Command** on macOS and **Control** on Windows/Linux for its usual in-app shortcuts.
+Margin uses **Command** on macOS and **Control** on Windows for usual in-app shortcuts.
 
 | Action | Shortcut |
 | --- | --- |
-| Edit the current note | Cmd/Ctrl + E |
+| Edit the open note | Cmd/Ctrl + E |
 | Save now | Cmd/Ctrl + S |
 | Search notes | Cmd/Ctrl + K |
-| Open quick capture | Cmd/Ctrl + Alt + Shift + Space |
-| Save a quick capture | Cmd/Ctrl + Enter |
-| Close quick capture | Escape |
+| Open Quick Capture | Cmd/Ctrl + Alt + Shift + Space |
+| Save Quick Capture | Cmd/Ctrl + Enter |
+| Close a panel or capture | Escape |
 
-Open **Settings** in Margin to see and change supported shortcuts, choose the default quick-capture destination, select a theme, and review available code-block languages.
+Settings includes the full configurable shortcut list, the quick-capture destination, theme controls, and supported code-block languages.
 
-## Updates
+## Updates and privacy
 
-Margin checks for signed updates once a day and shows an unobtrusive badge in Settings when one is ready. You decide whether to download it; update packages are verified before installation.
+Margin checks for signed updates daily and shows an unobtrusive notice in Settings when one is ready. Downloads are verified before installation.
 
-## Your data stays yours
-
-Margin never stores notes in a proprietary database. A library is simply a folder of UTF-8 Markdown files, including files you created before using Margin. You can open and edit the same files in other Markdown tools at any time.
+Your writing stays in the folder you chose. Margin does not require an account and does not put notes in a proprietary database.
 
 ## Build from source
 
-Margin is built with Tauri 2, React, TypeScript, and Rust. To run it locally, install Node.js LTS, pnpm, Rust with the MSVC toolchain (on Windows), and the Visual Studio C++ build tools with a Windows SDK.
-
-From the repository root:
+Margin is built with Tauri, React, TypeScript, and Rust. With Node.js, pnpm, Rust, and the platform build tools installed:
 
 ```cmd
 pnpm install
-pnpm run dev:desktop
+pnpm tauri dev
 ```
 
-To create a production package:
-
-```cmd
-pnpm tauri build
-```
-
-To run the automated frontend and native suites:
-
-```cmd
-pnpm test:all
-```
-
-On Windows, run Cargo commands from an **x64 Native Tools Command Prompt for VS 2022** if the linker is unavailable. See [TESTING.md](TESTING.md) for the example library, coverage matrix, and native smoke checklist. For the product scope and roadmap, see [PRODUCT_SPEC.md](PRODUCT_SPEC.md).
+For more development and testing details, see [TESTING.md](TESTING.md).
