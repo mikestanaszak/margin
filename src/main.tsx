@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import "./styles.css";
 
@@ -10,6 +11,7 @@ type NoteSummary = { path: string; title: string; tags: string[]; updated: numbe
 type NoteDocument = NoteSummary & { body: string; created?: string; updated_at?: string };
 type Filter = { type: "all" | "untagged" | "tag"; tag?: string };
 type Conflict = { disk: NoteDocument; mine: NoteDocument };
+type MarkdownNode = { type?: string; lang?: string | null; children?: MarkdownNode[] };
 const libraryKey = "markdown-notes.library-path";
 const pinnedKey = "markdown-notes.pinned";
 const shortcut = navigator.platform.toLowerCase().includes("mac") ? "⌘" : "Ctrl+";
@@ -27,6 +29,18 @@ function App() {
   const [sidebarHidden, setSidebarHidden] = useState(false); const [conflict, setConflict] = useState<Conflict | null>(null);
   const [renameOpen, setRenameOpen] = useState(false); const [pinned, setPinned] = useState<string[]>(() => JSON.parse(localStorage.getItem(pinnedKey) || "[]"));
   const baseline = useRef<NoteDocument | null>(null); const editor = useRef<HTMLTextAreaElement>(null);
+  const transformSelectedLines = (transform: (line: string) => string) => {
+    const element = editor.current;
+    if (!note || !element) return;
+    const start = element.selectionStart; const end = element.selectionEnd;
+    const lineStart = note.body.lastIndexOf("\n", start - 1) + 1;
+    const nextBreak = note.body.indexOf("\n", Math.max(end - 1, lineStart));
+    const lineEnd = nextBreak === -1 ? note.body.length : nextBreak;
+    const selected = note.body.slice(lineStart, lineEnd);
+    const changed = selected.split("\n").map(transform).join("\n");
+    setNote({ ...note, body: `${note.body.slice(0, lineStart)}${changed}${note.body.slice(lineEnd)}` });
+    window.requestAnimationFrame(() => { element.focus(); element.setSelectionRange(start, end + changed.length - selected.length); });
+  };
 
   const refresh = async (path = library) => { if (!path) return; try { const result = await invoke<NoteSummary[]>("load_library", { libraryPath: path }); setNotes(result); setStatus(`${result.length} ${result.length === 1 ? "note" : "notes"}`); } catch (error) { setStatus(`Could not read library: ${String(error)}`); } };
   useEffect(() => { void refresh(); }, [library]);
@@ -57,7 +71,8 @@ function App() {
 }
 
 function excerpt(item: NoteSummary, query: string) { const text = item.searchable_text.replace(/\s+/g, " "); const at = text.indexOf(query.toLowerCase()); return at < 0 ? "" : `${at > 45 ? "…" : ""}${text.slice(Math.max(0, at - 45), at + query.length + 90)}${at + query.length + 90 < text.length ? "…" : ""}`; }
-function MarkdownPreview({ markdown, notePath, notes, onOpen }: { markdown: string; notePath: string; notes: NoteSummary[]; onOpen: (path: string) => void }) { const resolved = markdown.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, title, label) => `[${label || title}](note:${encodeURIComponent(title.trim())})`); const directory = notePath.replace(/[\\/][^\\/]+$/, ""); const localAsset = (src?: string) => !src || /^(https?:|data:|asset:)/i.test(src) ? src : convertFileSrc(`${directory}/${src}`); return <article className="preview"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ href, children }) => { if (href?.startsWith("note:")) { const title = decodeURIComponent(href.slice(5)); const target = notes.find(item => item.title.toLowerCase() === title.toLowerCase()); return <a href={href} onClick={event => { event.preventDefault(); if (target) onOpen(target.path); }}>{children}</a>; } return <a href={href} target="_blank" rel="noreferrer">{children}</a>; }, img: ({ src, alt }) => <img src={localAsset(src)} alt={alt || ""} /> }}>{resolved}</ReactMarkdown></article>; }
+function MarkdownPreview({ markdown, notePath, notes, onOpen }: { markdown: string; notePath: string; notes: NoteSummary[]; onOpen: (path: string) => void }) { const resolved = markdown.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, title, label) => `[${label || title}](note:${encodeURIComponent(title.trim())})`); const directory = notePath.replace(/[\\/][^\\/]+$/, ""); const localAsset = (src?: string) => !src || /^(https?:|data:|asset:)/i.test(src) ? src : convertFileSrc(`${directory}/${src}`); return <article className="preview"><ReactMarkdown remarkPlugins={[remarkGfm, normalizeCodeLanguages]} rehypePlugins={[rehypeHighlight]} components={{ a: ({ href, children }) => { if (href?.startsWith("note:")) { const title = decodeURIComponent(href.slice(5)); const target = notes.find(item => item.title.toLowerCase() === title.toLowerCase()); return <a href={href} onClick={event => { event.preventDefault(); if (target) onOpen(target.path); }}>{children}</a>; } return <a href={href} target="_blank" rel="noreferrer">{children}</a>; }, img: ({ src, alt }) => <img src={localAsset(src)} alt={alt || ""} /> }}>{resolved}</ReactMarkdown></article>; }
+function normalizeCodeLanguages() { return (tree: MarkdownNode) => { const visit = (node: MarkdownNode) => { if (node.type === "code" && node.lang) node.lang = node.lang.toLowerCase(); node.children?.forEach(visit); }; visit(tree); }; }
 function QuickSwitcher({ notes, onClose, onSelect }: { notes: NoteSummary[]; onClose: () => void; onSelect: (path: string) => void }) { const [value, setValue] = useState(""); const matches = notes.filter(note => note.searchable_text.includes(value.toLowerCase())).slice(0, 10); return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal switcher" onMouseDown={event => event.stopPropagation()}><input autoFocus placeholder="Jump to a note…" value={value} onChange={event => setValue(event.target.value)} onKeyDown={event => { if (event.key === "Escape") onClose(); if (event.key === "Enter" && matches[0]) onSelect(matches[0].path); }} />{matches.map(note => <button key={note.path} onClick={() => onSelect(note.path)}><strong>{note.title}</strong><small>{note.tags.map(tag => `#${tag}`).join(" ")}</small></button>)}</section></div>; }
 function RenameDialog({ name, onClose, onSave }: { name: string; onClose: () => void; onSave: (name: string) => void }) { const [value, setValue] = useState(name); return <div className="modal-backdrop"><form className="modal" onSubmit={event => { event.preventDefault(); onSave(value); }}><h2>Rename note</h2><input autoFocus value={value} onChange={event => setValue(event.target.value)} /><div><button type="button" onClick={onClose}>Cancel</button><button className="primary">Rename</button></div></form></div>; }
 function ConflictDialog({ conflict, onChoose }: { conflict: Conflict; onChoose: (choice: "mine" | "disk") => void }) { return <div className="modal-backdrop"><section className="modal conflict"><h2>This note changed outside the app</h2><p>Your unsaved edits have not been overwritten. Choose which version to keep.</p><details><summary>Compare versions</summary><div className="compare"><pre>{conflict.mine.body}</pre><pre>{conflict.disk.body}</pre></div></details><div><button onClick={() => onChoose("disk")}>Use disk version</button><button className="primary" onClick={() => onChoose("mine")}>Keep my edits</button></div></section></div>; }
