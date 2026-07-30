@@ -56,6 +56,8 @@ describe("Markdown preview", () => {
       "",
       "Open [[Café ideas|the café]] or [the same note](../Personal/Caf%C3%A9%20ideas.md#ideas).",
       "",
+      "Copy `value with spaces` as one token.",
+      "",
       "Visit [Margin](https://example.com).",
       "",
       "![Diagram](diagram.png)",
@@ -88,6 +90,8 @@ describe("Markdown preview", () => {
     expect(onOpen).toHaveBeenNthCalledWith(2, notes[1]);
     fireEvent.click(screen.getByRole("link", { name: "Margin" }));
     expect(openUrl).toHaveBeenCalledWith("https://example.com");
+    fireEvent.doubleClick(screen.getByText("value with spaces", { selector: "code" }));
+    expect(window.getSelection()?.toString()).toBe("value with spaces");
     expect(screen.getByRole("img", { name: "Diagram" })).toHaveAttribute(
       "src",
       "asset://C:/Notes/Work/diagram.png",
