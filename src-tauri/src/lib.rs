@@ -4,7 +4,7 @@ use std::{fs, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
 use walkdir::WalkDir;
 
 #[derive(Clone, Serialize, Deserialize)]
-struct NoteSummary { path: String, title: String, tags: Vec<String>, updated: u64, searchable_text: String }
+struct NoteSummary { path: String, title: String, tags: Vec<String>, updated: u64, searchable_text: String, excerpt: String }
 
 #[derive(Clone, Serialize, Deserialize)]
 struct NoteDocument {
@@ -59,6 +59,18 @@ fn title_from_body(body: &str, fallback: &str) -> String {
         .filter(|title| !title.is_empty()).unwrap_or_else(|| fallback.to_string())
 }
 
+fn note_excerpt(body: &str) -> String {
+    body.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with("```"))
+        .map(|line| line.trim_start_matches(|character: char| matches!(character, '>' | '-' | '*' | ' ')).trim())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(180)
+        .collect()
+}
+
 fn read_note_file(path: &Path) -> Result<NoteDocument, String> {
     let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
     let (front, body) = split_front_matter(&raw);
@@ -71,7 +83,7 @@ fn load_library(library_path: String) -> Result<Vec<NoteSummary>, String> {
     let mut notes = WalkDir::new(library_path).into_iter().filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file() && !entry.path().components().any(|part| part.as_os_str() == ".markdown-notes") && entry.path().extension().is_some_and(|ext| ext.eq_ignore_ascii_case("md")))
         .filter_map(|entry| read_note_file(entry.path()).ok())
-        .map(|note| NoteSummary { searchable_text: format!("{} {} {} {}", note.title, Path::new(&note.path).file_name().and_then(|v| v.to_str()).unwrap_or(""), note.tags.join(" "), note.body).to_lowercase(), path: note.path, title: note.title, tags: note.tags, updated: note.updated }).collect::<Vec<_>>();
+        .map(|note| NoteSummary { searchable_text: format!("{} {} {} {}", note.title, Path::new(&note.path).file_name().and_then(|v| v.to_str()).unwrap_or(""), note.tags.join(" "), note.body).to_lowercase(), excerpt: note_excerpt(&note.body), path: note.path, title: note.title, tags: note.tags, updated: note.updated }).collect::<Vec<_>>();
     notes.sort_by(|a, b| b.updated.cmp(&a.updated));
     Ok(notes)
 }
@@ -86,7 +98,7 @@ fn create_note(library_path: String) -> Result<NoteDocument, String> {
     let mut index = 0;
     let path = loop { let name = if index == 0 { "Untitled.md".to_string() } else { format!("Untitled-{}.md", index) }; let candidate = folder.join(name); if !candidate.exists() { break candidate; } index += 1; };
     let now = now_rfc3339();
-    let content = format!("---\ncreated: {}\nupdated: {}\n---\n\n# Untitled\n\n", now, now);
+    let content = format!("---\ntitle: Untitled\ncreated: {}\nupdated: {}\n---\n\n# Untitled\n\n", now, now);
     fs::write(&path, content).map_err(|e| e.to_string())?;
     read_note_file(&path)
 }
@@ -95,7 +107,13 @@ fn create_note(library_path: String) -> Result<NoteDocument, String> {
 fn save_note(note: NoteDocument) -> Result<NoteDocument, String> {
     let path = PathBuf::from(&note.path);
     let created = note.created.or_else(|| Some(now_rfc3339()));
-    let front = FrontMatter { title: Some(title_from_body(&note.body, &note.title)), tags: { let tags = normalize_tags(note.tags); if tags.is_empty() { None } else { Some(tags) } }, created, updated: Some(now_rfc3339()) };
+    let title = note.title.trim();
+    let front = FrontMatter {
+        title: Some(if title.is_empty() { title_from_body(&note.body, "Untitled") } else { title.to_string() }),
+        tags: { let tags = normalize_tags(note.tags); if tags.is_empty() { None } else { Some(tags) } },
+        created,
+        updated: Some(now_rfc3339()),
+    };
     let yaml = serde_yaml::to_string(&front).map_err(|e| e.to_string())?;
     let content = format!("---\n{}---\n\n{}", yaml, note.body);
     let temporary = path.with_extension("md.tmp");
