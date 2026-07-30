@@ -16,7 +16,7 @@ Install the latest signed release with one command:
 curl -fsSL https://raw.githubusercontent.com/mikestanaszak/margin/main/install.sh | bash
 ```
 
-It detects Apple Silicon or Intel, verifies the download, and installs **Margin.app** in `/Applications`.
+It detects Apple Silicon, verifies the download, and installs **Margin.app** in `/Applications`.
 
 To choose a version or install only for your user:
 

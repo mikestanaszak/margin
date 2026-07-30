@@ -30,7 +30,7 @@ trap cleanup EXIT
 [[ "$(uname -s)" == "Darwin" ]] || fail "this installer supports macOS only"
 case "$(uname -m)" in
   arm64) ARCHITECTURE="aarch64" ;;
-  x86_64) ARCHITECTURE="x64" ;;
+  x86_64) fail "Intel Macs are not currently supported by the Margin installer" ;;
   *) fail "unsupported Mac architecture: $(uname -m)" ;;
 esac
 
