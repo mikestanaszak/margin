@@ -104,7 +104,7 @@
   min-width: 0;
   flex-direction: column;
   gap: 0.25rem;
-  padding: 0.65rem 2.3rem 0.65rem 0.7rem;
+  padding: 0.65rem 5.8rem 0.65rem 0.7rem;
   border: 0;
   border-radius: inherit;
   background: transparent;
@@ -120,10 +120,19 @@
 .nr-note-tags { display: flex; min-width: 0; gap: 0.35rem; overflow: hidden; }
 .nr-note-tags > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nr-note-meta time { flex: none; }
-.nr-note-pin {
+.nr-note-actions {
   position: absolute;
   top: 0.48rem;
   right: 0.45rem;
+  display: flex;
+  gap: 0.12rem;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.nr-note-item:hover .nr-note-actions,
+.nr-note-item:focus-within .nr-note-actions,
+.nr-note-item.nr-is-active .nr-note-actions { opacity: 1; }
+.nr-note-pin {
   display: grid;
   width: 1.75rem;
   height: 1.75rem;

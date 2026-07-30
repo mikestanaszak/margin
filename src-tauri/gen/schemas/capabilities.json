@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capabilities for Markdown Notes","local":true,"windows":["main"],"permissions":["core:default","dialog:default"]}}
+{"default":{"identifier":"default","description":"Default capabilities for Margin","local":true,"windows":["main","capture"],"permissions":["core:default","dialog:default","global-shortcut:allow-register","global-shortcut:allow-unregister"]}}

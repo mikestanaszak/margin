@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities for Markdown Notes",
-  "windows": ["main"],
-  "permissions": ["core:default", "dialog:default"]
+  "description": "Default capabilities for Margin",
+  "windows": ["main", "capture"],
+  "permissions": ["core:default", "dialog:default", "global-shortcut:allow-register", "global-shortcut:allow-unregister"]
 }
