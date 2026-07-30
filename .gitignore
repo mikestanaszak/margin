@@ -5,3 +5,13 @@ vite.config.js
 vite.config.d.ts
 target/
 target-stale-*/
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.mobileprovision
+.DS_Store
+Thumbs.db

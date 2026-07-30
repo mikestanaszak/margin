@@ -2,6 +2,21 @@
   "name": "margin",
   "private": true,
   "version": "0.1.0",
+  "description": "A calm, local-first Markdown workspace.",
+  "homepage": "https://github.com/mikestanaszak/margin#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mikestanaszak/margin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mikestanaszak/margin/issues"
+  },
+  "keywords": [
+    "markdown",
+    "notes",
+    "tauri",
+    "local-first"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite",

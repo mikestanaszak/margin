@@ -1,177 +1,97 @@
 # Margin
 
-A local-first Markdown note-taking desktop app built with Tauri 2, React, TypeScript, and Rust. Notes remain ordinary `.md` files in a folder you choose.
+Margin is a calm, local-first home for Markdown notes. Pick a folder, write in ordinary `.md` files, and keep using those files wherever you like.
 
-## Features currently implemented
+[Get the latest release](https://github.com/mikestanaszak/margin/releases/latest) · [See what’s planned](PRODUCT_SPEC.md)
 
-- Choose and reopen a local notes library
-- Recursively discover Markdown files
-- Create and edit notes with autosave
-- YAML front matter for multiple tags
-- Sidebar views for All Notes, Untagged, and individual tags
-- Local full-text search across titles, filenames, tags, and note bodies, with excerpts
-- Edit/Preview toggle with `Cmd+E` on macOS and `Ctrl+E` on Windows/Linux
-- GitHub-flavored Markdown Preview (tables, task lists, code blocks, links, and relative images)
-- Rename, duplicate, pin, and safely move notes to the library-local trash
-- Quick switcher, split editor/preview, wiki links and backlinks
-- External-change conflict resolution and automatic index refresh
-- Responsive sidebar, keyboard focus shortcuts, and system light/dark appearance
+![Margin preview workspace](docs/images/preview-workspace.png)
 
-The broader product roadmap is documented in [PRODUCT_SPEC.md](PRODUCT_SPEC.md). Templates, import/export, and version-history workflows remain future roadmap work.
+## Install Margin
 
-## Install on macOS
+### macOS
 
-Once a signed macOS release has been published, install the latest release directly from the root installer:
+Install the latest signed release with one command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mikestanaszak/margin/main/install.sh | bash
 ```
 
-The installer detects Apple Silicon and Intel Macs, downloads the matching `.dmg` from GitHub Releases, verifies its code signature, and installs **Margin.app** in `/Applications`. It will request an administrator password only when macOS requires permission to write there.
+It detects Apple Silicon or Intel, verifies the download, and installs **Margin.app** in `/Applications`.
 
-To install a particular release or use a per-user Applications folder:
+To choose a version or install only for your user:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mikestanaszak/margin/main/install.sh | MARGIN_VERSION=0.1.0 MARGIN_INSTALL_DIR="$HOME/Applications" bash
 ```
 
-Releases need to include signed `aarch64.dmg` and `x64.dmg` assets. The installer deliberately refuses unsigned builds; during local development only, set `MARGIN_ALLOW_UNSIGNED=1`.
+### Windows
 
-## In-app updates
+Download the Windows installer from the [latest release](https://github.com/mikestanaszak/margin/releases/latest), then run it. Your notes stay in the folder you choose.
 
-Margin checks GitHub Releases once a day and shows a small update badge beside Settings when a signed update is available. Users choose when to download it, and can skip a version. The updater verifies every downloaded artifact against Margin's public signing key before installing it.
+### Linux
 
-The signing keypair lives outside the repository at `%USERPROFILE%\.tauri\margin.key` on Windows. Keep that private key backed up and secret; it must never be committed. Add its contents as the `TAURI_SIGNING_PRIVATE_KEY` GitHub Actions secret, then push a `v*` tag to publish a draft release. The release workflow builds signed Windows and macOS updater assets and generates `latest.json` for the in-app updater.
+Linux packaging is not published yet. You can still run Margin from source—see [Build from source](#build-from-source).
 
-## Keyboard shortcuts
+## A simpler Markdown workspace
 
-The app uses the platform's primary shortcut modifier: **Command** on macOS and **Control** on Windows/Linux. This applies to New Note, Save, Search, Quick Switcher, Edit/Preview, focus navigation, and the Markdown formatting shortcuts for bold, italic, and links.
+- Your notes are normal, portable Markdown files—no database or account required.
+- Browse folders, favorites, all notes, and trash without losing your place.
+- Write in Edit, Preview, or Split view. Preview supports tables, syntax-highlighted code, links, and images.
+- Click task checkboxes directly in Preview; Margin saves the change back to the file.
+- Edit Markdown tables with rows and columns instead of hand-aligning pipes.
+- Use a heading as a note title and filename, so files make sense in Finder and Explorer.
+- Keep up with a familiar light or dark appearance, following your system by default.
 
-## Prerequisites (Windows)
+### Quick capture
 
-Install these dependencies before building the native desktop app:
+Press **Ctrl+Alt+Shift+Space** on Windows/Linux or **Command+Option+Shift+Space** on macOS to bring up a compact capture window—even when Margin is in the background. Type, press **Ctrl+Enter** (or **Command+Enter**) to save, and import captures into a daily note, an existing note, or their own file when you are ready.
 
-1. **Node.js LTS** — [nodejs.org](https://nodejs.org/) or `winget install OpenJS.NodeJS.LTS`
-2. **pnpm** — `npm install --global pnpm`
-3. **Rust (MSVC toolchain)** — [rustup.rs](https://rustup.rs/) or `winget install Rustlang.Rustup`
-4. **Visual Studio Build Tools** with the **Desktop development with C++** workload and a Windows SDK — [Visual Studio downloads](https://visualstudio.microsoft.com/downloads/)
+![Margin quick capture](docs/images/quick-capture.png)
 
-The Rust toolchain must be the MSVC toolchain:
+## Working with notes
 
-```powershell
-rustup default stable-x86_64-pc-windows-msvc
-```
+Choose a folder to use as your library, then create or open any Markdown note inside it. Margin indexes nested folders automatically and refreshes when files change outside the app.
 
-If Cargo cannot find `link.exe`, open an **x64 Native Tools Command Prompt for VS 2022** (or load `VsDevCmd.bat`) before running the commands below.
+Use the top search to find text across your library. Internal Markdown links and wiki links open the linked note and reveal its folder. The outline panel is available when you need a quick way to move between headings.
 
-## Install dependencies
+## Shortcuts
+
+Margin uses **Command** on macOS and **Control** on Windows/Linux for its usual in-app shortcuts.
+
+| Action | Shortcut |
+| --- | --- |
+| Edit the current note | Cmd/Ctrl + E |
+| Save now | Cmd/Ctrl + S |
+| Search notes | Cmd/Ctrl + K |
+| Open quick capture | Cmd/Ctrl + Alt + Shift + Space |
+| Save a quick capture | Cmd/Ctrl + Enter |
+| Close quick capture | Escape |
+
+Open **Settings** in Margin to see and change supported shortcuts, choose the default quick-capture destination, select a theme, and review available code-block languages.
+
+## Updates
+
+Margin checks for signed updates once a day and shows an unobtrusive badge in Settings when one is ready. You decide whether to download it; update packages are verified before installation.
+
+## Your data stays yours
+
+Margin never stores notes in a proprietary database. A library is simply a folder of UTF-8 Markdown files, including files you created before using Margin. You can open and edit the same files in other Markdown tools at any time.
+
+## Build from source
+
+Margin is built with Tauri 2, React, TypeScript, and Rust. To run it locally, install Node.js LTS, pnpm, Rust with the MSVC toolchain (on Windows), and the Visual Studio C++ build tools with a Windows SDK.
 
 From the repository root:
 
-```powershell
+```cmd
 pnpm install
+pnpm run dev:desktop
 ```
 
-## Run in development
+To create a production package:
 
-```powershell
-pnpm tauri dev
-```
-
-This starts the Vite development server and launches the Margin window. Choose a folder containing Markdown notes, or create a new folder from the library picker.
-
-For development, use `pnpm tauri dev` rather than launching `target/debug/margin.exe` directly. A debug executable launched by itself expects the Vite server at `http://localhost:1420`; a packaged build from `pnpm tauri build` contains the frontend and can be launched directly.
-
-## Build
-
-Build only the web frontend:
-
-```powershell
-pnpm build
-```
-
-Build the native debug executable:
-
-```powershell
-pnpm tauri build --debug
-```
-
-Build a production application bundle:
-
-```powershell
+```cmd
 pnpm tauri build
 ```
 
-Rust and Tauri artifacts are configured to go in the repository-level `target/` directory, not `src-tauri/target/`:
-
-```text
-target/debug/margin.exe
-target/release/margin.exe
-target/release/bundle/
-```
-
-The output directory is ignored by Git.
-
-## Validate the backend
-
-```powershell
-cargo check --manifest-path src-tauri/Cargo.toml
-```
-
-## Note format
-
-Each note is one UTF-8 Markdown file. Tags are stored in YAML front matter so the files remain portable:
-
-```markdown
----
-title: A useful note
-tags:
-  - ideas
-  - product
----
-
-# A useful note
-
-Write Markdown here.
-```
-
-Notes can be edited by other Markdown tools. The app reads the library recursively and does not require a proprietary database.
-
-## Project layout
-
-```text
-src/                 React UI and styling
-src-tauri/src/       Rust filesystem/indexing commands
-src-tauri/tauri.conf.json
-PRODUCT_SPEC.md      Product requirements and roadmap
-.cargo/config.toml   Root build output configuration
-```
-
-## Troubleshooting
-
-### `npm` or `pnpm` is not recognized
-
-Install Node.js, restart the terminal, then install pnpm:
-
-```powershell
-npm install --global pnpm
-```
-
-### `link.exe` is not found
-
-Install Visual Studio Build Tools with the C++ workload, then run the command from the Visual Studio x64 Native Tools terminal.
-
-### `kernel32.lib` cannot be opened
-
-Install a Windows 10/11 SDK through the Visual Studio Installer and rerun from the x64 Native Tools terminal.
-
-### Preview or tags look stale
-
-Stop the running app, rebuild with `pnpm tauri dev` or `pnpm tauri build --debug`, and reopen the note. The app autosaves note content and tags back to the Markdown file.
-## Run locally
-
-In Codex, use the `dev:desktop` package script (or the **Run Margin (native)** workspace task) to start the native desktop app. The same command works in a terminal:
-
-```powershell
-pnpm run dev:desktop
-```
+On Windows, run Cargo commands from an **x64 Native Tools Command Prompt for VS 2022** if the linker is unavailable. For the product scope and roadmap, see [PRODUCT_SPEC.md](PRODUCT_SPEC.md).
