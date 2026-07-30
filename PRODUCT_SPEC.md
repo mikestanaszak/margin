@@ -71,3 +71,4 @@ The primary modifier is Command on macOS and Control on Windows/Linux. Defaults 
 - Add templates and daily-note creation options.
 - Explore optional Git-aware library status and a version-history workflow without compromising file ownership.
 - Improve import paths from popular Markdown exports while keeping the output ordinary Markdown.
+- Explore platform-specific `.md` file association so Margin can be selected as the default Markdown opener. Opening a Markdown file outside the active library should preserve the source file and offer deliberate actions: import it as a new note, append all or a selected portion to an existing note, or copy the selected Markdown.
