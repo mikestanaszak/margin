@@ -41,18 +41,20 @@ html.capture-window-html,body.capture-window-body,body.capture-window-body #root
 
 .note-context-menu { position:fixed; z-index:30; width:172px; padding:5px; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); }.note-context-menu p { padding:5px 7px 7px; margin:0 0 3px; overflow:hidden; color:var(--faint); text-overflow:ellipsis; white-space:nowrap; border-bottom:1px solid var(--border); font-size:11px; }.note-context-menu button { display:block; width:100%; padding:7px 8px; color:var(--text); text-align:left; background:transparent; border:0; border-radius:5px; font-size:12px; }.note-context-menu button:hover { background:var(--surface-soft); }.note-context-menu button.danger { color:var(--danger); }.note-context-menu button.danger:hover { background:color-mix(in srgb,var(--danger) 10%,transparent); }
 
-/* Keep the native quick-capture window visually weightless outside its card. */
-html.capture-window-html,body.capture-window-body,body.capture-window-body #root,.capture-window { background:transparent; }
-.capture-card { overflow:hidden; }
+/* The quick-capture webview is a transparent native surface. The only visible
+   UI is the composer card itself; on macOS this prevents a second white frame
+   from appearing around it. */
+html.capture-window-html,body.capture-window-body,body.capture-window-body #root,.capture-window { background:transparent!important; }
+.capture-window { padding:0; }
 
-/* Quick Capture is a compact composer: one place to write, one clear action. */
-.capture-window { padding:10px; }
-.capture-card { gap:12px; padding:16px; border-radius:16px; box-shadow:0 14px 42px rgb(0 0 0 / 24%); }
+/* Quick Capture is a single compact composer, deliberately free of a backdrop
+   or a nested modal frame. */
+.capture-card { gap:12px; padding:17px; overflow:hidden; border-radius:18px; box-shadow:0 18px 48px rgb(13 31 20 / 28%); }
 .capture-header { align-items:center!important; }
 .capture-card .eyebrow { margin:0 0 2px; color:var(--faint); font-size:10px; letter-spacing:.12em; }
 .capture-card h1 { font-size:17px; font-weight:750; }
 .capture-close { width:28px; height:28px; color:var(--faint); }
-.capture-composer { display:flex; flex:1; min-height:96px; padding:4px 11px; background:color-mix(in srgb,var(--surface-soft) 76%,transparent); border:1px solid var(--border); border-radius:10px; transition:border-color 120ms ease,box-shadow 120ms ease; }
+.capture-composer { display:flex; flex:1; min-height:94px; padding:4px 12px; background:var(--surface-soft); border:1px solid var(--border); border-radius:12px; transition:border-color 120ms ease,box-shadow 120ms ease; }
 .capture-composer:focus-within { border-color:color-mix(in srgb,var(--accent) 65%,var(--border)); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 13%,transparent); }
 .capture-card textarea { padding:7px 0; font-size:14px; line-height:1.55; }
 .capture-card textarea::placeholder { color:var(--faint); }

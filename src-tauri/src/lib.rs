@@ -7,7 +7,7 @@ use std::{
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{window::Color, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use walkdir::WalkDir;
 
@@ -983,11 +983,16 @@ pub fn run() {
             })));
             WebviewWindowBuilder::new(app, "capture", WebviewUrl::App("index.html".into()))
                 .title("Margin Capture")
-                .inner_size(520.0, 290.0)
+                .inner_size(496.0, 276.0)
                 .min_inner_size(420.0, 240.0)
                 .resizable(false)
                 .decorations(false)
                 .transparent(true)
+                // `transparent(true)` makes the native window transparent, while
+                // this clears WKWebView's own default white backing layer. Both
+                // are necessary on macOS for the space around the capture card
+                // to show the app beneath it instead of an opaque rectangle.
+                .background_color(Color(0, 0, 0, 0))
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .center()
