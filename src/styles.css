@@ -69,7 +69,8 @@ html.capture-window-html,body.capture-window-body,body.capture-window-body #root
 .capture-actions .primary { padding-inline:12px; }
 
 /* Settings may contain a long language list and shortcut roster. */
-.settings-dialog { max-height:calc(100vh - 48px); overflow-y:auto; overscroll-behavior:contain; }
+.settings-backdrop { align-items:start; padding:32px 20px; overflow-y:auto; overscroll-behavior:contain; }
+.settings-dialog { max-height:calc(100vh - 64px); margin:auto 0; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
 
 /* Lists read as a compact hierarchy without paragraphs creating surprise gaps. */
 .preview ul,.preview ol { margin:.85em 0; padding-left:1.45em; }

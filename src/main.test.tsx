@@ -17,6 +17,7 @@ import {
   ConflictDialog,
   MarkdownPreview,
   QuickCaptureDialog,
+  SettingsDialog,
   TableEditorDialog,
   activeOutlineAncestors,
   outlineTree,
@@ -205,6 +206,15 @@ describe("navigation structures and safety dialogs", () => {
     fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
     expect(onSave).toHaveBeenCalledWith("A captured thought");
     fireEvent.keyDown(input, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("closes settings with Escape while retaining a scrollable settings panel", () => {
+    const onClose = vi.fn();
+    render(<SettingsDialog theme="system" onTheme={() => undefined} shortcuts={{ newNote: "ctrl+n", search: "ctrl+k", switcher: "ctrl+p", save: "ctrl+s", view: "ctrl+e", sidebar: "ctrl+\\", outline: "ctrl+shift+o", quickCapture: "ctrl+alt+shift+space" }} onShortcuts={() => undefined} quickCaptureStatus="Ready" library="C:/Notes" quickImportTargets={notes} quickImportDefaultPath="" onQuickImportDefaultPath={() => undefined} updateState="idle" updateMessage="" onCheckForUpdates={() => undefined} onChangeLibrary={() => undefined} onClose={onClose} />);
+    expect(screen.getByRole("button", { name: "Change library" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Settings" }).parentElement).toHaveClass("settings-backdrop");
+    fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
   });
 });
