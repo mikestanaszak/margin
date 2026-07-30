@@ -8,7 +8,7 @@ struct NoteSummary { path: String, title: String, tags: Vec<String>, updated: u6
 
 #[derive(Clone, Serialize, Deserialize)]
 struct NoteDocument {
-    path: String, title: String, tags: Vec<String>, body: String, updated: u64,
+    path: String, title: String, tags: Vec<String>, body: String, updated: u64, revision: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     created: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -21,6 +21,11 @@ struct FrontMatter { title: Option<String>, tags: Option<Vec<String>>, created: 
 fn modified_seconds(path: &Path) -> u64 {
     fs::metadata(path).and_then(|meta| meta.modified()).unwrap_or(SystemTime::UNIX_EPOCH)
         .duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+}
+
+fn file_revision(path: &Path) -> String {
+    fs::metadata(path).and_then(|meta| meta.modified()).unwrap_or(SystemTime::UNIX_EPOCH)
+        .duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos().to_string()
 }
 
 fn now_rfc3339() -> String { Local::now().to_rfc3339() }
@@ -58,7 +63,7 @@ fn read_note_file(path: &Path) -> Result<NoteDocument, String> {
     let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
     let (front, body) = split_front_matter(&raw);
     let fallback = path.file_stem().and_then(|v| v.to_str()).unwrap_or("Untitled");
-    Ok(NoteDocument { path: path.to_string_lossy().to_string(), title: front.title.unwrap_or_else(|| title_from_body(&body, fallback)), tags: normalize_tags(front.tags.unwrap_or_default()), body, updated: modified_seconds(path), created: front.created, updated_at: front.updated })
+    Ok(NoteDocument { path: path.to_string_lossy().to_string(), title: front.title.unwrap_or_else(|| title_from_body(&body, fallback)), tags: normalize_tags(front.tags.unwrap_or_default()), body, updated: modified_seconds(path), revision: file_revision(path), created: front.created, updated_at: front.updated })
 }
 
 #[tauri::command]

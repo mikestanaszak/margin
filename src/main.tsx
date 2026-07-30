@@ -8,7 +8,7 @@ import remarkGfm from "remark-gfm";
 import "./styles.css";
 
 type NoteSummary = { path: string; title: string; tags: string[]; updated: number; searchable_text: string };
-type NoteDocument = NoteSummary & { body: string; created?: string; updated_at?: string };
+type NoteDocument = NoteSummary & { body: string; revision: string; created?: string; updated_at?: string };
 type Filter = { type: "all" | "untagged" | "tag"; tag?: string };
 type Conflict = { disk: NoteDocument; mine: NoteDocument };
 type MarkdownNode = { type?: string; lang?: string | null; children?: MarkdownNode[] };
@@ -28,7 +28,7 @@ function App() {
   const [status, setStatus] = useState("Choose a notes folder to begin"); const [quickOpen, setQuickOpen] = useState(false);
   const [sidebarHidden, setSidebarHidden] = useState(false); const [conflict, setConflict] = useState<Conflict | null>(null);
   const [renameOpen, setRenameOpen] = useState(false); const [pinned, setPinned] = useState<string[]>(() => JSON.parse(localStorage.getItem(pinnedKey) || "[]"));
-  const baseline = useRef<NoteDocument | null>(null); const editor = useRef<HTMLTextAreaElement>(null);
+  const baseline = useRef<NoteDocument | null>(null); const editor = useRef<HTMLTextAreaElement>(null); const activePathRef = useRef<string | null>(null);
   const transformSelectedLines = (transform: (line: string) => string) => {
     const element = editor.current;
     if (!note || !element) return;
@@ -44,15 +44,16 @@ function App() {
 
   const refresh = async (path = library) => { if (!path) return; try { const result = await invoke<NoteSummary[]>("load_library", { libraryPath: path }); setNotes(result); setStatus(`${result.length} ${result.length === 1 ? "note" : "notes"}`); } catch (error) { setStatus(`Could not read library: ${String(error)}`); } };
   useEffect(() => { void refresh(); }, [library]);
+  useEffect(() => { activePathRef.current = activePath; }, [activePath]);
   useEffect(() => { localStorage.setItem(pinnedKey, JSON.stringify(pinned)); }, [pinned]);
   useEffect(() => { if (!activePath) { setNote(null); return; } void (async () => { try { const loaded = await invoke<NoteDocument>("read_note", { path: activePath }); baseline.current = loaded; setNote(loaded); setMode("edit"); } catch (error) { setStatus(`Could not open note: ${String(error)}`); } })(); }, [activePath]);
   useEffect(() => { if (!note || mode === "preview") return; const timer = window.setTimeout(() => void saveNote(note), 700); return () => window.clearTimeout(timer); }, [note?.body, note?.tags.join("\0")]);
-  useEffect(() => { const interval = window.setInterval(async () => { if (!library) return; await refresh(); if (note && baseline.current) { try { const disk = await invoke<NoteDocument>("read_note", { path: note.path }); if (disk.updated !== baseline.current.updated && (note.body !== baseline.current.body || note.tags.join("\0") !== baseline.current.tags.join("\0"))) setConflict({ disk, mine: note }); else if (disk.updated !== baseline.current.updated) { baseline.current = disk; setNote(disk); setStatus("Updated from disk"); } } catch { /* file may have been moved or deleted */ } } }, 2500); return () => clearInterval(interval); }, [library, note?.path, note?.body, note?.tags]);
+  useEffect(() => { const interval = window.setInterval(async () => { if (!library) return; await refresh(); if (note && baseline.current) { try { const disk = await invoke<NoteDocument>("read_note", { path: note.path }); if (disk.revision !== baseline.current.revision && (note.body !== baseline.current.body || note.tags.join("\0") !== baseline.current.tags.join("\0"))) setConflict({ disk, mine: note }); else if (disk.revision !== baseline.current.revision) { baseline.current = disk; setNote(disk); setStatus("Updated from disk"); } } catch { /* file may have been moved or deleted */ } } }, 2500); return () => clearInterval(interval); }, [library, note?.path, note?.body, note?.tags]);
   useEffect(() => { const onKeyDown = (event: KeyboardEvent) => { const mod = event.metaKey || event.ctrlKey; if (!mod) return; const key = event.key.toLowerCase(); if (key === "e" && note) { event.preventDefault(); setMode(value => value === "edit" ? "preview" : "edit"); } if (key === "n") { event.preventDefault(); void createNote(); } if (key === "k") { event.preventDefault(); document.querySelector<HTMLInputElement>("#note-search")?.focus(); } if (key === "p") { event.preventDefault(); setQuickOpen(true); } if (key === "s" && note) { event.preventDefault(); void saveNote(note); } if (key === "1") { event.preventDefault(); document.querySelector<HTMLButtonElement>(".new-note")?.focus(); } if (key === "2") { event.preventDefault(); document.querySelector<HTMLButtonElement>(".note-card")?.focus(); } if (key === "3") { event.preventDefault(); editor.current?.focus(); } if (event.key === "\\") { event.preventDefault(); setSidebarHidden(value => !value); } }; window.addEventListener("keydown", onKeyDown); return () => window.removeEventListener("keydown", onKeyDown); }, [note, library]);
 
   const selectLibrary = async () => { const selected = await open({ directory: true, multiple: false, title: "Choose your notes folder" }); if (typeof selected === "string") { localStorage.setItem(libraryKey, selected); setLibrary(selected); setActivePath(null); setFilter({ type: "all" }); } };
   const createNote = async () => { if (!library) return void await selectLibrary(); try { const created = await invoke<NoteDocument>("create_note", { libraryPath: library }); await refresh(); setActivePath(created.path); setStatus("New note created"); } catch (error) { setStatus(`Could not create note: ${String(error)}`); } };
-  const saveNote = async (draft: NoteDocument) => { try { setStatus("Saving…"); const saved = await invoke<NoteDocument>("save_note", { note: draft }); baseline.current = saved; setNote(current => current?.path === saved.path ? saved : current); await refresh(); setStatus("Saved"); } catch (error) { setStatus(`Save failed: ${String(error)}`); } };
+  const saveNote = async (draft: NoteDocument) => { try { setStatus("Saving…"); const saved = await invoke<NoteDocument>("save_note", { note: draft }); if (activePathRef.current === saved.path) baseline.current = saved; setNote(current => current?.path === saved.path ? saved : current); await refresh(); setStatus("Saved"); } catch (error) { setStatus(`Save failed: ${String(error)}`); } };
   const addTag = (value: string) => { if (!note) return; const tag = value.trim().replace(/,$/, ""); if (!tag || tag.length > 64) return setStatus("Tags must be 1–64 characters"); if (!note.tags.some(existing => existing.toLowerCase() === tag.toLowerCase())) setNote({ ...note, tags: [...note.tags, tag] }); };
   const rename = async (name: string) => { if (!note) return; try { const renamed = await invoke<NoteDocument>("rename_note", { path: note.path, name }); baseline.current = renamed; setNote(renamed); setActivePath(renamed.path); await refresh(); setRenameOpen(false); } catch (error) { setStatus(`Rename failed: ${String(error)}`); } };
   const duplicate = async () => { if (!note) return; try { const copy = await invoke<NoteDocument>("duplicate_note", { path: note.path }); await refresh(); setActivePath(copy.path); } catch (error) { setStatus(`Duplicate failed: ${String(error)}`); } };
