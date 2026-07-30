@@ -100,4 +100,10 @@ To create a production package:
 pnpm tauri build
 ```
 
-On Windows, run Cargo commands from an **x64 Native Tools Command Prompt for VS 2022** if the linker is unavailable. For the product scope and roadmap, see [PRODUCT_SPEC.md](PRODUCT_SPEC.md).
+To run the automated frontend and native suites:
+
+```cmd
+pnpm test:all
+```
+
+On Windows, run Cargo commands from an **x64 Native Tools Command Prompt for VS 2022** if the linker is unavailable. See [TESTING.md](TESTING.md) for the example library, coverage matrix, and native smoke checklist. For the product scope and roadmap, see [PRODUCT_SPEC.md](PRODUCT_SPEC.md).

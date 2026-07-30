@@ -12,6 +12,21 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import MarkdownEditor, { type MarkdownEditorHandle } from "./MarkdownEditor";
 import { NoteListItem, QuickSwitcher, ResizableSplit, ViewModeControl } from "./components";
 import { isMac } from "./platform";
+import {
+  clamp,
+  fileStem,
+  formatShortcut,
+  hasUnsavedChanges,
+  matchesShortcut,
+  nativeShortcut,
+  normalizedKey,
+  parseMarkdownTables,
+  replaceMarkdownTable,
+  titleFromBody,
+  toggleTask,
+  wikiTargets,
+  type MarkdownTable,
+} from "./note-utils";
 import "./styles.css";
 
 type NoteSummary = { path: string; title: string; tags: string[]; updated: number; searchable_text: string; excerpt: string; folder: string };
@@ -20,7 +35,6 @@ type FolderRenameResult = { folder: string; paths: { from: string; to: string }[
 type Filter = { type: "all" | "favorites" | "trash" | "folder"; folder?: string };
 type Conflict = { disk: NoteDocument; mine: NoteDocument };
 type MarkdownNode = { type?: string; lang?: string | null; checked?: boolean | null; children?: MarkdownNode[]; data?: { hProperties?: Record<string, unknown> } };
-type MarkdownTable = { start: number; end: number; headers: string[]; rows: string[][] };
 type OutlineItem = { index: number; level: number; title: string };
 type OutlineNode = OutlineItem & { children: OutlineNode[] };
 type AppUpdate = NonNullable<Awaited<ReturnType<typeof check>>>;
@@ -50,27 +64,8 @@ const defaultShortcuts: Shortcuts = {
 const shortcutLabels: Record<ShortcutId, string> = { newNote: "New note", search: "Search", switcher: "Quick switcher", save: "Save", view: "Edit / preview", sidebar: "Toggle sidebar", outline: "Toggle outline", quickCapture: "Quick capture (global)" };
 const codeBlockLanguages = Object.keys(highlightLanguages).sort();
 
-function titleFromBody(body: string) { return body.match(/^#\s+(.+)$/m)?.[1]?.trim() || "Untitled"; }
-function fileStem(path: string) { return path.split(/[\\/]/).pop()?.replace(/\.md$/i, "") || "Untitled"; }
-function clamp(value: number, minimum: number, maximum: number) { return Math.min(Math.max(value, minimum), maximum); }
 function loadPaneWidth(key: string, fallback: number) { const saved = Number(localStorage.getItem(key)); return Number.isFinite(saved) ? clamp(saved, 180, 520) : fallback; }
-function wikiTargets(body: string) { return [...body.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g)].map(match => match[1].trim()); }
-function hasUnsavedChanges(draft: NoteDocument, original: NoteDocument | null) { return !original || draft.path !== original.path || draft.title !== original.title || draft.body !== original.body || draft.tags.join("\0") !== original.tags.join("\0"); }
 function loadShortcuts(): Shortcuts { try { return { ...defaultShortcuts, ...JSON.parse(localStorage.getItem(shortcutsKey) || "{}") }; } catch { return defaultShortcuts; } }
-function normalizedKey(event: Pick<globalThis.KeyboardEvent, "key" | "code">) { return event.code === "Space" ? "space" : event.key.toLowerCase(); }
-function matchesShortcut(event: globalThis.KeyboardEvent, binding: string) {
-  const pieces = binding.toLowerCase().split("+").filter(Boolean);
-  const key = pieces[pieces.length - 1];
-  if (!key || normalizedKey(event) !== key) return false;
-  return event.metaKey === pieces.includes("meta") && event.ctrlKey === pieces.includes("ctrl") && event.altKey === pieces.includes("alt") && event.shiftKey === pieces.includes("shift");
-}
-function formatShortcut(binding: string) { return binding.split("+").map(part => ({ meta: "⌘", ctrl: "Ctrl", alt: isMac ? "⌥" : "Alt", shift: isMac ? "⇧" : "Shift", space: "Space", "\\": "\\" }[part] || part.toUpperCase())).join(isMac ? "" : "+"); }
-function nativeShortcut(binding: string) { return binding.split("+").map(part => ({ meta: "Command", ctrl: "Control", alt: "Alt", shift: "Shift", space: "Space", "\\": "Backslash" }[part] || part.toUpperCase())).join("+"); }
-function toggleTask(markdown: string, taskIndex: number, checked: boolean) { let current = 0; return markdown.replace(/^(\s*(?:[-+*]|\d+\.)\s+\[)[ xX](\])/gm, (whole, before, after) => current++ === taskIndex ? `${before}${checked ? "x" : " "}${after}` : whole); }
-function splitTableCells(line: string) { const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, ""); const cells: string[] = []; let cell = ""; let escaped = false; for (const character of trimmed) { if (character === "|" && !escaped) { cells.push(cell.trim().replace(/\\\|/g, "|")); cell = ""; } else { cell += character; } escaped = character === "\\" && !escaped; if (character !== "\\") escaped = false; } cells.push(cell.trim().replace(/\\\|/g, "|")); return cells; }
-function isTableDivider(line: string) { const cells = splitTableCells(line); return cells.length > 0 && cells.every(cell => /^:?-{3,}:?$/.test(cell)); }
-function parseMarkdownTables(markdown: string): MarkdownTable[] { const lines = markdown.split("\n"); const tables: MarkdownTable[] = []; for (let index = 0; index < lines.length - 1; index += 1) { if (!lines[index].includes("|") || !isTableDivider(lines[index + 1])) continue; const headers = splitTableCells(lines[index]); let end = index + 2; const rows: string[][] = []; while (end < lines.length && lines[end].includes("|") && !/^\s*$/.test(lines[end])) { const cells = splitTableCells(lines[end]); if (cells.length < headers.length) break; rows.push(cells.slice(0, headers.length)); end += 1; } tables.push({ start: index, end, headers, rows }); index = end - 1; } return tables; }
-function replaceMarkdownTable(markdown: string, index: number, headers: string[], rows: string[][]) { const table = parseMarkdownTables(markdown)[index]; if (!table) return markdown; const escape = (value: string) => value.replace(/\|/g, "\\|").replace(/\n/g, " "); const line = (cells: string[]) => `| ${cells.map(escape).join(" | ")} |`; const next = [line(headers), line(headers.map(() => "---")), ...rows.map(line)]; const lines = markdown.split("\n"); lines.splice(table.start, table.end - table.start, ...next); return lines.join("\n"); }
 
 function App() {
   const [library, setLibrary] = useState<string | null>(localStorage.getItem(libraryKey)); const [libraryPaneWidth, setLibraryPaneWidth] = useState(() => loadPaneWidth(libraryPaneWidthKey, 232)); const [notePaneWidth, setNotePaneWidth] = useState(() => loadPaneWidth(notePaneWidthKey, 296));
@@ -210,5 +205,16 @@ function MarkdownPreview({ markdown, notePath, notes, onOpen, onEditTable, onTog
 function normalizeCodeLanguages() { return (tree: MarkdownNode) => { const visit = (node: MarkdownNode) => { if (node.type === "code" && node.lang) node.lang = node.lang.toLowerCase(); node.children?.forEach(visit); }; visit(tree); }; }
 function annotateTaskIndexes() { return (tree: MarkdownNode) => { let index = 0; const visit = (node: MarkdownNode) => { if (node.type === "listItem" && node.checked !== null && node.checked !== undefined) { node.data = { ...node.data, hProperties: { ...node.data?.hProperties, "data-task-index": index } }; index += 1; } node.children?.forEach(visit); }; visit(tree); }; }
 function ConflictDialog({ conflict, onChoose }: { conflict: Conflict; onChoose: (choice: "mine" | "disk") => void }) { return <div className="modal-backdrop"><section className="modal conflict"><h2>This note changed outside the app</h2><p>Your unsaved edits have not been overwritten. Choose which version to keep.</p><details><summary>Compare versions</summary><div className="compare"><pre>{conflict.mine.body}</pre><pre>{conflict.disk.body}</pre></div></details><div><button onClick={() => onChoose("disk")}>Use disk version</button><button className="primary" onClick={() => onChoose("mine")}>Keep my edits</button></div></section></div>; }
+export {
+  CascadingNoteOptions,
+  ConflictDialog,
+  MarkdownPreview,
+  QuickCaptureDialog,
+  TableEditorDialog,
+  activeOutlineAncestors,
+  annotateTaskIndexes,
+  normalizeCodeLanguages,
+  outlineTree,
+};
 const isCaptureWindow = (() => { try { return getCurrentWindow().label === "capture"; } catch { return false; } })();
 createRoot(document.getElementById("root")!).render(<React.StrictMode>{isCaptureWindow ? <CaptureWindow /> : <App />}</React.StrictMode>);

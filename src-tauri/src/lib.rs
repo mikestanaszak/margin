@@ -13,7 +13,12 @@ use walkdir::WalkDir;
 
 /// The active capture shortcut is kept in the native process so it remains
 /// available when every webview is backgrounded.
-struct CaptureShortcut(Mutex<Shortcut>);
+struct CaptureShortcut(Mutex<CaptureShortcutState>);
+
+struct CaptureShortcutState {
+    shortcut: Shortcut,
+    registered: bool,
+}
 
 fn default_capture_shortcut() -> Shortcut {
     #[cfg(target_os = "macos")]
@@ -119,17 +124,25 @@ async fn configure_quick_capture_shortcut(app: AppHandle, shortcut: String) -> R
         .0
         .lock()
         .map_err(|_| "Quick-capture shortcut state is unavailable")?;
-    if *active == requested {
+    if active.shortcut == requested && active.registered {
+        return Ok(());
+    }
+    if !active.registered {
+        app.global_shortcut()
+            .register(requested)
+            .map_err(|error| error.to_string())?;
+        active.shortcut = requested;
+        active.registered = true;
         return Ok(());
     }
     app.global_shortcut()
         .register(requested)
         .map_err(|error| error.to_string())?;
-    if let Err(error) = app.global_shortcut().unregister(*active) {
+    if let Err(error) = app.global_shortcut().unregister(active.shortcut) {
         let _ = app.global_shortcut().unregister(requested);
         return Err(error.to_string());
     }
-    *active = requested;
+    active.shortcut = requested;
     Ok(())
 }
 
@@ -949,7 +962,9 @@ pub fn run() {
                 .with_handler(|app, shortcut, event| {
                     let is_capture_shortcut =
                         app.try_state::<CaptureShortcut>().is_some_and(|state| {
-                            state.0.lock().is_ok_and(|active| *active == *shortcut)
+                            state.0.lock().is_ok_and(|active| {
+                                active.registered && active.shortcut == *shortcut
+                            })
                         });
                     if is_capture_shortcut && event.state() == ShortcutState::Pressed {
                         let handle = app.clone();
@@ -961,10 +976,11 @@ pub fn run() {
                 .build(),
         )
         .setup(move |app| {
-            app.manage(CaptureShortcut(Mutex::new(default_capture)));
-            app.global_shortcut()
-                .register(default_capture)
-                .map_err(|error| error.to_string())?;
+            let registered = app.global_shortcut().register(default_capture).is_ok();
+            app.manage(CaptureShortcut(Mutex::new(CaptureShortcutState {
+                shortcut: default_capture,
+                registered,
+            })));
             WebviewWindowBuilder::new(app, "capture", WebviewUrl::App("index.html".into()))
                 .title("Margin Capture")
                 .inner_size(520.0, 290.0)
@@ -1029,10 +1045,11 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_quick_note, create_folder, create_note, delete_note_permanently, duplicate_note,
-        import_daily_note, import_daily_note_to_new_note, load_folders, load_library, load_trash,
-        move_folder_to_trash, move_note_to_trash, read_note_file, rename_folder, rename_note,
-        restore_note_from_trash, save_note, split_front_matter,
+        append_quick_note, body_with_title, create_folder, create_note, delete_note_permanently,
+        duplicate_note, import_daily_note, import_daily_note_to_new_note, library_folder,
+        load_folders, load_library, load_trash, move_folder_to_trash, move_note_to_folder,
+        move_note_to_trash, normalize_tags, read_note_file, rename_folder, rename_note,
+        restore_note_from_trash, safe_file_stem, save_note, split_front_matter,
     };
     use std::{
         fs,
@@ -1052,6 +1069,35 @@ mod tests {
                 .as_nanos(),
             TEMP_LIBRARY_COUNTER.fetch_add(1, Ordering::Relaxed),
         ))
+    }
+
+    fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
+        fs::create_dir_all(destination).map_err(|error| error.to_string())?;
+        for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let target = destination.join(entry.file_name());
+            if entry
+                .file_type()
+                .map_err(|error| error.to_string())?
+                .is_dir()
+            {
+                copy_directory(&entry.path(), &target)?;
+            } else {
+                fs::copy(entry.path(), target).map_err(|error| error.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    fn copy_example_library() -> Result<PathBuf, String> {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("tests")
+            .join("fixtures")
+            .join("example-library");
+        let destination = temporary_library();
+        copy_directory(&source, &destination)?;
+        Ok(destination)
     }
 
     #[test]
@@ -1247,5 +1293,196 @@ mod tests {
         })();
         fs::remove_dir_all(&library).ok();
         result.unwrap();
+    }
+
+    #[test]
+    fn quick_capture_rejects_empty_and_cross_library_operations() {
+        let library = temporary_library();
+        let outside = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let library_path = library.to_string_lossy().to_string();
+
+        assert!(append_quick_note(library_path.clone(), "  ".into()).is_err());
+        let daily = append_quick_note(library_path.clone(), "Inside capture".into()).unwrap();
+        let outside_target = outside.join("Outside.md");
+        fs::write(&outside_target, "# Outside\n").unwrap();
+        assert!(import_daily_note(
+            daily.path.clone(),
+            outside_target.to_string_lossy().to_string(),
+            library_path.clone(),
+        )
+        .is_err());
+        assert!(import_daily_note_to_new_note(
+            daily.path,
+            Some("../outside".into()),
+            "Escaped".into(),
+            library_path,
+        )
+        .is_err());
+
+        fs::remove_dir_all(&library).ok();
+        fs::remove_dir_all(&outside).ok();
+    }
+
+    #[test]
+    fn example_library_indexes_realistic_portable_markdown() {
+        let library = copy_example_library().unwrap();
+        let library_path = library.to_string_lossy().to_string();
+        let result = (|| -> Result<(), String> {
+            let notes = load_library(library_path.clone())?;
+            assert_eq!(notes.len(), 8);
+            assert!(!notes.iter().any(|note| note.title == "Deleted note"));
+
+            let welcome = notes
+                .iter()
+                .find(|note| note.title == "Welcome to Margin")
+                .ok_or("Welcome fixture was not indexed")?;
+            assert_eq!(welcome.tags, ["welcome", "Demo"]);
+            assert!(welcome.searchable_text.contains("localfirst = true"));
+
+            let unicode = notes
+                .iter()
+                .find(|note| note.title == "Café ideas ☕")
+                .ok_or("Unicode fixture was not indexed")?;
+            assert_eq!(unicode.folder, "Personal");
+            assert!(unicode.searchable_text.contains("crème brûlée"));
+
+            let fallback = notes
+                .iter()
+                .find(|note| note.title == "No heading")
+                .ok_or("Filename title fallback was not indexed")?;
+            assert!(fallback
+                .excerpt
+                .contains("intentionally has no level-one heading"));
+
+            assert_eq!(load_trash(library_path.clone())?.len(), 1);
+            assert_eq!(
+                load_folders(library_path)?,
+                vec![
+                    "assets",
+                    "Daily",
+                    "Edge Cases",
+                    "Personal",
+                    "Work",
+                    "Work/Research",
+                ]
+            );
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn metadata_and_portable_filenames_handle_edge_cases() {
+        assert_eq!(
+            normalize_tags(vec![
+                " Work ".into(),
+                "work".into(),
+                "".into(),
+                "é".repeat(65),
+                "Planning".into(),
+            ]),
+            ["Work", "Planning"]
+        );
+        assert_eq!(safe_file_stem("  plan: launch?  "), "plan- launch-");
+        assert_eq!(safe_file_stem("CON"), "Note-CON");
+        assert_eq!(safe_file_stem("..."), "Untitled");
+        assert_eq!(
+            body_with_title("Intro only\n", "Named"),
+            "# Named\n\nIntro only\n"
+        );
+        assert_eq!(body_with_title("# Old\n\nBody", "New"), "# New\n\nBody");
+
+        let raw = "---\r\ntags: [one, two]\r\n---\r\n\r\n# Windows newlines\r\n";
+        let (front, body) = split_front_matter(raw);
+        assert_eq!(front.tags.unwrap(), ["one", "two"]);
+        assert_eq!(body, "# Windows newlines\n");
+    }
+
+    #[test]
+    fn file_operations_reject_paths_outside_the_selected_library() {
+        let library = temporary_library();
+        let outside = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let library_path = library.to_string_lossy().to_string();
+        let outside_note = outside.join("Outside.md");
+        fs::write(&outside_note, "# Outside\n").unwrap();
+        let inside_note = library.join("Inside.md");
+        fs::write(&inside_note, "# Inside\n").unwrap();
+
+        assert!(library_folder(&library, Some("../outside".into())).is_err());
+        assert!(library_folder(&library, Some(outside.to_string_lossy().to_string())).is_err());
+        assert!(create_folder(library_path.clone(), "../outside".into()).is_err());
+        assert!(move_note_to_folder(
+            outside_note.to_string_lossy().to_string(),
+            None,
+            library_path.clone()
+        )
+        .is_err());
+        assert!(move_note_to_trash(
+            outside_note.to_string_lossy().to_string(),
+            library_path.clone()
+        )
+        .is_err());
+        assert!(restore_note_from_trash(
+            inside_note.to_string_lossy().to_string(),
+            library_path.clone()
+        )
+        .is_err());
+        assert!(
+            delete_note_permanently(inside_note.to_string_lossy().to_string(), library_path)
+                .is_err()
+        );
+
+        fs::remove_dir_all(&library).ok();
+        fs::remove_dir_all(&outside).ok();
+    }
+
+    #[test]
+    fn move_and_restore_disambiguate_existing_destinations() {
+        let library = copy_example_library().unwrap();
+        let library_path = library.to_string_lossy().to_string();
+        let result = (|| -> Result<(), String> {
+            let mut duplicate = create_note(library_path.clone(), Some("Personal".into()))?;
+            duplicate.body = "# Project Alpha\n".into();
+            let duplicate = save_note(duplicate)?;
+            let moved =
+                move_note_to_folder(duplicate.path, Some("Work".into()), library_path.clone())?;
+            assert!(moved.path.ends_with("Project Alpha-1.md"));
+
+            fs::write(library.join("Deleted note.md"), "# Existing deletion\n")
+                .map_err(|error| error.to_string())?;
+            let trashed = load_trash(library_path.clone())?;
+            let restored = restore_note_from_trash(trashed[0].path.clone(), library_path)?;
+            assert!(restored.path.ends_with("Deleted note-1.md"));
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn external_file_edits_are_visible_on_the_next_index() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let path = library.join("External.md");
+        fs::write(&path, "# Before\n\nOriginal text").unwrap();
+        let library_path = library.to_string_lossy().to_string();
+        assert_eq!(
+            load_library(library_path.clone()).unwrap()[0].title,
+            "Before"
+        );
+
+        fs::write(&path, "# After\n\nChanged outside Margin").unwrap();
+        let indexed = load_library(library_path).unwrap();
+        assert_eq!(indexed[0].title, "After");
+        assert!(indexed[0]
+            .searchable_text
+            .contains("changed outside margin"));
+
+        fs::remove_dir_all(&library).ok();
     }
 }
