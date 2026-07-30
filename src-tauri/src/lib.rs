@@ -9,6 +9,7 @@ use std::{
 };
 use tauri::{window::Color, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_opener::OpenerExt;
 use walkdir::WalkDir;
 
 /// The active capture shortcut is kept in the native process so it remains
@@ -82,6 +83,26 @@ async fn hide_quick_capture(app: AppHandle) -> Result<(), String> {
         .ok_or("Quick capture window is unavailable")?
         .hide()
         .map_err(|error| error.to_string())
+}
+
+/// Opens a user-authored web or communication link with the operating
+/// system's default handler. Keeping this native avoids WebView-specific
+/// navigation behavior and works the same way on macOS and Windows.
+#[tauri::command]
+fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
+    let url = url.trim();
+    let allowed = ["https://", "http://", "mailto:", "tel:"]
+        .iter()
+        .any(|prefix| {
+            url.get(..prefix.len())
+                .is_some_and(|value| value.eq_ignore_ascii_case(prefix))
+        });
+    if !allowed {
+        return Err("Links must begin with https://, http://, mailto:, or tel:".into());
+    }
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|error| format!("Could not open link: {error}"))
 }
 
 #[tauri::command]
@@ -1040,6 +1061,7 @@ pub fn run() {
             import_daily_note_to_new_note,
             show_quick_capture,
             hide_quick_capture,
+            open_external_url,
             save_selected_library,
             load_selected_library,
             configure_quick_capture_shortcut

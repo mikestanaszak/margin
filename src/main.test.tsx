@@ -7,12 +7,11 @@ vi.mock("react-dom/client", () => ({
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ label: "test", hide: vi.fn() }),
 }));
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn(() => Promise.resolve()) }));
 vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (path: string) => `asset://${path}`,
-  invoke: vi.fn(),
+  invoke,
 }));
-const { openUrl } = vi.hoisted(() => ({ openUrl: vi.fn() }));
-vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl }));
 
 import {
   CascadingNoteOptions,
@@ -92,7 +91,7 @@ describe("Markdown preview", () => {
     expect(onOpen).toHaveBeenNthCalledWith(1, notes[1]);
     expect(onOpen).toHaveBeenNthCalledWith(2, notes[1]);
     fireEvent.click(screen.getByRole("link", { name: "Margin" }));
-    expect(openUrl).toHaveBeenCalledWith("https://example.com");
+    expect(invoke).toHaveBeenCalledWith("open_external_url", { url: "https://example.com" });
     fireEvent.doubleClick(screen.getByText("value with spaces", { selector: "code" }));
     expect(window.getSelection()?.toString()).toBe("value with spaces");
     expect(screen.getByRole("img", { name: "Diagram" })).toHaveAttribute(
