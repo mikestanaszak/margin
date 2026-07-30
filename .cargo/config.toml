@@ -1,0 +1,3 @@
+[build]
+# Keep Rust/Tauri artifacts at the repository root instead of inside src-tauri.
+target-dir = "target"

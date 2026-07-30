@@ -1,0 +1,23 @@
+[package]
+name = "markdown-notes"
+version = "0.1.0"
+description = "A local-first Markdown notes app"
+edition = "2021"
+
+[lib]
+name = "markdown_notes_lib"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "markdown-notes"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+walkdir = "2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
