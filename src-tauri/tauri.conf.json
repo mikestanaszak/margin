@@ -4,6 +4,6 @@
   "version": "0.1.0",
   "identifier": "com.local.markdownnotes",
   "build": { "frontendDist": "../dist", "devUrl": "http://localhost:1420", "beforeDevCommand": "pnpm dev", "beforeBuildCommand": "pnpm build" },
-  "app": { "windows": [{ "title": "Markdown Notes", "width": 1200, "height": 760, "minWidth": 900, "minHeight": 600 }], "security": { "csp": null } },
+  "app": { "windows": [{ "title": "Markdown Notes", "width": 1200, "height": 760, "minWidth": 900, "minHeight": 600 }], "security": { "csp": null, "assetProtocol": { "enable": true, "scope": ["**"] } } },
   "bundle": { "active": true, "targets": "all", "icon": [] }
 }
