@@ -3,10 +3,11 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
+    process::Command,
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use walkdir::WalkDir;
 
@@ -46,6 +47,25 @@ fn show_capture_window(app: &AppHandle) -> Result<(), String> {
     capture.set_focus().map_err(|error| error.to_string())
 }
 
+#[cfg(target_os = "macos")]
+fn show_main_window(app: &AppHandle) -> Result<(), String> {
+    let main = app
+        .get_webview_window("main")
+        .ok_or("Margin window is unavailable")?;
+    main.unminimize().map_err(|error| error.to_string())?;
+    main.show().map_err(|error| error.to_string())?;
+    main.set_focus().map_err(|error| error.to_string())
+}
+
+fn selected_library_file(app: &AppHandle) -> Result<PathBuf, String> {
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    Ok(directory.join("selected-library.txt"))
+}
+
 #[tauri::command]
 fn show_quick_capture(app: AppHandle) -> Result<(), String> {
     show_capture_window(&app)
@@ -57,6 +77,34 @@ async fn hide_quick_capture(app: AppHandle) -> Result<(), String> {
         .ok_or("Quick capture window is unavailable")?
         .hide()
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn save_selected_library(app: AppHandle, library_path: String) -> Result<(), String> {
+    let library = PathBuf::from(library_path.trim());
+    if !library.is_dir() {
+        return Err("Choose an existing notes folder".into());
+    }
+    fs::write(
+        selected_library_file(&app)?,
+        library.to_string_lossy().as_bytes(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn load_selected_library(app: AppHandle) -> Result<Option<String>, String> {
+    let path = selected_library_file(&app)?;
+    match fs::read_to_string(path) {
+        Ok(value) => {
+            let library = PathBuf::from(value.trim());
+            Ok(library
+                .is_dir()
+                .then(|| library.to_string_lossy().to_string()))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 /// Replaces the capture shortcut without ever leaving the previous working
@@ -687,6 +735,57 @@ fn duplicate_note(path: String) -> Result<NoteDocument, String> {
 }
 
 #[tauri::command]
+fn move_note_to_folder(
+    path: String,
+    folder: Option<String>,
+    library_path: String,
+) -> Result<NoteDocument, String> {
+    let source = PathBuf::from(path);
+    let library = PathBuf::from(library_path);
+    if !source.is_file() || !source.starts_with(&library) {
+        return Err("Note is outside the selected library".into());
+    }
+    let destination_folder = library_folder(&library, folder)?;
+    fs::create_dir_all(&destination_folder).map_err(|error| error.to_string())?;
+    let stem = source
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("Untitled");
+    let requested = destination_folder.join(format!("{}.md", safe_file_stem(stem)));
+    let destination = if requested == source {
+        requested
+    } else if requested.exists() {
+        unique_path(&destination_folder, stem)
+    } else {
+        requested
+    };
+    if destination != source {
+        fs::rename(&source, &destination).map_err(|error| error.to_string())?;
+    }
+    read_note_file(&destination)
+}
+
+#[tauri::command]
+fn reveal_note_in_file_manager(path: String, library_path: String) -> Result<(), String> {
+    let note = PathBuf::from(path);
+    let library = PathBuf::from(library_path);
+    if !note.is_file() || !note.starts_with(&library) {
+        return Err("Note is outside the selected library".into());
+    }
+    #[cfg(target_os = "macos")]
+    let command = Command::new("open").arg("-R").arg(&note).spawn();
+    #[cfg(target_os = "windows")]
+    let command = Command::new("explorer.exe")
+        .arg(format!("/select,{}", note.to_string_lossy()))
+        .spawn();
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    let command = Command::new("xdg-open")
+        .arg(note.parent().ok_or("Note has no parent folder")?)
+        .spawn();
+    command.map(|_| ()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn move_note_to_trash(path: String, library_path: String) -> Result<(), String> {
     let source = PathBuf::from(path);
     let library = PathBuf::from(library_path);
@@ -789,6 +888,7 @@ pub fn run() {
                 .min_inner_size(420.0, 240.0)
                 .resizable(false)
                 .decorations(false)
+                .transparent(true)
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .center()
@@ -796,6 +896,14 @@ pub fn run() {
                 .build()
                 .map_err(|error| error.to_string())?;
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             load_library,
@@ -807,6 +915,8 @@ pub fn run() {
             save_note,
             rename_note,
             duplicate_note,
+            move_note_to_folder,
+            reveal_note_in_file_manager,
             move_note_to_trash,
             move_folder_to_trash,
             restore_note_from_trash,
@@ -816,10 +926,20 @@ pub fn run() {
             import_daily_note_to_new_note,
             show_quick_capture,
             hide_quick_capture,
+            save_selected_library,
+            load_selected_library,
             configure_quick_capture_shortcut
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Margin");
+        .build(tauri::generate_context!())
+        .expect("error while building Margin")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                let _ = show_main_window(app);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
 
 #[cfg(test)]

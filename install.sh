@@ -16,14 +16,15 @@ INSTALLED=0
 
 fail() { printf 'Margin installer: %s\n' "$*" >&2; exit 1; }
 run_as_admin() { if [[ -w "$INSTALL_DIR" ]]; then "$@"; else sudo "$@"; fi; }
+quiet_remove() { run_as_admin rm -rf "$1" >/dev/null 2>&1; }
 
 cleanup() {
-  if [[ -n "$MOUNT_DIR" ]] && mount | grep -Fq "on ${MOUNT_DIR} "; then hdiutil detach "$MOUNT_DIR" -quiet || true; fi
+  if [[ -n "$MOUNT_DIR" ]] && mount | grep -Fq "on ${MOUNT_DIR} "; then hdiutil detach "$MOUNT_DIR" -quiet >/dev/null 2>&1 || true; fi
   if [[ "$INSTALLED" -ne 1 && "$HAD_EXISTING" -eq 1 && -e "$BACKUP" ]]; then
-    run_as_admin rm -rf "$TARGET" || true
-    run_as_admin mv "$BACKUP" "$TARGET" || true
+    quiet_remove "$TARGET" || true
+    run_as_admin mv "$BACKUP" "$TARGET" >/dev/null 2>&1 || true
   fi
-  [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
+  [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -55,13 +56,13 @@ fi
 
 run_as_admin mkdir -p "$INSTALL_DIR"
 if [[ -e "$TARGET" ]]; then
-  run_as_admin rm -rf "$BACKUP"
+  quiet_remove "$BACKUP" || fail "could not prepare the existing installation"
   run_as_admin mv "$TARGET" "$BACKUP"
   HAD_EXISTING=1
 fi
 run_as_admin ditto "$APP_BUNDLE" "$TARGET"
 INSTALLED=1
-if [[ "$HAD_EXISTING" -eq 1 ]]; then run_as_admin rm -rf "$BACKUP"; fi
+if [[ "$HAD_EXISTING" -eq 1 ]]; then quiet_remove "$BACKUP" || fail "installed Margin but could not remove the previous backup"; fi
 
 printf 'Installed %s in %s\n' "$APP_NAME" "$INSTALL_DIR"
 printf 'Open it from Applications, then choose your notes folder.\n'

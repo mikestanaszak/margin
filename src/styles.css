@@ -41,6 +41,25 @@ html.capture-window-html,body.capture-window-body,body.capture-window-body #root
 
 .note-context-menu { position:fixed; z-index:30; width:172px; padding:5px; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); }.note-context-menu p { padding:5px 7px 7px; margin:0 0 3px; overflow:hidden; color:var(--faint); text-overflow:ellipsis; white-space:nowrap; border-bottom:1px solid var(--border); font-size:11px; }.note-context-menu button { display:block; width:100%; padding:7px 8px; color:var(--text); text-align:left; background:transparent; border:0; border-radius:5px; font-size:12px; }.note-context-menu button:hover { background:var(--surface-soft); }.note-context-menu button.danger { color:var(--danger); }.note-context-menu button.danger:hover { background:color-mix(in srgb,var(--danger) 10%,transparent); }
 
+/* Keep the native quick-capture window visually weightless outside its card. */
+html.capture-window-html,body.capture-window-body,body.capture-window-body #root,.capture-window { background:transparent; }
+.capture-card { overflow:hidden; }
+
+/* Settings may contain a long language list and shortcut roster. */
+.settings-dialog { max-height:calc(100vh - 48px); overflow-y:auto; overscroll-behavior:contain; }
+
+/* Lists read as a compact hierarchy without paragraphs creating surprise gaps. */
+.preview ul,.preview ol { margin:.85em 0; padding-left:1.45em; }
+.preview li { padding-left:.16em; margin:.32em 0; }
+.preview li > p { margin:.24em 0; }
+.preview li > ul,.preview li > ol { margin:.34em 0 .42em; }
+.preview .contains-task-list { padding-left:0; list-style:none; }
+.preview .contains-task-list > li { padding-left:0; list-style:none; }
+
+.note-context-menu { width:208px; }
+.note-context-move { display:grid; gap:4px; padding:7px 8px; color:var(--muted); font-size:11px; }
+.note-context-move select { width:100%; padding:5px 6px; color:var(--text); background:var(--surface-soft); border:1px solid var(--border); border-radius:5px; font-size:12px; }
+
 /* Outline workspace: every heading branch owns its own rail, so an H1 spans
    its complete section while nested H2–H6 rails begin only inside their parent. */
 .outline { flex-basis:254px; padding:17px 12px; }.outline-tree { display:grid; gap:2px; padding:0; }.outline-tree::before { display:none; }.outline-node { position:relative; min-width:0; }.outline-node.has-children::before { position:absolute; top:17px; bottom:0; left:calc(10px + var(--outline-indent)); width:1px; background:var(--border); content:""; }.outline-node.active-ancestor.has-children::before { background:color-mix(in srgb,var(--accent) 48%,var(--border)); }.outline .outline-node > button { position:relative; display:flex; align-items:center; gap:0; width:100%; min-height:30px; padding:6px 8px 6px calc(2px + var(--outline-indent)); overflow:hidden; color:var(--muted); text-align:left; text-overflow:ellipsis; white-space:nowrap; background:transparent; border:0; border-radius:6px; font-size:12px; }.outline-tree .outline-node > button::before,.outline-tree .outline-node > button::after { display:none; content:none; }.outline .outline-node > button:hover { color:var(--text); background:color-mix(in srgb,var(--accent-soft) 66%,transparent); }.outline .outline-node > button.active { color:var(--accent-strong); background:var(--accent-soft); box-shadow:inset 2px 0 var(--accent); font-weight:700; }.outline-node-marker { display:grid; flex:0 0 17px; place-items:center; height:18px; }.outline-node-dot { width:5px; height:5px; background:var(--surface-soft); border:1px solid var(--faint); border-radius:999px; }.outline .outline-node > button.active .outline-node-dot { width:8px; height:8px; background:var(--accent); border-color:var(--surface); box-shadow:0 0 0 1px var(--accent); }.outline-node-label { min-width:0; overflow:hidden; text-overflow:ellipsis; }.outline-unsaved { width:6px; height:6px; margin-left:auto; background:#e6a94d; border-radius:999px; box-shadow:0 0 0 2px color-mix(in srgb,#e6a94d 20%,transparent); }.outline-children { display:grid; gap:2px; }.nr-note-item.nr-is-active { border-color:color-mix(in srgb,var(--accent) 28%,var(--border)); background:color-mix(in srgb,var(--accent-soft) 74%,var(--surface)); box-shadow:inset 3px 0 var(--accent); }.nr-note-unsaved { position:absolute; top:8px; right:9px; width:6px; height:6px; background:#e6a94d; border-radius:999px; box-shadow:0 0 0 2px color-mix(in srgb,#e6a94d 18%,transparent); }.nr-note-item.nr-has-unsaved .nr-note-pin { top:16px; }
