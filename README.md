@@ -37,6 +37,12 @@ curl -fsSL https://raw.githubusercontent.com/mikestanaszak/margin/main/install.s
 
 Releases need to include signed `aarch64.dmg` and `x64.dmg` assets. The installer deliberately refuses unsigned builds; during local development only, set `MARGIN_ALLOW_UNSIGNED=1`.
 
+## In-app updates
+
+Margin checks GitHub Releases once a day and shows a small update badge beside Settings when a signed update is available. Users choose when to download it, and can skip a version. The updater verifies every downloaded artifact against Margin's public signing key before installing it.
+
+The signing keypair lives outside the repository at `%USERPROFILE%\.tauri\margin.key` on Windows. Keep that private key backed up and secret; it must never be committed. Add its contents as the `TAURI_SIGNING_PRIVATE_KEY` GitHub Actions secret, then push a `v*` tag to publish a draft release. The release workflow builds signed Windows and macOS updater assets and generates `latest.json` for the in-app updater.
+
 ## Keyboard shortcuts
 
 The app uses the platform's primary shortcut modifier: **Command** on macOS and **Control** on Windows/Linux. This applies to New Note, Save, Search, Quick Switcher, Edit/Preview, focus navigation, and the Markdown formatting shortcuts for bold, italic, and links.

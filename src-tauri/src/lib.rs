@@ -759,6 +759,8 @@ fn move_folder_to_trash(folder: String, library_path: String) -> Result<(), Stri
 pub fn run() {
     let default_capture = default_capture_shortcut();
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()

@@ -248,3 +248,4 @@ The first implementation will use **Tauri 2**, with a **React + TypeScript** int
 - The Rust layer exposes a narrow command API scoped to the selected library folder; it reads, indexes, watches, and safely writes note files.
 - The app uses the operating system WebView, keeping the installed application relatively small compared with a bundled-browser approach.
 - This boundary also keeps direct filesystem access out of the renderer, which is important for a local-files application.
+- Signed release updates are checked quietly once per day. When an update exists, the interface shows a non-blocking badge and lets the user download, install, restart, or skip that version.

@@ -8,6 +8,14 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": ["icons/icon.ico", "icons/icon.icns", "icons/icon.png"]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFGQjNEQzk1NUMyRjAzQzEKUldUQkF5OWNsZHl6SHg2cFhid3YyenowTkJOdDhIWFlERGFpTitvaVpEb0ErWFcwZnNSenhiVXcK",
+      "endpoints": ["https://github.com/mikestanaszak/margin/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
   }
 }
