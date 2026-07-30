@@ -16,7 +16,7 @@ Install the latest signed release with one command:
 curl -fsSL https://raw.githubusercontent.com/mikestanaszak/margin/main/install.sh | bash
 ```
 
-It detects Apple Silicon, verifies the download, and installs **Margin.app** in `/Applications`.
+It detects Apple Silicon, verifies the download, and installs **Margin.app** in `/Applications`. If Margin is already there, it safely replaces that app bundle with the new version.
 
 To choose a version or install only for your user:
 
@@ -26,7 +26,13 @@ curl -fsSL https://raw.githubusercontent.com/mikestanaszak/margin/main/install.s
 
 ### Windows
 
-Download the Windows installer from the [latest release](https://github.com/mikestanaszak/margin/releases/latest), then run it. Your notes stay in the folder you choose.
+Run this in PowerShell to install the latest Windows release:
+
+```powershell
+irm https://raw.githubusercontent.com/mikestanaszak/margin/main/install.ps1 | iex
+```
+
+It closes a running Margin process and replaces an existing Margin installation. You can also download the Windows installer from the [latest release](https://github.com/mikestanaszak/margin/releases/latest). Your notes stay in the folder you choose.
 
 ### Linux
 
