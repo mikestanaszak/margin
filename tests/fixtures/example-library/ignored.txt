@@ -1,0 +1,1 @@
+Margin should ignore this non-Markdown file while indexing the example library.

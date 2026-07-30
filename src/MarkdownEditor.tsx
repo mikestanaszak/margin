@@ -80,7 +80,7 @@ const editorTheme = EditorView.theme({
   ".cm-line": { padding: "0" },
 });
 
-function captureViewState(view: EditorView): SavedViewState {
+export function captureViewState(view: EditorView): SavedViewState {
   const { selection } = view.state;
   return {
     ranges: selection.ranges.map(({ anchor, head }) => ({ anchor, head })),
@@ -89,7 +89,7 @@ function captureViewState(view: EditorView): SavedViewState {
   };
 }
 
-function selectionFromSaved(
+export function selectionFromSaved(
   saved: SavedViewState | undefined,
   docLength: number,
 ): EditorSelection {
@@ -115,7 +115,7 @@ function selectedRange(
     : EditorSelection.range(from, to);
 }
 
-function wrapSelection(view: EditorView, left: string, right = left): boolean {
+export function wrapSelection(view: EditorView, left: string, right = left): boolean {
   const { state } = view;
   const transaction = state.changeByRange((range) => {
     const selected = state.sliceDoc(range.from, range.to);
@@ -180,7 +180,7 @@ function wrapSelection(view: EditorView, left: string, right = left): boolean {
   return true;
 }
 
-function insertLink(view: EditorView): boolean {
+export function insertLink(view: EditorView): boolean {
   const { state } = view;
   const transaction = state.changeByRange((range) => {
     const selected = state.sliceDoc(range.from, range.to);
@@ -202,7 +202,7 @@ function insertLink(view: EditorView): boolean {
   return true;
 }
 
-function applyHeading(view: EditorView, level: number): boolean {
+export function applyHeading(view: EditorView, level: number): boolean {
   const range = view.state.selection.main;
   const start = view.state.doc.lineAt(range.from);
   const end = view.state.doc.lineAt(range.to);
@@ -222,7 +222,7 @@ function applyHeading(view: EditorView, level: number): boolean {
   return true;
 }
 
-function insertTable(view: EditorView, requestedRows = 3, requestedColumns = 3): boolean {
+export function insertTable(view: EditorView, requestedRows = 3, requestedColumns = 3): boolean {
   const rows = Math.min(12, Math.max(1, Math.floor(requestedRows)));
   const columns = Math.min(8, Math.max(1, Math.floor(requestedColumns)));
   const range = view.state.selection.main;

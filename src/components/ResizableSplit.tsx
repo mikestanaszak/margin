@@ -115,7 +115,7 @@ export function ResizableSplit({
 
   const commitRatio = useCallback(
     (nextRatio: number) => {
-      const next = clampRatio(nextRatio);
+      const next = Math.round(clampRatio(nextRatio) * 1_000_000) / 1_000_000;
       setRatio(next);
       onRatioChange?.(next);
 

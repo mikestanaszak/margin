@@ -344,6 +344,7 @@ function bodyExcerpt(note: NoteListItemData) {
   const source = note.body ?? note.searchableText ?? note.searchable_text ?? "";
   return source
     .replace(/^---[\s\S]*?---\s*/m, "")
+    .replace(/^#{1,6}\s+.*$/gm, "")
     // Wiki links are app navigation, not literal text. Their readable label is
     // what belongs in an All Notes preview card.
     .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")

@@ -62,11 +62,12 @@ The primary modifier is Command on macOS and Control on Windows/Linux. Defaults 
 - External edits refresh the index; conflicting unsaved changes require a user decision.
 - The desktop app suppresses browser-style context menus in its capture window and uses native window behavior where available.
 - The interface remains keyboard-accessible, with visible focus behavior and system-aware color choices.
+- Automated regression suites cover native file workflows, representative Markdown libraries, preview interaction, editing commands, navigation, and layout controls; `TESTING.md` tracks desktop-only smoke checks.
 
 ## Near-term roadmap
 
 - Publish signed Windows and macOS installers for each release, then add Linux packages.
-- Add automated coverage around file operations, preview interaction, and quick-capture flows.
+- Expand automated coverage to native-window integration and signed staged-update installation.
 - Add templates and daily-note creation options.
 - Explore optional Git-aware library status and a version-history workflow without compromising file ownership.
 - Improve import paths from popular Markdown exports while keeping the output ordinary Markdown.
