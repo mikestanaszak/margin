@@ -176,6 +176,16 @@ fn folder_for_path(library: &Path, path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// Returns the path of a directory itself relative to the selected library.
+/// `folder_for_path` intentionally returns a note's parent, so it must not be
+/// used for a folder: doing so turns `Work/Planning` into just `Work` and makes
+/// a top-level folder look like the library root.
+fn relative_folder_path(library: &Path, path: &Path) -> Result<String, String> {
+    path.strip_prefix(library)
+        .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+        .map_err(|_| "Folder is outside the selected library".into())
+}
+
 /// Converts an app-provided folder name into a path that is guaranteed to stay
 /// inside the selected library. Notes stay ordinary files in these folders.
 fn library_folder(library: &Path, folder: Option<String>) -> Result<PathBuf, String> {
@@ -422,7 +432,7 @@ fn create_folder(library_path: String, folder: String) -> Result<String, String>
     let library = PathBuf::from(library_path);
     let destination = library_folder(&library, Some(folder))?;
     fs::create_dir_all(&destination).map_err(|e| e.to_string())?;
-    Ok(folder_for_path(&library, &destination))
+    relative_folder_path(&library, &destination)
 }
 
 #[tauri::command]
@@ -433,7 +443,7 @@ fn rename_folder(
 ) -> Result<FolderRenameResult, String> {
     let library = PathBuf::from(library_path);
     let source = library_folder(&library, Some(folder))?;
-    if folder_for_path(&library, &source).is_empty() {
+    if relative_folder_path(&library, &source)?.is_empty() {
         return Err("Choose a folder inside the selected library".into());
     }
     if source.starts_with(library.join(".markdown-notes")) {
@@ -488,10 +498,7 @@ fn rename_folder(
         fs::rename(&source, &destination).map_err(|error| error.to_string())?;
     }
     Ok(FolderRenameResult {
-        folder: destination
-            .strip_prefix(&library)
-            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-            .map_err(|_| "Folder is outside the selected library")?,
+        folder: relative_folder_path(&library, &destination)?,
         paths,
     })
 }
@@ -1186,7 +1193,10 @@ mod tests {
         fs::create_dir_all(&library).unwrap();
         let library_path = library.to_string_lossy().to_string();
         let result = (|| -> Result<(), String> {
-            create_folder(library_path.clone(), "Work/Planning".into())?;
+            assert_eq!(
+                create_folder(library_path.clone(), "Work/Planning".into())?,
+                "Work/Planning"
+            );
             let mut note = create_note(library_path.clone(), Some("Work/Planning".into()))?;
             note.body = "# Sprint\n".into();
             let saved = save_note(note)?;
@@ -1215,6 +1225,20 @@ mod tests {
             assert!(PathBuf::from(&renamed_folder.paths[0].to)
                 .ends_with(Path::new("Work").join("Roadmap").join("Sprint.md")));
             let saved = read_note_file(Path::new(&renamed_folder.paths[0].to))?;
+
+            assert_eq!(
+                create_folder(library_path.clone(), "Inbox".into())?,
+                "Inbox"
+            );
+            let mut inbox_note = create_note(library_path.clone(), Some("Inbox".into()))?;
+            inbox_note.body = "# Triage item\n".into();
+            save_note(inbox_note)?;
+            let renamed_top_level =
+                rename_folder("Inbox".into(), "Triage".into(), library_path.clone())?;
+            assert_eq!(renamed_top_level.folder, "Triage");
+            assert_eq!(renamed_top_level.paths.len(), 1);
+            assert!(Path::new(&renamed_top_level.paths[0].to)
+                .ends_with(Path::new("Triage").join("Triage item.md")));
 
             move_note_to_trash(saved.path, library_path.clone())?;
             assert!(library
