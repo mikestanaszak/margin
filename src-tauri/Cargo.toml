@@ -1,6 +1,6 @@
 [package]
 name = "margin"
-version = "0.1.1"
+version = "0.1.2"
 description = "A local-first Markdown notes app called Margin"
 edition = "2021"
 
@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["macos-private-api", "protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2.3.2"
 walkdir = "2"
