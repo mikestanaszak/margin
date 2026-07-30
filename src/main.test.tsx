@@ -18,6 +18,8 @@ import {
   CascadingNoteOptions,
   captureMarkdownEdit,
   ConflictDialog,
+  FolderNoteTree,
+  FolderTree,
   MarkdownPreview,
   QuickCaptureDialog,
   SettingsDialog,
@@ -183,6 +185,28 @@ describe("navigation structures and safety dialogs", () => {
     expect(screen.getByRole("option", { name: /Work/ })).toBeDisabled();
     expect(screen.getByRole("option", { name: /Project Alpha/ })).toHaveValue(notes[0].path);
     expect(screen.getByRole("option", { name: /Café ideas/ })).toHaveValue(notes[1].path);
+  });
+
+  it("uses a plus control for subfolders and a double-click for folder renaming", () => {
+    const onAddSubfolder = vi.fn();
+    const onRename = vi.fn();
+    render(<FolderTree folders={["Work", "Work/Research"]} counts={{ Work: 1, "Work/Research": 1 }} collapsed={[]} onSelect={() => undefined} onToggle={() => undefined} onAddSubfolder={onAddSubfolder} onRename={onRename} onDelete={() => undefined} />);
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Work 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add subfolder to Work" }));
+    expect(onRename).toHaveBeenCalledWith("Work");
+    expect(onAddSubfolder).toHaveBeenCalledWith("Work");
+    expect(screen.queryByRole("button", { name: "Rename Work" })).not.toBeInTheDocument();
+  });
+
+  it("keeps selected-folder notes grouped under their nested folders", () => {
+    const treeNotes = [
+      { ...notes[0], folder: "Work/Ideas", title: "Idea one" },
+      { ...notes[1], folder: "Work/Personal", title: "Personal one" },
+      { ...notes[1], path: "C:/Notes/Work/Personal/Two.md", folder: "Work/Personal", title: "Personal two" },
+    ];
+    render(<FolderNoteTree root="Work" folders={["Work", "Work/Ideas", "Work/Personal"]} notes={treeNotes} renderNote={note => <p key={note.path}>{note.title}</p>} />);
+    expect(screen.getByText("Ideas").closest("section")).toHaveTextContent("Ideas1Idea one");
+    expect(screen.getByText("Personal").closest("section")).toHaveTextContent("Personal2Personal onePersonal two");
   });
 
   it("keeps both external-conflict choices explicit", () => {

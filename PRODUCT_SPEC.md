@@ -19,7 +19,7 @@ Margin is built with Tauri 2, React, TypeScript, and Rust. The interface handles
 ### Libraries and files
 
 - A user chooses a local folder as a library. Margin recursively discovers Markdown files and watches for external changes.
-- Folders are the primary organization system. The sidebar includes **All notes**, **Favorites**, **Trash**, and a collapsible folder tree.
+- Folders are the primary organization system. The sidebar includes **All notes**, **Favorites**, **Trash**, and a collapsible folder tree. Double-click a folder name to rename it; its inline plus control adds a subfolder. Selecting a parent folder groups its notes by their nested folders instead of flattening them into one list.
 - The first level-one heading is the note title. Saving keeps the filename aligned with that title, disambiguating duplicates safely.
 - New notes, folders, note moves, duplication, rename, trash, folder trash, restore, and permanent deletion all operate on normal filesystem objects within the chosen library.
 
