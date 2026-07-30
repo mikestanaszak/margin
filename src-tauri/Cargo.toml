@@ -1,15 +1,15 @@
 [package]
-name = "markdown-notes"
+name = "margin"
 version = "0.1.0"
-description = "A local-first Markdown notes app"
+description = "A local-first Markdown notes app called Margin"
 edition = "2021"
 
 [lib]
-name = "markdown_notes_lib"
+name = "margin_lib"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "markdown-notes"
+name = "margin"
 path = "src/main.rs"
 
 [dependencies]
@@ -17,6 +17,7 @@ serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-global-shortcut = "2.3.2"
 walkdir = "2"
 chrono = { version = "0.4", features = ["clock"] }
 

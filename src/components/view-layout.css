@@ -27,7 +27,7 @@
   position: absolute;
   inset: 0 3px;
   content: "";
-  background: #dfe5df;
+  background: var(--nr-border);
   transition: background-color 120ms ease, box-shadow 120ms ease;
 }
 
@@ -36,18 +36,18 @@
   inline-size: 3px;
   block-size: 32px;
   border-radius: 999px;
-  background: #849188;
+  background: var(--nr-muted);
   opacity: 0;
   transition: opacity 120ms ease;
 }
 
 .nr-resizable-split__divider:hover::before,
 .nr-resizable-split__divider:focus-visible::before {
-  background: #b8c9be;
+  background: var(--nr-highlight);
 }
 
 .nr-resizable-split__divider:focus-visible::before {
-  box-shadow: 0 0 0 2px #2d7258;
+  box-shadow: 0 0 0 2px var(--nr-accent);
 }
 
 .nr-resizable-split__divider:hover > span,
@@ -59,9 +59,9 @@
   display: inline-flex;
   gap: 2px;
   padding: 3px;
-  border: 1px solid #e1e5df;
+  border: 1px solid var(--nr-border);
   border-radius: 8px;
-  background: #f0f2ed;
+  background: var(--nr-highlight);
 }
 
 .nr-view-mode__button,
@@ -69,7 +69,7 @@
   min-block-size: 30px;
   border: 0;
   border-radius: 6px;
-  color: #657168;
+  color: var(--nr-muted);
   background: transparent;
   font: inherit;
   cursor: pointer;
@@ -84,19 +84,19 @@
 
 .nr-view-mode__button:hover:not(:disabled),
 .nr-focus-mode:hover:not(:disabled) {
-  color: #243d30;
-  background: #e5e9e3;
+  color: var(--nr-text);
+  background: var(--nr-border);
 }
 
 .nr-view-mode__button[aria-pressed="true"] {
-  color: #243d30;
-  background: #fff;
+  color: var(--nr-text);
+  background: var(--nr-surface);
   box-shadow: 0 1px 3px #00000014;
 }
 
 .nr-view-mode__button:focus-visible,
 .nr-focus-mode:focus-visible {
-  outline: 2px solid #2d7258;
+  outline: 2px solid var(--nr-accent);
   outline-offset: 2px;
 }
 
@@ -109,10 +109,10 @@
 .nr-view-mode kbd,
 .nr-focus-mode kbd {
   padding: 1px 4px;
-  border: 1px solid #ccd3cc;
+  border: 1px solid var(--nr-border);
   border-radius: 4px;
   color: inherit;
-  background: #f7f8f5;
+  background: var(--nr-surface);
   font: 10px/1.4 ui-monospace, "SFMono-Regular", Consolas, monospace;
 }
 
@@ -131,49 +131,6 @@
 .nr-focus-mode__icon {
   display: inline-grid;
   place-items: center;
-}
-
-@media (prefers-color-scheme: dark) {
-  .nr-resizable-split__divider::before {
-    background: #35433b;
-  }
-
-  .nr-resizable-split__divider:hover::before,
-  .nr-resizable-split__divider:focus-visible::before {
-    background: #65776b;
-  }
-
-  .nr-view-mode {
-    border-color: #435148;
-    background: #2c3931;
-  }
-
-  .nr-view-mode__button,
-  .nr-focus-mode {
-    color: #bdc8c0;
-  }
-
-  .nr-view-mode__button:hover:not(:disabled),
-  .nr-focus-mode:hover:not(:disabled) {
-    color: #f2f7f3;
-    background: #35443b;
-  }
-
-  .nr-view-mode__button[aria-pressed="true"] {
-    color: #fff;
-    background: #3b4a40;
-  }
-
-  .nr-view-mode kbd,
-  .nr-focus-mode kbd {
-    border-color: #56665b;
-    background: #26332c;
-  }
-
-  .nr-focus-mode[aria-pressed="true"] {
-    color: #d8f1e1;
-    background: #335642;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

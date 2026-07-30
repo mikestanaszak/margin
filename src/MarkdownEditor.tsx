@@ -3,6 +3,7 @@ import {
   useImperativeHandle,
   useLayoutEffect,
   useRef,
+  useState,
   type CSSProperties,
 } from "react";
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
@@ -24,6 +25,7 @@ import {
   keymap,
   placeholder as placeholderExtension,
 } from "@codemirror/view";
+import { primaryShortcutPressed } from "./platform";
 
 export type MarkdownEditorProps = {
   /** Stable filesystem path (or another stable note ID) used for view restoration. */
@@ -42,6 +44,7 @@ export type MarkdownEditorProps = {
 export type MarkdownEditorHandle = {
   focus: () => void;
   getView: () => EditorView | null;
+  insertTable: (rows?: number, columns?: number) => void;
 };
 
 type SavedViewState = {
@@ -199,6 +202,48 @@ function insertLink(view: EditorView): boolean {
   return true;
 }
 
+function applyHeading(view: EditorView, level: number): boolean {
+  const range = view.state.selection.main;
+  const start = view.state.doc.lineAt(range.from);
+  const end = view.state.doc.lineAt(range.to);
+  const source = view.state.sliceDoc(start.from, end.to);
+  const prefix = `${"#".repeat(level)} `;
+  const replacement = source
+    .split("\n")
+    .map((line) => `${prefix}${line.replace(/^#{1,6}\s+/, "")}`)
+    .join("\n");
+
+  view.dispatch({
+    changes: { from: start.from, to: end.to, insert: replacement },
+    selection: EditorSelection.range(start.from, start.from + replacement.length),
+    scrollIntoView: true,
+    userEvent: "input",
+  });
+  return true;
+}
+
+function insertTable(view: EditorView, requestedRows = 3, requestedColumns = 3): boolean {
+  const rows = Math.min(12, Math.max(1, Math.floor(requestedRows)));
+  const columns = Math.min(8, Math.max(1, Math.floor(requestedColumns)));
+  const range = view.state.selection.main;
+  const header = Array.from({ length: columns }, (_, index) => ` Column ${index + 1} `);
+  const divider = Array.from({ length: columns }, () => " --- ");
+  const body = Array.from({ length: rows }, () => Array.from({ length: columns }, () => "   "));
+  const table = [header, divider, ...body].map((cells) => `|${cells.join("|")}|`).join("\n");
+  const before = range.from > 0 && view.state.sliceDoc(range.from - 1, range.from) !== "\n" ? "\n\n" : "";
+  const after = range.to < view.state.doc.length && view.state.sliceDoc(range.to, range.to + 1) !== "\n" ? "\n\n" : "";
+  const replacement = `${before}${table}${after}`;
+  const cellStart = range.from + before.length + 2;
+
+  view.dispatch({
+    changes: { from: range.from, to: range.to, insert: replacement },
+    selection: EditorSelection.cursor(cellStart),
+    scrollIntoView: true,
+    userEvent: "input",
+  });
+  return true;
+}
+
 function saveViewState(notePath: string, view: EditorView): void {
   savedViewStates.set(notePath, captureViewState(view));
 }
@@ -229,6 +274,7 @@ export const MarkdownEditor = forwardRef<
   const onBlurRef = useRef(onBlur);
   const applyingControlledValueRef = useRef(false);
   const restoreFrameRef = useRef<number | null>(null);
+  const [toolbarPosition, setToolbarPosition] = useState<{ left: number; top: number } | null>(null);
 
   onChangeRef.current = onChange;
   onBlurRef.current = onBlur;
@@ -238,6 +284,9 @@ export const MarkdownEditor = forwardRef<
     () => ({
       focus: () => viewRef.current?.focus(),
       getView: () => viewRef.current,
+      insertTable: (rows, columns) => {
+        if (viewRef.current) insertTable(viewRef.current, rows, columns);
+      },
     }),
     [],
   );
@@ -245,6 +294,17 @@ export const MarkdownEditor = forwardRef<
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    const updateToolbarPosition = (view: EditorView) => {
+      const selection = view.state.selection.main;
+      if (selection.empty) return setToolbarPosition(null);
+      const coordinates = view.coordsAtPos(selection.to);
+      const bounds = host.getBoundingClientRect();
+      if (!coordinates || !bounds.width) return setToolbarPosition(null);
+      setToolbarPosition({
+        left: Math.min(bounds.width - 236, Math.max(8, coordinates.left - bounds.left - 82)),
+        top: Math.max(8, coordinates.top - bounds.top - 46),
+      });
+    };
 
     const extensions: Extension[] = [
       markdown(),
@@ -261,6 +321,7 @@ export const MarkdownEditor = forwardRef<
         if (update.docChanged && !applyingControlledValueRef.current) {
           onChangeRef.current(update.state.doc.toString());
         }
+        if (update.selectionSet || update.docChanged) updateToolbarPosition(update.view);
       }),
       EditorView.domEventHandlers({
         blur: () => {
@@ -268,7 +329,7 @@ export const MarkdownEditor = forwardRef<
           return false;
         },
         keydown: (event, editorView) => {
-          if (!(event.metaKey || event.ctrlKey) || event.altKey) return false;
+          if (!primaryShortcutPressed(event) || event.altKey) return false;
           const key = event.key.toLowerCase();
           if (key !== "b" && key !== "i" && key !== "k") return false;
 
@@ -325,7 +386,12 @@ export const MarkdownEditor = forwardRef<
     if (notePathRef.current !== notePath) {
       saveViewState(notePathRef.current, view);
       notePathRef.current = notePath;
-      const saved = savedViewStates.get(notePath);
+      // A title edit can rename the current file. When its document is
+      // unchanged, carry the active view state to the new path rather than
+      // treating it as a different note and jumping back to the top.
+      const currentViewState = captureViewState(view);
+      const renamedInPlace = view.state.doc.toString() === value;
+      const saved = savedViewStates.get(notePath) ?? (renamedInPlace ? currentViewState : undefined);
 
       // A fresh EditorState prevents undo history from crossing note boundaries.
       view.setState(
@@ -362,12 +428,22 @@ export const MarkdownEditor = forwardRef<
   }, [notePath, value]);
 
   return (
-    <div
+      <div
       ref={hostRef}
       className={className}
       style={{ minHeight: 0, ...style }}
       data-note-path={notePath}
-    />
+    >
+      {toolbarPosition && <div className="markdown-editor-toolbar" style={toolbarPosition} role="toolbar" aria-label="Format selected text" onMouseDown={event => event.preventDefault()}>
+        <button type="button" title="Heading 2" onClick={() => viewRef.current && applyHeading(viewRef.current, 2)}>H2</button>
+        <button type="button" title="Heading 3" onClick={() => viewRef.current && applyHeading(viewRef.current, 3)}>H3</button>
+        <span aria-hidden="true" />
+        <button type="button" title="Bold" onClick={() => viewRef.current && wrapSelection(viewRef.current, "**")}>B</button>
+        <button type="button" title="Italic" onClick={() => viewRef.current && wrapSelection(viewRef.current, "_")}>I</button>
+        <button type="button" title="Link" onClick={() => viewRef.current && insertLink(viewRef.current)}>↗</button>
+        <button type="button" title="Insert 3 by 3 table" onClick={() => viewRef.current && insertTable(viewRef.current)}>▦</button>
+      </div>}
+    </div>
   );
 });
 

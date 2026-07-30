@@ -307,9 +307,11 @@ export interface NoteListItemData {
 export interface NoteListItemProps<T extends NoteListItemData = NoteListItemData> {
   note: T;
   active?: boolean;
+  dirty?: boolean;
   pinned?: boolean;
   onOpen: (note: T) => void;
   onTogglePin?: (note: T) => void;
+  onContextMenu?: (note: T, position: { x: number; y: number }) => void;
   className?: string;
   locale?: string;
   now?: number;
@@ -342,8 +344,14 @@ function bodyExcerpt(note: NoteListItemData) {
   const source = note.body ?? note.searchableText ?? note.searchable_text ?? "";
   return source
     .replace(/^---[\s\S]*?---\s*/m, "")
+    // Wiki links are app navigation, not literal text. Their readable label is
+    // what belongs in an All Notes preview card.
+    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")
+    .replace(/\[\[([^\]]+)\]\]/g, "$1")
     .replace(/^[#>*_`~\-]+\s*/gm, "")
+    .replace(/\[\s?[xX ]\s?\]\s*/g, "")
     .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|\*|_|~~|`)/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -351,16 +359,19 @@ function bodyExcerpt(note: NoteListItemData) {
 export function NoteListItem<T extends NoteListItemData>({
   note,
   active = false,
+  dirty = false,
   pinned = false,
   onOpen,
   onTogglePin,
+  onContextMenu,
   className = "",
   locale,
   now,
 }: NoteListItemProps<T>) {
   const excerpt = bodyExcerpt(note);
   return (
-    <article className={`nr-note-item${active ? " nr-is-active" : ""} ${className}`.trim()} data-note-path={note.path}>
+    <article className={`nr-note-item${active ? " nr-is-active" : ""}${dirty ? " nr-has-unsaved" : ""} ${className}`.trim()} data-note-path={note.path} onContextMenu={event => { event.preventDefault(); onContextMenu?.(note, { x: event.clientX, y: event.clientY }); }}>
+      {dirty && <span className="nr-note-unsaved" role="status" aria-label="Unsaved changes" />}
       <button
         type="button"
         className="nr-note-main"
@@ -376,18 +387,7 @@ export function NoteListItem<T extends NoteListItemData>({
           <time dateTime={new Date(timestamp(note.updated)).toISOString()}>{formatRelativeDate(note.updated, now, locale)}</time>
         </span>
       </button>
-      {onTogglePin && (
-        <button
-          type="button"
-          className="nr-note-pin"
-          aria-label={`${pinned ? "Unpin" : "Pin"} ${note.title || "Untitled"}`}
-          aria-pressed={pinned}
-          title={pinned ? "Unpin note" : "Pin note"}
-          onClick={() => onTogglePin(note)}
-        >
-          <span aria-hidden="true">{pinned ? "★" : "☆"}</span>
-        </button>
-      )}
+      {onTogglePin && <div className="nr-note-actions"><button type="button" className="nr-note-pin" aria-label={`${pinned ? "Unpin" : "Pin"} ${note.title || "Untitled"}`} aria-pressed={pinned} title={pinned ? "Unpin note" : "Pin note"} onClick={() => onTogglePin(note)}><span aria-hidden="true">{pinned ? "★" : "☆"}</span></button></div>}
     </article>
   );
 }

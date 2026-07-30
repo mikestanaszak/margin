@@ -1,4 +1,4 @@
-# Markdown Notes — Product Specification (Draft)
+# Margin — Product Specification (Draft)
 
 ## 1. Product summary
 
@@ -191,6 +191,9 @@ Open question: whether filename renames should follow later title changes. Defau
 - **Backlinks** — recognize `[[Note title]]` links and show notes that link to the current note. This turns individual files into a useful knowledge network.
 - **Templates** — create a note from reusable Markdown templates for meetings, daily notes, recipes, or project briefs.
 - **Daily note command** — opens or creates today's dated note from a template.
+- **Global quick capture** — a system-wide shortcut available while the app is running. The default is `Cmd+Option+Shift+Space` on macOS and `Ctrl+Alt+Shift+Space` on Windows/Linux; users can change or disable it in Settings. It opens a compact, focused capture window above any desktop. Enter saves a timestamped capture, `Shift+Enter` adds a line break, and Escape dismisses it without writing.
+
+  Captures append to `Daily/YYYY-MM-DD.md`, creating the file with `# YYYY-MM-DD` when needed. Each capture is an `##` timestamped section so individual thoughts remain distinguishable. A later **Extract to note** action will turn one section into a new standalone note, replace the original text with a wiki link, and preserve the original daily context. The feature requires a persisted selected-library setting, a native Tauri global-shortcut integration, a dedicated always-on-top capture window, shortcut-conflict feedback, and focused tests for append, cancellation, and extraction. It works from any app or virtual desktop while Margin is running; launching it at sign-in is a separate opt-in setting.
 - **Tag rename/merge** — rename a tag across the library or merge duplicates such as `todo` and `To Do` safely.
 - **Drag-and-drop attachments** — copy dropped images/files into a predictable library attachments folder and insert portable relative links.
 - **Markdown formatting shortcuts** — toolbar plus familiar shortcuts for bold, italic, links, headings, and lists while still keeping the raw Markdown model.

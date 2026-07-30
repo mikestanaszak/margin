@@ -1,3 +1,3 @@
 fn main() {
-    markdown_notes_lib::run();
+    margin_lib::run();
 }
