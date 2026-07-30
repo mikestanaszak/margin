@@ -1,74 +1,45 @@
-# Margin — Product Specification
+# Margin — Features
 
-## Product summary
+## Available now
 
-Margin is a local-first desktop workspace for Markdown notes on macOS, Windows, and Linux. A library is an ordinary folder of UTF-8 `.md` files; there is no account, cloud service, or proprietary note database.
+### Notes and libraries
 
-Margin is built with Tauri 2, React, TypeScript, and Rust. The interface handles writing and navigation while the native layer reads and safely writes only inside the library the user selects.
+- Local Markdown libraries: recursive indexing, external-file refresh, and normal UTF-8 `.md` files.
+- First H1 is the note title; filenames stay aligned with titles.
+- Notes can be created, duplicated, renamed, moved, trashed, restored, permanently deleted, and revealed in Finder or File Explorer.
+- Folders can be created, nested, renamed by double-clicking their name, and moved to Trash. The inline plus button adds a subfolder.
+- Selecting a parent folder groups notes by nested folders instead of flattening them.
+- Favorites, All notes, Trash, folder counts, folder collapse state, and resizable navigation panes.
 
-## Product principles
+### Editing and preview
 
-- **Files first.** Notes stay useful in Finder, Explorer, and other Markdown tools.
-- **Calm by default.** The reading surface should be quiet, clear, and quick to navigate.
-- **Markdown without friction.** Preview makes common Markdown pleasant to read; helpers make tables, tasks, code, and links easier to use.
-- **Local and safe.** Core work is offline. Autosave and external-change handling must not silently discard content.
-- **Native where it matters.** Keyboard shortcuts, file selection, quick capture, and updates should feel at home on each platform.
+- Preview is the default; Cmd/Ctrl+E switches between Preview and Edit, with Split view available.
+- GitHub-flavored Markdown preview: headings, links, images, tasks, tables, blockquotes, and highlighted code blocks.
+- Preview tasks are clickable and save their completion state.
+- Tables can be edited in place, with row/column insertion, deletion, and reordering.
+- Internal Markdown and wiki links open the matching note; web links open in the system browser.
+- Inline code can be selected with a double-click.
+- Autosave preserves editor selection and scroll position.
+- Heading outline with hierarchy, active-section tracking, and a configurable shortcut.
 
-## Current experience
+### Capture, import, and customization
 
-### Libraries and files
+- Global Quick Capture: Cmd+Option+Shift+Space on macOS; Ctrl+Alt+Shift+Space elsewhere by default.
+- Quick Capture supports Markdown list continuation and appends to a daily note.
+- Daily captures can be imported into a configured default note, another existing note, or a new note in any folder.
+- Light, dark, and system appearance; system is the default.
+- Settings for library location, hotkeys, Quick Capture destination, supported code-block languages, and manual update checks.
 
-- A user chooses a local folder as a library. Margin recursively discovers Markdown files and watches for external changes.
-- Folders are the primary organization system. The sidebar includes **All notes**, **Favorites**, **Trash**, and a collapsible folder tree. Double-click a folder name to rename it; its inline plus control adds a subfolder. Selecting a parent folder groups its notes by their nested folders instead of flattening them into one list.
-- The first level-one heading is the note title. Saving keeps the filename aligned with that title, disambiguating duplicates safely.
-- New notes, folders, note moves, duplication, rename, trash, folder trash, restore, and permanent deletion all operate on normal filesystem objects within the chosen library.
+### Desktop and updates
 
-### Reading and writing
+- Native Tauri app for Windows and Apple Silicon macOS.
+- Signed in-app updates, with daily checks and an available-update prompt.
 
-- Preview is the default mode. **Cmd/Ctrl+E** switches between Preview and Edit; Split view shows both together.
-- Preview supports GitHub-flavored Markdown: headings, links, images, task lists, tables, blockquotes, and syntax-highlighted code blocks.
-- Task checkboxes are interactive in Preview and write their completion state back to Markdown without changing layout.
-- Tables have an editor for cell content, adding or removing rows and columns, and reordering rows or columns.
-- Internal Markdown links and wiki links open the target note and reveal its deepest containing folder. The outline panel exposes headings only and follows heading hierarchy.
-- Autosave preserves the current editor selection and scroll position. Opening a note does not alter its last-edited indicator.
+## Planned
 
-### Navigation and customization
-
-- Top navigation provides search and Settings. The note toolbar is limited to **Edit**, **Split**, **Preview**, and **Import**.
-- Sidebars are resizable. Note cards provide a favorite control and a context menu for duplicate and move-to-trash actions.
-- Light, dark, and system appearance are available; system is the default.
-- Settings includes the library location, quick-capture import default, configurable hotkeys, and supported code-block language names.
-
-### Quick capture
-
-- A native global shortcut opens a small, focused capture window on the active desktop: **Cmd+Option+Shift+Space** on macOS and **Ctrl+Alt+Shift+Space** elsewhere by default.
-- Escape or Cancel dismisses the window. Cmd/Ctrl+Enter saves a capture into the library’s daily note.
-- Daily captures can later be imported into a configured default note, any existing note, or a separate note in any folder.
-
-### Updates and privacy
-
-- Margin checks for signed application updates once a day and presents an unobtrusive Settings badge when one is available.
-- The updater verifies signed artifacts before installation. Release signing keys remain outside the repository and are supplied only through CI secrets.
-- Margin does not require network access to create, index, search, or edit notes. It has no telemetry.
-
-## Keyboard shortcuts
-
-The primary modifier is Command on macOS and Control on Windows/Linux. Defaults include New Note, Save, Search, Quick Switcher, Edit/Preview, sidebar toggle, outline toggle, and Quick Capture. Users can review and customize them in Settings; global shortcut conflicts are reported without unregistering the previously working binding.
-
-## Quality bar
-
-- Notes never leave the user-selected library unless the user explicitly copies them.
-- File writes are safe and failures are clearly reported.
-- External edits refresh the index; conflicting unsaved changes require a user decision.
-- The desktop app suppresses browser-style context menus in its capture window and uses native window behavior where available.
-- The interface remains keyboard-accessible, with visible focus behavior and system-aware color choices.
-- Automated regression suites cover native file workflows, representative Markdown libraries, preview interaction, editing commands, navigation, and layout controls; `TESTING.md` tracks desktop-only smoke checks.
-
-## Near-term roadmap
-
-- Publish signed Windows and macOS installers for each release, then add Linux packages.
-- Expand automated coverage to native-window integration and signed staged-update installation.
-- Add templates and daily-note creation options.
-- Explore optional Git-aware library status and a version-history workflow without compromising file ownership.
-- Improve import paths from popular Markdown exports while keeping the output ordinary Markdown.
-- Explore platform-specific `.md` file association so Margin can be selected as the default Markdown opener. Opening a Markdown file outside the active library should preserve the source file and offer deliberate actions: import it as a new note, append all or a selected portion to an existing note, or copy the selected Markdown.
+- Templates and daily-note creation options.
+- Linux packages.
+- Native-window integration and staged-update installation coverage.
+- Optional Git-aware library status and version history.
+- Improved imports from popular Markdown exports.
+- Platform-specific `.md` file association so Margin can be chosen as the default Markdown opener. For Markdown opened outside a library, preserve the source file and offer: import as a new note, append all or a selection to an existing note, or copy selected Markdown.
