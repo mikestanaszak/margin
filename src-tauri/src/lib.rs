@@ -144,6 +144,18 @@ struct NoteSummary {
     folder: String,
 }
 
+#[derive(Serialize)]
+struct FolderRenamePath {
+    from: String,
+    to: String,
+}
+
+#[derive(Serialize)]
+struct FolderRenameResult {
+    folder: String,
+    paths: Vec<FolderRenamePath>,
+}
+
 fn folder_for_path(library: &Path, path: &Path) -> String {
     path.parent()
         .and_then(|parent| parent.strip_prefix(library).ok())
@@ -398,6 +410,77 @@ fn create_folder(library_path: String, folder: String) -> Result<String, String>
     let destination = library_folder(&library, Some(folder))?;
     fs::create_dir_all(&destination).map_err(|e| e.to_string())?;
     Ok(folder_for_path(&library, &destination))
+}
+
+#[tauri::command]
+fn rename_folder(
+    folder: String,
+    name: String,
+    library_path: String,
+) -> Result<FolderRenameResult, String> {
+    let library = PathBuf::from(library_path);
+    let source = library_folder(&library, Some(folder))?;
+    if folder_for_path(&library, &source).is_empty() {
+        return Err("Choose a folder inside the selected library".into());
+    }
+    if source.starts_with(library.join(".markdown-notes")) {
+        return Err("Margin's internal storage cannot be renamed".into());
+    }
+    if !source.is_dir() {
+        return Err("Folder no longer exists".into());
+    }
+
+    let name = name.trim();
+    let path = Path::new(name);
+    if name.is_empty()
+        || path.is_absolute()
+        || !matches!(
+            (path.components().next(), path.components().nth(1)),
+            (Some(std::path::Component::Normal(_)), None)
+        )
+        || safe_file_stem(name) != name
+    {
+        return Err("Folder name must be a single valid folder name".into());
+    }
+
+    let parent = source.parent().ok_or("Folder has no parent")?;
+    let destination = parent.join(name);
+    if destination != source && destination.exists() {
+        return Err("A folder with that name already exists".into());
+    }
+
+    let paths = WalkDir::new(&source)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry.file_type().is_file()
+                && entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+        })
+        .filter_map(|entry| {
+            entry
+                .path()
+                .strip_prefix(&source)
+                .ok()
+                .map(|relative| FolderRenamePath {
+                    from: entry.path().to_string_lossy().to_string(),
+                    to: destination.join(relative).to_string_lossy().to_string(),
+                })
+        })
+        .collect();
+
+    if destination != source {
+        fs::rename(&source, &destination).map_err(|error| error.to_string())?;
+    }
+    Ok(FolderRenameResult {
+        folder: destination
+            .strip_prefix(&library)
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .map_err(|_| "Folder is outside the selected library")?,
+        paths,
+    })
 }
 
 #[tauri::command]
@@ -911,6 +994,7 @@ pub fn run() {
             read_note,
             create_note,
             create_folder,
+            rename_folder,
             load_folders,
             save_note,
             rename_note,
@@ -947,7 +1031,7 @@ mod tests {
     use super::{
         append_quick_note, create_folder, create_note, delete_note_permanently, duplicate_note,
         import_daily_note, import_daily_note_to_new_note, load_folders, load_library, load_trash,
-        move_folder_to_trash, move_note_to_trash, read_note_file, rename_note,
+        move_folder_to_trash, move_note_to_trash, read_note_file, rename_folder, rename_note,
         restore_note_from_trash, save_note, split_front_matter,
     };
     use std::{
@@ -1070,12 +1154,23 @@ mod tests {
                 "Work/Planning"
             );
 
+            let renamed_folder = rename_folder(
+                "Work/Planning".into(),
+                "Roadmap".into(),
+                library_path.clone(),
+            )?;
+            assert_eq!(renamed_folder.folder, "Work/Roadmap");
+            assert_eq!(renamed_folder.paths.len(), 1);
+            assert!(PathBuf::from(&renamed_folder.paths[0].to)
+                .ends_with(Path::new("Work").join("Roadmap").join("Sprint.md")));
+            let saved = read_note_file(Path::new(&renamed_folder.paths[0].to))?;
+
             move_note_to_trash(saved.path, library_path.clone())?;
             assert!(library
                 .join(".markdown-notes")
                 .join("trash")
                 .join("Work")
-                .join("Planning")
+                .join("Roadmap")
                 .join("Sprint.md")
                 .exists());
             let deleted = load_trash(library_path.clone())?;
@@ -1083,7 +1178,7 @@ mod tests {
             let restored = restore_note_from_trash(deleted[0].path.clone(), library_path.clone())?;
             assert!(
                 PathBuf::from(&restored.path)
-                    .ends_with(Path::new("Work").join("Planning").join("Sprint.md")),
+                    .ends_with(Path::new("Work").join("Roadmap").join("Sprint.md")),
                 "{}",
                 restored.path
             );

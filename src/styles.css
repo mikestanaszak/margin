@@ -53,8 +53,13 @@ html.capture-window-html,body.capture-window-body,body.capture-window-body #root
 .preview li { padding-left:.16em; margin:.32em 0; }
 .preview li > p { margin:.24em 0; }
 .preview li > ul,.preview li > ol { margin:.34em 0 .42em; }
-.preview .contains-task-list { padding-left:0; list-style:none; }
-.preview .contains-task-list > li { padding-left:0; list-style:none; }
+.preview .contains-task-list { padding-left:1.45em; list-style:none; }
+.preview .contains-task-list > li { padding-left:.16em; list-style:none; }
+
+/* Folder actions stay quiet until their row is in use. */
+.folder-rename { flex:0 0 22px; width:22px; height:22px; padding:0; color:var(--faint); background:transparent; border:0; border-radius:5px; font-size:14px; line-height:1; opacity:0; }
+.folder-row:hover .folder-rename,.folder-row:focus-within .folder-rename { opacity:1; }
+.folder-rename:hover { color:var(--accent-strong); background:var(--accent-soft); }
 
 .note-context-menu { width:208px; }
 .note-context-move { display:grid; gap:4px; padding:7px 8px; color:var(--muted); font-size:11px; }
