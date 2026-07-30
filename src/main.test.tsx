@@ -11,6 +11,8 @@ vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (path: string) => `asset://${path}`,
   invoke: vi.fn(),
 }));
+const { openUrl } = vi.hoisted(() => ({ openUrl: vi.fn() }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl }));
 
 import {
   CascadingNoteOptions,
@@ -84,7 +86,8 @@ describe("Markdown preview", () => {
     fireEvent.click(screen.getByRole("link", { name: "the same note" }));
     expect(onOpen).toHaveBeenNthCalledWith(1, notes[1]);
     expect(onOpen).toHaveBeenNthCalledWith(2, notes[1]);
-    expect(screen.getByRole("link", { name: "Margin" })).toHaveAttribute("target", "_blank");
+    fireEvent.click(screen.getByRole("link", { name: "Margin" }));
+    expect(openUrl).toHaveBeenCalledWith("https://example.com");
     expect(screen.getByRole("img", { name: "Diagram" })).toHaveAttribute(
       "src",
       "asset://C:/Notes/Work/diagram.png",
