@@ -1,14 +1,16 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
 import "./styles.css";
 
 type NoteSummary = { path: string; title: string; tags: string[]; updated: number };
 type NoteDocument = NoteSummary & { body: string; created?: string; updated_at?: string };
 type Filter = { type: "all" | "untagged" | "tag"; tag?: string };
+type MarkdownNode = { type?: string; lang?: string | null; children?: MarkdownNode[] };
 
 const libraryKey = "markdown-notes.library-path";
 
@@ -25,6 +27,30 @@ function App() {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [status, setStatus] = useState("Choose a notes folder to begin");
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+
+  const transformSelectedLines = (transform: (line: string) => string) => {
+    const editor = editorRef.current;
+    if (!note || !editor) return;
+
+    const original = note.body;
+    const selectionStart = editor.selectionStart;
+    const selectionEnd = editor.selectionEnd;
+    const lineStart = original.lastIndexOf("\n", selectionStart - 1) + 1;
+    const selectedLineEnd = original.indexOf("\n", Math.max(selectionEnd - 1, lineStart));
+    const lineEnd = selectedLineEnd === -1 ? original.length : selectedLineEnd;
+    const selectedLines = original.slice(lineStart, lineEnd);
+    const transformedLines = selectedLines.split("\n").map(transform).join("\n");
+    const nextBody = `${original.slice(0, lineStart)}${transformedLines}${original.slice(lineEnd)}`;
+    const firstLineDelta = transform(selectedLines.split("\n")[0]).length - selectedLines.split("\n")[0].length;
+    const totalDelta = transformedLines.length - selectedLines.length;
+
+    setNote({ ...note, body: nextBody });
+    window.requestAnimationFrame(() => {
+      editor.focus();
+      editor.setSelectionRange(selectionStart + firstLineDelta, selectionEnd + totalDelta);
+    });
+  };
 
   const refresh = async (path = library) => {
     if (!path) return;
@@ -133,13 +159,33 @@ function App() {
     <section className="workspace">{note ? <>
       <header className="workspace-header"><div><h2>{note.title || "Untitled"}</h2><span>{status}</span></div><div className="view-switch"><button className={mode === "edit" ? "active" : ""} onClick={() => setMode("edit")}>Edit</button><button className={mode === "preview" ? "active" : ""} onClick={() => setMode("preview")}>Preview <kbd>⌘E</kbd></button></div></header>
       <div className="tag-editor">{note.tags.map(tag => <button key={tag} onClick={() => setNote({ ...note, tags: note.tags.filter(value => value !== tag) })}>#{tag} ×</button>)}<input aria-label="Add a tag" placeholder="Add tag · Enter" onBlur={event => { addTag(event.currentTarget.value); event.currentTarget.value = ""; }} onKeyDown={event => { if (event.key === "Enter" || event.key === ",") { event.preventDefault(); addTag(event.currentTarget.value); event.currentTarget.value = ""; } }} /></div>
-      {mode === "edit" ? <textarea aria-label="Markdown note" value={note.body} onChange={event => setNote({ ...note, body: event.target.value })} placeholder="# Start writing" autoFocus /> : <MarkdownPreview markdown={note.body} />}
+      {mode === "edit" ? <>
+        <div className="editor-toolbar" role="toolbar" aria-label="Markdown formatting">
+          <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => transformSelectedLines(line => line ? `> ${line}` : ">")}>Quote selected lines</button>
+          <span>Select one or more lines, then quote them. Tab indents by two spaces.</span>
+        </div>
+        <textarea ref={editorRef} aria-label="Markdown note" value={note.body} onChange={event => setNote({ ...note, body: event.target.value })} onKeyDown={event => {
+          if (event.key !== "Tab") return;
+          event.preventDefault();
+          transformSelectedLines(line => event.shiftKey ? line.replace(/^ {1,2}/, "") : `  ${line}`);
+        }} placeholder="# Start writing" autoFocus />
+      </> : <MarkdownPreview markdown={note.body} />}
     </> : <div className="welcome"><div className="welcome-icon">✦</div><h1>{library ? "Choose a note or create one" : "Your notes, in plain Markdown"}</h1><p>{library ? "Select a note from the list, or make a fresh one." : "Choose a folder. Your notes stay as files you can use anywhere."}</p><button className="primary" onClick={() => void (library ? createNote() : selectLibrary())}>{library ? "New note" : "Choose notes folder"}</button></div>}</section>
   </main>;
 }
 
 function MarkdownPreview({ markdown }: { markdown: string }) {
-  return <article className="preview"><ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown></article>;
+  return <article className="preview"><ReactMarkdown remarkPlugins={[remarkGfm, normalizeCodeLanguages]} rehypePlugins={[rehypeHighlight]}>{markdown}</ReactMarkdown></article>;
+}
+
+function normalizeCodeLanguages() {
+  return (tree: MarkdownNode) => {
+    const visit = (node: MarkdownNode) => {
+      if (node.type === "code" && node.lang) node.lang = node.lang.toLowerCase();
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
 }
 
 createRoot(document.getElementById("root")!).render(<React.StrictMode><App /></React.StrictMode>);
