@@ -38,7 +38,6 @@ import {
   replaceMarkdownTable,
   titleFromBody,
   toggleTask,
-  wikiTargets,
   type MarkdownTable,
 } from "./note-utils";
 import "./styles.css";
@@ -48,12 +47,15 @@ type NoteSummary = {
   title: string;
   tags: string[];
   updated: number;
-  searchable_text: string;
   excerpt: string;
   folder: string;
 };
-type NoteDocument = NoteSummary & {
+type NoteDocument = {
+  path: string;
+  title: string;
+  tags: string[];
   body: string;
+  updated: number;
   revision: string;
   created?: string;
   updated_at?: string;
@@ -242,6 +244,8 @@ function App() {
   const [note, setNote] = useState<NoteDocument | null>(null);
   const [filter, setFilter] = useState<Filter>({ type: "all" });
   const [query, setQuery] = useState("");
+  const [matchingPaths, setMatchingPaths] = useState<Set<string> | null>(null);
+  const [backlinks, setBacklinks] = useState<NoteSummary[]>([]);
   const [mode, setMode] = useState<"edit" | "preview" | "split">("preview");
   const [status, setStatus] = useState("Choose a notes folder to begin");
   const [quickOpen, setQuickOpen] = useState(false);
@@ -356,7 +360,7 @@ function App() {
     setUpdateState("idle");
   };
 
-  const refresh = useCallback(async (path = libraryRef.current) => {
+  const refresh = useCallback(async (path = libraryRef.current, force = false) => {
     if (!path) return;
     if (refreshInFlight.current) {
       refreshQueued.current = true;
@@ -368,6 +372,7 @@ function App() {
       try {
         const snapshot = await invoke<LibrarySnapshot>("load_library_snapshot", {
           libraryPath: requestPath,
+          force,
         });
         if (
           generation !== refreshGeneration.current ||
@@ -396,7 +401,7 @@ function App() {
         refreshInFlight.current = null;
         if (refreshQueued.current) {
           refreshQueued.current = false;
-          void refresh(libraryRef.current);
+          void refresh(libraryRef.current, force);
         }
       }
     }
@@ -421,6 +426,56 @@ function App() {
     refreshGeneration.current += 1;
     if (library) void refresh(library);
   }, [library, refresh]);
+  useEffect(() => {
+    const requestLibrary = library;
+    const normalizedQuery = query.trim();
+    if (!requestLibrary || !normalizedQuery) {
+      setMatchingPaths(null);
+      return;
+    }
+    let disposed = false;
+    const timer = window.setTimeout(() => {
+      void invoke<NoteSummary[]>("search_library", {
+        libraryPath: requestLibrary,
+        query: normalizedQuery,
+      })
+        .then((matches) => {
+          if (!disposed && libraryRef.current === requestLibrary)
+            setMatchingPaths(new Set(matches.map((item) => item.path)));
+        })
+        .catch(() => {
+          if (!disposed) setMatchingPaths(new Set());
+        });
+    }, 120);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
+  }, [library, query]);
+  useEffect(() => {
+    if (!library || !note) {
+      setBacklinks([]);
+      return;
+    }
+    let disposed = false;
+    const timer = window.setTimeout(() => {
+      void invoke<NoteSummary[]>("find_backlinks", {
+        libraryPath: library,
+        notePath: note.path,
+        title: note.title,
+      })
+        .then((matches) => {
+          if (!disposed) setBacklinks(matches);
+        })
+        .catch(() => {
+          if (!disposed) setBacklinks([]);
+        });
+    }, 160);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
+  }, [library, note?.path, note?.title]);
   useEffect(() => {
     if (
       Date.now() - Number(localStorage.getItem(updateLastCheckedKey) || 0) >=
@@ -919,7 +974,6 @@ function App() {
               title: saved.title,
               tags: saved.tags,
               updated: saved.updated,
-              searchable_text: `${saved.title} ${fileStem(saved.path)} ${saved.tags.join(" ")} ${saved.body}`.toLowerCase(),
             }
           : item;
       setNotes((current) => current.map(updateSummary));
@@ -1161,7 +1215,7 @@ function App() {
             (filter.type !== "favorites" || favorites.includes(item.path)) &&
             (filter.type !== "today" ||
               (item.folder === "Daily" && item.title === todayTitle())) &&
-            item.searchable_text.includes(query.toLowerCase()),
+            (!query || matchingPaths?.has(item.path) === true),
         )
         .sort(
           (left, right) =>
@@ -1169,7 +1223,7 @@ function App() {
               Number(favorites.includes(left.path)) ||
             right.updated - left.updated,
         ),
-    [listedNotes, filter, query, favorites],
+    [listedNotes, filter, query, matchingPaths, favorites],
   );
   const folderCounts = useMemo(
     () =>
@@ -1184,23 +1238,8 @@ function App() {
       ),
     [folders, notes],
   );
-  const deferredNoteTitle = useDeferredValue(note?.title ?? "");
   const deferredNoteBody = useDeferredValue(note?.body ?? "");
   const deferredNotePath = useDeferredValue(note?.path ?? "");
-  const backlinks = useMemo(
-    () =>
-      deferredNoteTitle
-        ? notes.filter(
-            (item) =>
-              item.path !== note?.path &&
-              wikiTargets(item.searchable_text).some(
-                (target) =>
-                  target.toLowerCase() === deferredNoteTitle.toLowerCase(),
-              ),
-          )
-        : [],
-    [notes, note?.path, deferredNoteTitle],
-  );
   const outlineItems = useMemo<OutlineItem[]>(
     () =>
       outlineOpen && note
