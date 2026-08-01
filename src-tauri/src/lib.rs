@@ -689,7 +689,12 @@ fn delete_note_permanently(path: String, library_path: String) -> Result<(), Str
 }
 
 #[tauri::command]
-fn append_quick_note(library_path: String, text: String) -> Result<NoteDocument, String> {
+fn append_quick_note(
+    library_path: String,
+    text: String,
+    daily_folder: Option<String>,
+    daily_template: Option<String>,
+) -> Result<NoteDocument, String> {
     let text = text.trim();
     if text.is_empty() {
         return Err("Quick note cannot be empty".into());
@@ -697,7 +702,7 @@ fn append_quick_note(library_path: String, text: String) -> Result<NoteDocument,
     let library = PathBuf::from(library_path);
     let date = Local::now().format("%Y-%m-%d").to_string();
     let time = Local::now().format("%H:%M").to_string();
-    let folder = library.join("Daily");
+    let folder = library_folder(&library, daily_folder.or_else(|| Some("Daily".into())))?;
     fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     let path = folder.join(format!("{}.md", date));
     let mut note = if path.exists() {
@@ -707,7 +712,10 @@ fn append_quick_note(library_path: String, text: String) -> Result<NoteDocument,
             path: path.to_string_lossy().to_string(),
             title: date.clone(),
             tags: Vec::new(),
-            body: format!("# {}\n", date),
+            body: body_with_title(
+                &daily_template.unwrap_or_else(|| format!("# {}\n", date)),
+                &date,
+            ),
             updated: 0,
             revision: String::new(),
             created: Some(now_rfc3339()),
@@ -1415,10 +1423,14 @@ mod tests {
             let first = append_quick_note(
                 library_path.clone(),
                 "Reviewed the release checklist".into(),
+                None,
+                None,
             )?;
             let daily = append_quick_note(
                 library_path.clone(),
                 "Fixed the preview link behavior".into(),
+                None,
+                None,
             )?;
             assert_eq!(first.path, daily.path);
             assert!(daily.path.contains("Daily"));
@@ -1453,8 +1465,9 @@ mod tests {
         fs::create_dir_all(&outside).unwrap();
         let library_path = library.to_string_lossy().to_string();
 
-        assert!(append_quick_note(library_path.clone(), "  ".into()).is_err());
-        let daily = append_quick_note(library_path.clone(), "Inside capture".into()).unwrap();
+        assert!(append_quick_note(library_path.clone(), "  ".into(), None, None).is_err());
+        let daily =
+            append_quick_note(library_path.clone(), "Inside capture".into(), None, None).unwrap();
         let outside_target = outside.join("Outside.md");
         fs::write(&outside_target, "# Outside\n").unwrap();
         assert!(import_daily_note(
