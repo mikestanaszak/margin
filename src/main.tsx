@@ -52,6 +52,7 @@ const outlinePaneWidthKey = "markdown-notes.outline-pane-width";
 const updateLastCheckedKey = "margin.update-last-checked";
 const updateSkippedVersionKey = "margin.update-skipped-version";
 const legacySidebarShortcut = isMac ? "meta+\\" : "ctrl+\\";
+const legacySidebarAltShortcut = isMac ? "meta+alt+b" : "ctrl+alt+b";
 
 const defaultShortcuts: Shortcuts = {
   newNote: isMac ? "meta+n" : "ctrl+n",
@@ -59,7 +60,7 @@ const defaultShortcuts: Shortcuts = {
   switcher: isMac ? "meta+p" : "ctrl+p",
   save: isMac ? "meta+s" : "ctrl+s",
   view: isMac ? "meta+e" : "ctrl+e",
-  sidebar: isMac ? "meta+alt+b" : "ctrl+alt+b",
+  sidebar: isMac ? "meta+shift+b" : "ctrl+shift+b",
   outline: isMac ? "meta+shift+o" : "ctrl+shift+o",
   quickCapture: isMac ? "meta+alt+shift+space" : "ctrl+alt+shift+space",
 };
@@ -67,7 +68,7 @@ const shortcutLabels: Record<ShortcutId, string> = { newNote: "New note", search
 const codeBlockLanguages = Object.keys(highlightLanguages).sort();
 
 function loadPaneWidth(key: string, fallback: number) { const saved = Number(localStorage.getItem(key)); return Number.isFinite(saved) ? clamp(saved, 180, 520) : fallback; }
-function loadShortcuts(): Shortcuts { try { const saved = JSON.parse(localStorage.getItem(shortcutsKey) || "{}") as Partial<Shortcuts>; return { ...defaultShortcuts, ...saved, sidebar: saved.sidebar === legacySidebarShortcut ? defaultShortcuts.sidebar : saved.sidebar || defaultShortcuts.sidebar }; } catch { return defaultShortcuts; } }
+function loadShortcuts(): Shortcuts { try { const saved = JSON.parse(localStorage.getItem(shortcutsKey) || "{}") as Partial<Shortcuts>; return { ...defaultShortcuts, ...saved, sidebar: saved.sidebar === legacySidebarShortcut || saved.sidebar === legacySidebarAltShortcut ? defaultShortcuts.sidebar : saved.sidebar || defaultShortcuts.sidebar }; } catch { return defaultShortcuts; } }
 
 function App() {
   const [library, setLibrary] = useState<string | null>(localStorage.getItem(libraryKey)); const [libraryPaneWidth, setLibraryPaneWidth] = useState(() => loadPaneWidth(libraryPaneWidthKey, 232)); const [notePaneWidth, setNotePaneWidth] = useState(() => loadPaneWidth(notePaneWidthKey, 296)); const [outlinePaneWidth, setOutlinePaneWidth] = useState(() => loadPaneWidth(outlinePaneWidthKey, 280));
