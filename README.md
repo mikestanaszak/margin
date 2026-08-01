@@ -57,7 +57,14 @@ Run this in PowerShell. It replaces an existing Margin installation and leaves y
 irm https://raw.githubusercontent.com/mikestanaszak/margin/main/install.ps1 | iex
 ```
 
-You can also download an installer from the [latest release](https://github.com/mikestanaszak/margin/releases/latest). Linux packages are not published yet.
+### Linux
+
+Margin publishes two x64 Linux downloads on every release:
+
+- **Debian / Ubuntu:** download the `.deb` from the [latest release](https://github.com/mikestanaszak/margin/releases/latest), then install it with `sudo apt install ./Margin_*.deb`.
+- **Other distributions:** download the `.AppImage`, make it executable with `chmod +x Margin_*.AppImage`, then run it directly.
+
+You can also download an installer for any platform from the [latest release](https://github.com/mikestanaszak/margin/releases/latest).
 
 ## Shortcuts
 
