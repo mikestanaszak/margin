@@ -6,6 +6,7 @@ import {
   extractOutlineItems,
   noteListVirtualizationThreshold,
   shouldVirtualizeNoteList,
+  virtualNoteRowHeight,
 } from "../src/main";
 import {
   createLargeLibraryFixture,
@@ -30,5 +31,6 @@ describe("large-library performance fixtures", () => {
       shouldVirtualizeNoteList(noteListVirtualizationThreshold - 1, false),
     ).toBe(false);
     expect(shouldVirtualizeNoteList(library.length, true)).toBe(false);
+    expect(virtualNoteRowHeight).toBe(92);
   });
 });

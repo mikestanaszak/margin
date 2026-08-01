@@ -511,8 +511,13 @@ select:focus-visible {
   left: 0;
 }
 .virtual-note-row {
-  height: 80px;
+  height: 92px;
   overflow: hidden;
+}
+.virtual-note-row > .nr-note-item,
+.virtual-note-row .nr-note-main {
+  box-sizing: border-box;
+  height: 100%;
 }
 .empty-list {
   padding: 18px 10px;

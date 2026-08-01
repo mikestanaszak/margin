@@ -110,9 +110,9 @@ const themeKey = "markdown-notes.theme";
 const shortcutsKey = "markdown-notes.shortcuts";
 const quickImportDefaultKey = "markdown-notes.quick-import-default";
 // At this size, mounting every card becomes noticeably expensive on lower-end
-// machines. The row estimate deliberately matches the fixed card layout below.
+// machines. Virtual rows enforce the same height so scroll geometry remains exact.
 const noteListVirtualizationThreshold = 120;
-const virtualNoteRowHeight = 80;
+const virtualNoteRowHeight = 92;
 const templatesKey = "margin.templates";
 const defaultTemplates: NoteTemplate[] = [
   {
@@ -1247,7 +1247,7 @@ function App() {
     />
   ) : null;
   const visibleNoteCards = useMemo(
-    () => visibleNotes.map((item) => ({ ...item, tags: [] })),
+    () => visibleNotes.map((item) => ({ ...item, tags: [], body: item.excerpt })),
     [visibleNotes],
   );
   const activeNoteDirty = Boolean(
@@ -2185,8 +2185,10 @@ function VirtualNoteList({
     if (
       rowTop < element.scrollTop ||
       rowBottom > element.scrollTop + element.clientHeight
-    )
+    ) {
       element.scrollTop = Math.max(0, rowTop - virtualNoteRowHeight * 2);
+      setScrollTop(element.scrollTop);
+    }
   }, [activePath, notes]);
 
   useEffect(() => {
@@ -4057,6 +4059,7 @@ export {
   scrollTopForProgress,
   shouldVirtualizeNoteList,
   syncScrollPosition,
+  virtualNoteRowHeight,
 };
 const isCaptureWindow = (() => {
   try {
