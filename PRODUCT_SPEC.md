@@ -35,7 +35,7 @@
 
 ### Desktop and updates
 
-- Native Tauri app for Windows and Apple Silicon macOS.
+- Native Tauri app for Windows, Apple Silicon macOS, and x64 Linux (`.deb` and AppImage releases).
 - Margin registers as an editor for `.md` and `.markdown` files. Files already
   inside the selected library open directly; files outside it can be opened as
   their original or imported as a copy into a chosen folder.
@@ -43,7 +43,6 @@
 
 ## Planned
 
-- Linux packages.
 - Native-window integration and staged-update installation coverage.
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
