@@ -1,5 +1,6 @@
 import React, {
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -108,6 +109,10 @@ const favoritesKey = "markdown-notes.pinned";
 const themeKey = "markdown-notes.theme";
 const shortcutsKey = "markdown-notes.shortcuts";
 const quickImportDefaultKey = "markdown-notes.quick-import-default";
+// At this size, mounting every card becomes noticeably expensive on lower-end
+// machines. Virtual rows enforce the same height so scroll geometry remains exact.
+const noteListVirtualizationThreshold = 120;
+const virtualNoteRowHeight = 92;
 const templatesKey = "margin.templates";
 const defaultTemplates: NoteTemplate[] = [
   {
@@ -201,6 +206,21 @@ function pathIsInLibrary(path: string, library: string) {
   const file = normalizedFilePath(path);
   const root = normalizedFilePath(library);
   return file === root || file.startsWith(`${root}/`);
+}
+
+function extractOutlineItems(body: string): OutlineItem[] {
+  return [...body.matchAll(/^(#{1,6})\s+(.+)$/gm)].map((match, index) => ({
+    index,
+    level: match[1].length,
+    title: match[2].trim(),
+  }));
+}
+
+function shouldVirtualizeNoteList(
+  count: number,
+  isHierarchicalFolderView: boolean,
+) {
+  return !isHierarchicalFolderView && count >= noteListVirtualizationThreshold;
 }
 
 function App() {
@@ -1113,7 +1133,7 @@ function App() {
       setStatus(`Could not create imported note: ${String(error)}`);
     }
   };
-  const openLinkedNote = (target: NoteSummary) => {
+  const openLinkedNote = useCallback((target: NoteSummary) => {
     const containingFolder = target.folder.trim();
     if (containingFolder) {
       setFilter({ type: "folder", folder: containingFolder });
@@ -1128,7 +1148,7 @@ function App() {
       setFilter({ type: "all" });
     }
     setActivePath(target.path);
-  };
+  }, []);
   const listedNotes = filter.type === "trash" ? trashNotes : notes;
   const visibleNotes = useMemo(
     () =>
@@ -1164,31 +1184,29 @@ function App() {
       ),
     [folders, notes],
   );
+  const deferredNoteTitle = useDeferredValue(note?.title ?? "");
+  const deferredNoteBody = useDeferredValue(note?.body ?? "");
+  const deferredNotePath = useDeferredValue(note?.path ?? "");
   const backlinks = useMemo(
     () =>
-      note
+      deferredNoteTitle
         ? notes.filter(
             (item) =>
-              item.path !== note.path &&
+              item.path !== note?.path &&
               wikiTargets(item.searchable_text).some(
-                (target) => target.toLowerCase() === note.title.toLowerCase(),
+                (target) =>
+                  target.toLowerCase() === deferredNoteTitle.toLowerCase(),
               ),
           )
         : [],
-    [notes, note],
+    [notes, note?.path, deferredNoteTitle],
   );
   const outlineItems = useMemo<OutlineItem[]>(
     () =>
-      note
-        ? [...note.body.matchAll(/^(#{1,6})\s+(.+)$/gm)].map(
-            (match, index) => ({
-              index,
-              level: match[1].length,
-              title: match[2].trim(),
-            }),
-          )
+      outlineOpen && note
+        ? extractOutlineItems(deferredNoteBody)
         : [],
-    [note?.body],
+    [deferredNoteBody, note?.path, outlineOpen],
   );
   const noteEditor = note ? (
     <MarkdownEditor
@@ -1207,55 +1225,68 @@ function App() {
       className="markdown-editor"
     />
   ) : null;
-  const notePreview = note ? (
-    <MarkdownPreview
-      markdown={note.body}
+  const previewMarkdown =
+    mode === "split" && deferredNotePath === note?.path
+      ? deferredNoteBody
+      : note?.body ?? "";
+  const togglePreviewTask = useCallback((index: number, checked: boolean) => {
+    setNote((current) =>
+      current ? { ...current, body: toggleTask(current.body, index, checked) } : current,
+    );
+  }, []);
+  const showPreview = mode !== "edit";
+  const notePreview = note && showPreview ? (
+    <MemoizedMarkdownPreview
+      markdown={previewMarkdown}
       notePath={note.path}
       notes={notes}
       onOpen={openLinkedNote}
-      onOpenExternalError={(message) => setStatus(message)}
+      onOpenExternalError={setStatus}
       onEditTable={setTableEditorIndex}
-      onToggleTask={(index, checked) =>
-        setNote((current) =>
-          current?.path === note.path
-            ? { ...current, body: toggleTask(current.body, index, checked) }
-            : current,
-        )
-      }
+      onToggleTask={togglePreviewTask}
     />
   ) : null;
-  const renderNote = (item: NoteSummary) => (
+  const visibleNoteCards = useMemo(
+    () => visibleNotes.map((item) => ({ ...item, tags: [], body: item.excerpt })),
+    [visibleNotes],
+  );
+  const activeNoteDirty = Boolean(
+    note && hasUnsavedChanges(note, baseline.current),
+  );
+  const openNote = useCallback((selected: NoteSummary) => {
+    setActivePath(selected.path);
+  }, []);
+  const toggleNoteFavorite = useCallback((selected: NoteSummary) => {
+    setFavorites((value) =>
+      value.includes(selected.path)
+        ? value.filter((path) => path !== selected.path)
+        : [...value, selected.path],
+    );
+  }, []);
+  const isTrashFilter = filter.type === "trash";
+  const openNoteContextMenu = useCallback(
+    (selected: NoteSummary, position: { x: number; y: number }) =>
+      setNoteContextMenu({
+        note: selected,
+        x: Math.min(position.x, window.innerWidth - 180),
+        y: Math.min(position.y, window.innerHeight - 100),
+        isTrashed: isTrashFilter,
+        isDaily: /[\\/]Daily[\\/]/i.test(selected.path),
+      }),
+    [isTrashFilter],
+  );
+  const renderNote = useCallback((item: NoteSummary) => (
     <NoteListItem
       key={item.path}
-      note={{ ...item, tags: [], body: item.excerpt }}
+      note={item}
       active={item.path === activePath}
-      dirty={
-        item.path === activePath &&
-        Boolean(note && hasUnsavedChanges(note, baseline.current))
-      }
+      dirty={item.path === activePath && activeNoteDirty}
       pinned={favorites.includes(item.path)}
-      onOpen={(selected) => setActivePath(selected.path)}
-      onContextMenu={(selected, position) =>
-        setNoteContextMenu({
-          note: selected,
-          x: Math.min(position.x, window.innerWidth - 180),
-          y: Math.min(position.y, window.innerHeight - 100),
-          isTrashed: filter.type === "trash",
-          isDaily: /[\\/]Daily[\\/]/i.test(selected.path),
-        })
-      }
-      onTogglePin={
-        filter.type === "trash"
-          ? undefined
-          : (selected) =>
-              setFavorites((value) =>
-                value.includes(selected.path)
-                  ? value.filter((path) => path !== selected.path)
-                  : [...value, selected.path],
-              )
-      }
+      onOpen={openNote}
+      onContextMenu={openNoteContextMenu}
+      onTogglePin={isTrashFilter ? undefined : toggleNoteFavorite}
     />
-  );
+  ), [activeNoteDirty, activePath, favorites, isTrashFilter, openNote, openNoteContextMenu, toggleNoteFavorite]);
   const listTitle =
     filter.type === "folder"
       ? (filter.folder || "").split("/").filter(Boolean).slice(-1)[0] ||
@@ -1453,21 +1484,32 @@ function App() {
           <h1>{listTitle}</h1>
           <span>{visibleNotes.length}</span>
         </header>
-        <div className="notes">
-          {filter.type === "folder" && !query ? (
+        {shouldVirtualizeNoteList(
+          visibleNotes.length,
+          filter.type === "folder" && !query,
+        ) ? (
+          <VirtualNoteList
+            notes={visibleNoteCards}
+            activePath={activePath}
+            renderNote={renderNote}
+          />
+        ) : (
+          <div className="notes">
+            {filter.type === "folder" && !query ? (
             <FolderNoteTree
               root={filter.folder || ""}
               folders={folders}
-              notes={visibleNotes}
+              notes={visibleNoteCards}
               renderNote={renderNote}
             />
           ) : (
-            visibleNotes.map(renderNote)
+            visibleNoteCards.map(renderNote)
           )}
-          {library && !visibleNotes.length && (
-            <p className="empty-list">No notes here yet.</p>
-          )}
-        </div>
+            {library && !visibleNotes.length && (
+              <p className="empty-list">No notes here yet.</p>
+            )}
+          </div>
+        )}
       </section>
       <section className="workspace">
         {note ? (
@@ -2104,6 +2146,89 @@ function FolderNoteTree({
     </div>
   );
 }
+
+function VirtualNoteList({
+  notes,
+  activePath,
+  renderNote,
+}: {
+  notes: NoteSummary[];
+  activePath: string | null;
+  renderNote: (note: NoteSummary) => React.ReactNode;
+}) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(640);
+  const start = Math.max(0, Math.floor(scrollTop / virtualNoteRowHeight) - 6);
+  const visibleRows = Math.ceil(viewportHeight / virtualNoteRowHeight) + 12;
+  const end = Math.min(notes.length, start + visibleRows);
+
+  useEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    const updateViewport = () => setViewportHeight(element.clientHeight || 640);
+    updateViewport();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(updateViewport);
+    observer?.observe(element);
+    return () => observer?.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const element = scroller.current;
+    const index = notes.findIndex((item) => item.path === activePath);
+    if (!element || index < 0) return;
+    const rowTop = index * virtualNoteRowHeight;
+    const rowBottom = rowTop + virtualNoteRowHeight;
+    if (
+      rowTop < element.scrollTop ||
+      rowBottom > element.scrollTop + element.clientHeight
+    ) {
+      element.scrollTop = Math.max(0, rowTop - virtualNoteRowHeight * 2);
+      setScrollTop(element.scrollTop);
+    }
+  }, [activePath, notes]);
+
+  useEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    const maxScrollTop = Math.max(
+      0,
+      notes.length * virtualNoteRowHeight - element.clientHeight,
+    );
+    if (element.scrollTop > maxScrollTop) {
+      element.scrollTop = maxScrollTop;
+      setScrollTop(maxScrollTop);
+    }
+  }, [notes.length]);
+
+  return (
+    <div
+      ref={scroller}
+      className="notes virtual-note-list"
+      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+    >
+      <div
+        className="virtual-note-list-spacer"
+        style={{ height: notes.length * virtualNoteRowHeight }}
+      >
+        <div
+          className="virtual-note-list-items"
+          style={{ transform: `translateY(${start * virtualNoteRowHeight}px)` }}
+        >
+          {notes.slice(start, end).map((item) => (
+            <div className="virtual-note-row" key={item.path}>
+              {renderNote(item)}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FolderIcon() {
   return (
     <svg className="folder-icon" viewBox="0 0 20 20" aria-hidden="true">
@@ -3659,17 +3784,21 @@ function MarkdownPreview({
   onEditTable: (index: number) => void;
   onToggleTask: (index: number, checked: boolean) => void;
 }) {
-  const resolved = markdown.replace(
-    /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
-    (_, title, label) =>
-      `[${label || title}](note:${encodeURIComponent(title.trim())})`,
+  const resolved = useMemo(
+    () =>
+      markdown.replace(
+        /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
+        (_, title, label) =>
+          `[${label || title}](note:${encodeURIComponent(title.trim())})`,
+      ),
+    [markdown],
   );
   const directory = notePath.replace(/[\\/][^\\/]+$/, "");
   const localAsset = (src?: string) =>
     !src || /^(https?:|data:|asset:)/i.test(src)
       ? src
       : convertFileSrc(`${directory}/${src}`);
-  const markdownTables = parseMarkdownTables(markdown);
+  const markdownTables = useMemo(() => parseMarkdownTables(markdown), [markdown]);
   const normalizePath = (path: string) => {
     const parts: string[] = [];
     for (const part of path.replace(/\\/g, "/").split("/")) {
@@ -3845,6 +3974,8 @@ function MarkdownPreview({
     </article>
   );
 }
+const MemoizedMarkdownPreview = React.memo(MarkdownPreview);
+
 function normalizeCodeLanguages() {
   return (tree: MarkdownNode) => {
     const visit = (node: MarkdownNode) => {
@@ -3920,11 +4051,15 @@ export {
   activeOutlineAncestors,
   activeOutlineIndexAtScroll,
   annotateTaskIndexes,
+  extractOutlineItems,
   normalizeCodeLanguages,
+  noteListVirtualizationThreshold,
   outlineTree,
   scrollProgress,
   scrollTopForProgress,
+  shouldVirtualizeNoteList,
   syncScrollPosition,
+  virtualNoteRowHeight,
 };
 const isCaptureWindow = (() => {
   try {

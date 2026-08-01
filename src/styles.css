@@ -500,6 +500,25 @@ select:focus-visible {
   padding: 8px;
   overflow: auto;
 }
+.virtual-note-list-spacer {
+  position: relative;
+  min-height: 100%;
+}
+.virtual-note-list-items {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+}
+.virtual-note-row {
+  height: 92px;
+  overflow: hidden;
+}
+.virtual-note-row > .nr-note-item,
+.virtual-note-row .nr-note-main {
+  box-sizing: border-box;
+  height: 100%;
+}
 .empty-list {
   padding: 18px 10px;
   color: var(--muted);

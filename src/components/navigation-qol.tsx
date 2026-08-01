@@ -1,4 +1,5 @@
 import {
+  memo,
   useEffect,
   useId,
   useMemo,
@@ -357,7 +358,7 @@ function bodyExcerpt(note: NoteListItemData) {
     .trim();
 }
 
-export function NoteListItem<T extends NoteListItemData>({
+function NoteListItemImpl<T extends NoteListItemData>({
   note,
   active = false,
   dirty = false,
@@ -392,3 +393,7 @@ export function NoteListItem<T extends NoteListItemData>({
     </article>
   );
 }
+
+// A note list can contain hundreds of cards. Keeping each card referentially
+// stable lets typing in the active editor avoid repainting every row.
+export const NoteListItem = memo(NoteListItemImpl) as typeof NoteListItemImpl;

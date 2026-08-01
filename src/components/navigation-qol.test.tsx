@@ -145,4 +145,23 @@ describe("note cards", () => {
     expect(onTogglePin).toHaveBeenCalledWith(note);
     expect(onContextMenu).toHaveBeenCalledWith(note, { x: 24, y: 36 });
   });
+
+  it("renders the compact excerpt supplied by a virtualized note list", () => {
+    render(
+      <NoteListItem
+        note={{
+          path: "C:/Notes/Compact.md",
+          title: "Compact",
+          tags: [],
+          updated: Date.now(),
+          body: "A compact card excerpt, not the full searchable note text.",
+        }}
+        onOpen={() => undefined}
+      />,
+    );
+
+    expect(
+      screen.getByText("A compact card excerpt, not the full searchable note text."),
+    ).toBeInTheDocument();
+  });
 });
