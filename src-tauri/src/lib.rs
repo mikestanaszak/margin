@@ -929,10 +929,7 @@ fn delete_note_permanently(path: String, library_path: String) -> Result<(), Str
     if !source.starts_with(&trash) {
         return Err("Only notes in this library's trash can be permanently deleted".into());
     }
-    if !source
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-    {
+    if !is_markdown_path(&source) {
         return Err("Only Markdown notes can be permanently deleted".into());
     }
     fs::remove_file(source).map_err(|e| e.to_string())
@@ -1135,8 +1132,20 @@ fn save_note_document(note: NoteDocument) -> Result<NoteDocument, String> {
 }
 
 #[tauri::command]
-fn save_note(note: NoteDocument) -> SaveNoteResult {
-    match save_note_checked(note) {
+fn save_note(note: NoteDocument, library_path: String) -> SaveNoteResult {
+    let result = (|| -> Result<NoteDocument, SaveNoteFailure> {
+        let library = canonical_library_root(library_path).map_err(SaveNoteFailure::Error)?;
+        let path = existing_library_path(&library, &note.path).map_err(SaveNoteFailure::Error)?;
+        if !is_markdown_path(&path) {
+            return Err(SaveNoteFailure::Error(
+                "Only Markdown notes can be saved".into(),
+            ));
+        }
+        let mut note = note;
+        note.path = path.to_string_lossy().to_string();
+        managed_note(&library, save_note_checked(note)?).map_err(SaveNoteFailure::Error)
+    })();
+    match result {
         Ok(note) => SaveNoteResult::Saved { note },
         Err(SaveNoteFailure::Conflict(disk)) => SaveNoteResult::Conflict { disk },
         Err(SaveNoteFailure::Error(message)) => SaveNoteResult::Error { message },
@@ -1207,23 +1216,32 @@ fn path_for_title(source: &Path, title: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-fn rename_note(path: String, name: String) -> Result<NoteDocument, String> {
-    let mut note = read_note_file(Path::new(&path))?;
+fn rename_note(path: String, name: String, library_path: String) -> Result<NoteDocument, String> {
+    let library = canonical_library_root(library_path)?;
+    let path = existing_library_path(&library, path)?;
+    if !is_markdown_path(&path) {
+        return Err("Only Markdown notes can be renamed".into());
+    }
+    let mut note = read_library_note_file(&library, &path)?;
     note.body = body_with_title(&note.body, name.trim_end_matches(".md").trim());
-    save_note_document(note)
+    managed_note(&library, save_note_document(note)?)
 }
 
 #[tauri::command]
-fn duplicate_note(path: String) -> Result<NoteDocument, String> {
-    let source = PathBuf::from(path);
+fn duplicate_note(path: String, library_path: String) -> Result<NoteDocument, String> {
+    let library = canonical_library_root(library_path)?;
+    let source = existing_library_path(&library, path)?;
+    if !is_markdown_path(&source) {
+        return Err("Only Markdown notes can be duplicated".into());
+    }
     let parent = source.parent().ok_or("Note has no parent folder")?;
-    let original = read_note_file(&source)?;
+    let original = read_library_note_file(&library, &source)?;
     let copy_title = format!("{} copy", original.title);
     let destination = unique_path(parent, &copy_title);
     fs::copy(source, &destination).map_err(|e| e.to_string())?;
-    let mut copy = read_note_file(&destination)?;
+    let mut copy = read_library_note_file(&library, &destination)?;
     copy.body = body_with_title(&copy.body, &copy_title);
-    save_note_document(copy)
+    managed_note(&library, save_note_document(copy)?)
 }
 
 /// Imports a standalone Markdown file as a new note without changing the
@@ -1601,11 +1619,15 @@ mod tests {
             let collision = save_note_document(same_title)?;
             assert!(collision.path.ends_with("Project plan-1.md"));
 
-            let duplicate = duplicate_note(saved.path.clone())?;
+            let duplicate = duplicate_note(saved.path.clone(), library_path.clone())?;
             assert_eq!(duplicate.title, "Project plan copy");
             assert!(duplicate.path.ends_with("Project plan copy.md"));
 
-            let renamed = rename_note(duplicate.path, "Project archive".into())?;
+            let renamed = rename_note(
+                duplicate.path,
+                "Project archive".into(),
+                library_path.clone(),
+            )?;
             assert_eq!(renamed.title, "Project archive");
             assert!(renamed.path.ends_with("Project archive.md"));
 
@@ -1634,7 +1656,7 @@ mod tests {
         fs::create_dir_all(&library).unwrap();
         let library_path = library.to_string_lossy().to_string();
         let result = (|| -> Result<(), String> {
-            let mut note = create_note(library_path, None)?;
+            let mut note = create_note(library_path.clone(), None)?;
             note.body = "# Before\n\nOriginal body\n".into();
             let saved = save_note_document(note)?;
             let mut stale = saved.clone();
@@ -1643,7 +1665,7 @@ mod tests {
             fs::write(&saved.path, "# On disk\n\nExternal change\n")
                 .map_err(|error| error.to_string())?;
 
-            match save_note(stale) {
+            match save_note(stale, library_path) {
                 SaveNoteResult::Conflict { disk } => {
                     assert_eq!(disk.title, "On disk");
                     assert!(disk.body.contains("External change"));
@@ -1975,6 +1997,23 @@ mod tests {
             library_path.clone()
         )
         .is_err());
+        let mut outside_document = read_note_file(&outside_note).unwrap();
+        outside_document.body = "# Attempted external write\n".into();
+        assert!(matches!(
+            save_note(outside_document, library_path.clone()),
+            SaveNoteResult::Error { .. }
+        ));
+        assert!(rename_note(
+            outside_note.to_string_lossy().to_string(),
+            "Renamed outside".into(),
+            library_path.clone(),
+        )
+        .is_err());
+        assert!(duplicate_note(
+            outside_note.to_string_lossy().to_string(),
+            library_path.clone(),
+        )
+        .is_err());
         assert!(
             delete_note_permanently(inside_note.to_string_lossy().to_string(), library_path)
                 .is_err()
@@ -1982,6 +2021,25 @@ mod tests {
 
         fs::remove_dir_all(&library).ok();
         fs::remove_dir_all(&outside).ok();
+    }
+
+    #[test]
+    fn permanently_deletes_markdown_extension_notes() {
+        let library = temporary_library();
+        let trash = library.join(".markdown-notes").join("trash");
+        fs::create_dir_all(&trash).unwrap();
+        let note = trash.join("Legacy.markdown");
+        fs::write(&note, "# Legacy\n").unwrap();
+        let note_path = fs::canonicalize(&note).unwrap();
+
+        delete_note_permanently(
+            note_path.to_string_lossy().to_string(),
+            library.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        assert!(!note.exists());
+
+        fs::remove_dir_all(&library).ok();
     }
 
     #[test]

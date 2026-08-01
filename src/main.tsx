@@ -844,6 +844,7 @@ function App() {
       if (body) {
         const result = await invoke<SaveNoteResult>("save_note", {
           note: { ...created, body },
+          libraryPath: library,
         });
         if (result.status === "saved") saved = result.note;
         else if (result.status === "conflict")
@@ -918,6 +919,7 @@ function App() {
     }
   };
   const saveNote = async (draft: NoteDocument, queueKey: string) => {
+    if (!library || !pathIsInLibrary(draft.path, library)) return;
     try {
       const originalPath = draft.path;
       const previousPath =
@@ -941,6 +943,7 @@ function App() {
       if (isActive) setStatus("Saving…");
       const result = await invoke<SaveNoteResult>("save_note", {
         note: noteToSave,
+        libraryPath: library,
       });
       if (result.status === "conflict") {
         setConflict({ disk: result.disk, mine: noteToSave, path: previousPath });
@@ -1017,9 +1020,11 @@ function App() {
     return queued;
   };
   const duplicateNote = async (source: Pick<NoteSummary, "path">) => {
+    if (!library) return;
     try {
       const copy = await invoke<NoteDocument>("duplicate_note", {
         path: source.path,
+        libraryPath: library,
       });
       await refresh();
       setActivePath(copy.path);
@@ -1264,20 +1269,26 @@ function App() {
         : [],
     [deferredNoteBody, note?.path, outlineOpen],
   );
+  const isManagedNote = Boolean(
+    note && library && pathIsInLibrary(note.path, library),
+  );
   const noteEditor = note ? (
     <MarkdownEditor
+      key={`${note.path}-${isManagedNote ? "managed" : "external"}`}
       ref={editor}
       notePath={note.path}
       value={note.body}
       onChange={(body) =>
+        isManagedNote &&
         setNote((current) =>
           current?.path === note.path
             ? { ...current, body, title: titleFromBody(body) }
             : current,
         )
       }
-      onBlur={() => void enqueueSave(note)}
+      onBlur={() => isManagedNote && void enqueueSave(note)}
       autoFocus
+      readOnly={!isManagedNote}
       className="markdown-editor"
     />
   ) : null;
@@ -1298,8 +1309,9 @@ function App() {
       notes={notes}
       onOpen={openLinkedNote}
       onOpenExternalError={setStatus}
-      onEditTable={setTableEditorIndex}
-      onToggleTask={togglePreviewTask}
+      editable={isManagedNote}
+      onEditTable={isManagedNote ? setTableEditorIndex : () => undefined}
+      onToggleTask={isManagedNote ? togglePreviewTask : () => undefined}
     />
   ) : null;
   const visibleNoteCards = useMemo(
@@ -3831,6 +3843,7 @@ function MarkdownPreview({
   onOpenExternalError = () => undefined,
   onEditTable,
   onToggleTask,
+  editable = true,
 }: {
   markdown: string;
   notePath: string;
@@ -3839,6 +3852,7 @@ function MarkdownPreview({
   onOpenExternalError?: (message: string) => void;
   onEditTable: (index: number) => void;
   onToggleTask: (index: number, checked: boolean) => void;
+  editable?: boolean;
 }) {
   const resolved = useMemo(
     () =>
@@ -3912,7 +3926,7 @@ function MarkdownPreview({
         : null;
     const item = input?.closest<HTMLElement>("li[data-task-index]");
     const index = Number(item?.dataset.taskIndex);
-    if (input && Number.isInteger(index) && index >= 0)
+    if (editable && input && Number.isInteger(index) && index >= 0)
       onToggleTask(index, input.checked);
   };
   const selectInlineCode = (event: React.MouseEvent<HTMLElement>) => {
@@ -3991,22 +4005,24 @@ function MarkdownPreview({
               (table) => table.start === (sourceLine || 0) - 1,
             );
             const openEditor = () => {
-              if (index >= 0) onEditTable(index);
+              if (editable && index >= 0) onEditTable(index);
             };
             return (
               <div className="preview-table-shell">
-                <div className="preview-table-toolbar">
-                  <span>Table</span>
-                  <button
-                    type="button"
-                    className="preview-table-edit"
-                    aria-label={`Edit table ${index + 1}`}
-                    onClick={openEditor}
-                  >
-                    Edit table
-                  </button>
-                </div>
-                <table {...props} onClick={openEditor}>
+                {editable && (
+                  <div className="preview-table-toolbar">
+                    <span>Table</span>
+                    <button
+                      type="button"
+                      className="preview-table-edit"
+                      aria-label={`Edit table ${index + 1}`}
+                      onClick={openEditor}
+                    >
+                      Edit table
+                    </button>
+                  </div>
+                )}
+                <table {...props} onClick={editable ? openEditor : undefined}>
                   {children}
                 </table>
               </div>
@@ -4019,6 +4035,7 @@ function MarkdownPreview({
                 {...props}
                 type="checkbox"
                 checked={Boolean(checked)}
+                disabled={!editable}
                 onChange={() => undefined}
               />
             );
