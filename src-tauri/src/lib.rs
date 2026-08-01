@@ -1270,10 +1270,23 @@ fn plan_link_rewrites(
     Ok(rewrites)
 }
 
-fn cleanup_staged_file_updates(updates: &[StagedFileUpdate]) {
+/// Removes a completed transaction's temporary files after every replacement
+/// has either committed or been successfully restored.
+fn discard_staged_file_updates(updates: &[StagedFileUpdate]) {
     for update in updates {
         let _ = fs::remove_file(&update.replacement);
         let _ = fs::remove_file(&update.backup);
+    }
+}
+
+/// A failed restore must retain its backup: it is the user's only recoverable
+/// copy of the original note. The caller receives that path in the error.
+fn cleanup_after_rollback(updates: &[StagedFileUpdate]) {
+    for update in updates {
+        let _ = fs::remove_file(&update.replacement);
+        if !update.applied {
+            let _ = fs::remove_file(&update.backup);
+        }
     }
 }
 
@@ -1283,7 +1296,7 @@ fn stage_file_updates(rewrites: Vec<LinkRewrite>) -> Result<Vec<StagedFileUpdate
         let original = match fs::read(&rewrite.path) {
             Ok(content) => content,
             Err(error) => {
-                cleanup_staged_file_updates(&updates);
+                discard_staged_file_updates(&updates);
                 return Err(error.to_string());
             }
         };
@@ -1294,7 +1307,7 @@ fn stage_file_updates(rewrites: Vec<LinkRewrite>) -> Result<Vec<StagedFileUpdate
         {
             let _ = fs::remove_file(&backup);
             let _ = fs::remove_file(&replacement);
-            cleanup_staged_file_updates(&updates);
+            discard_staged_file_updates(&updates);
             return Err(error.to_string());
         }
         updates.push(StagedFileUpdate {
@@ -1307,18 +1320,33 @@ fn stage_file_updates(rewrites: Vec<LinkRewrite>) -> Result<Vec<StagedFileUpdate
     Ok(updates)
 }
 
-fn rollback_staged_file_updates(updates: &mut [StagedFileUpdate]) -> Result<(), String> {
+fn rollback_staged_file_updates(
+    updates: &mut [StagedFileUpdate],
+    fail_restore_for_index: Option<usize>,
+) -> Result<(), String> {
     let mut errors = Vec::new();
-    for update in updates.iter_mut().rev() {
+    for index in (0..updates.len()).rev() {
+        let update = &mut updates[index];
         if update.applied {
-            if let Err(error) = fs::rename(&update.backup, &update.target) {
-                errors.push(error.to_string());
+            if fail_restore_for_index == Some(index) {
+                errors.push(format!(
+                    "Could not restore {}; recovery copy retained at {}",
+                    update.target.display(),
+                    update.backup.display()
+                ));
+            } else if let Err(error) = fs::rename(&update.backup, &update.target) {
+                errors.push(format!(
+                    "Could not restore {}: {}; recovery copy retained at {}",
+                    update.target.display(),
+                    error,
+                    update.backup.display()
+                ));
             } else {
                 update.applied = false;
             }
         }
     }
-    cleanup_staged_file_updates(updates);
+    cleanup_after_rollback(updates);
     if errors.is_empty() {
         Ok(())
     } else {
@@ -1332,10 +1360,11 @@ fn rollback_staged_file_updates(updates: &mut [StagedFileUpdate]) -> Result<(), 
 fn apply_staged_file_updates(
     updates: &mut [StagedFileUpdate],
     fail_before_index: Option<usize>,
+    fail_restore_for_index: Option<usize>,
 ) -> Result<(), String> {
     for index in 0..updates.len() {
         if fail_before_index == Some(index) {
-            let rollback = rollback_staged_file_updates(updates);
+            let rollback = rollback_staged_file_updates(updates, fail_restore_for_index);
             return Err(match rollback {
                 Ok(()) => "A staged link repair could not be applied".into(),
                 Err(rollback_error) => format!(
@@ -1351,7 +1380,7 @@ fn apply_staged_file_updates(
             })
         };
         if let Err(error) = result {
-            let rollback = rollback_staged_file_updates(updates);
+            let rollback = rollback_staged_file_updates(updates, fail_restore_for_index);
             return Err(match rollback {
                 Ok(()) => error.to_string(),
                 Err(rollback_error) => format!("{}; rollback failed: {}", error, rollback_error),
@@ -1447,18 +1476,18 @@ fn save_note_checked(
         });
 
         let mut staged = stage_file_updates(rewrites).map_err(SaveNoteFailure::Error)?;
-        if let Err(error) = apply_staged_file_updates(&mut staged, None) {
+        if let Err(error) = apply_staged_file_updates(&mut staged, None, None) {
             return Err(SaveNoteFailure::Error(error));
         }
         if let Err(error) = rename_file_safely(&path, &destination) {
-            let rollback = rollback_staged_file_updates(&mut staged);
+            let rollback = rollback_staged_file_updates(&mut staged, None);
             let message = match rollback {
                 Ok(()) => error,
                 Err(rollback_error) => format!("{}; rollback failed: {}", error, rollback_error),
             };
             return Err(SaveNoteFailure::Error(message));
         }
-        cleanup_staged_file_updates(&staged);
+        discard_staged_file_updates(&staged);
     }
     read_note_file(&destination).map_err(SaveNoteFailure::Error)
 }
@@ -2418,7 +2447,7 @@ mod tests {
             ])?;
             // Simulate a failure after the first atomic replacement. The helper
             // must restore that write before reporting the error.
-            assert!(apply_staged_file_updates(&mut staged, Some(1)).is_err());
+            assert!(apply_staged_file_updates(&mut staged, Some(1), None).is_err());
             assert_eq!(
                 fs::read_to_string(&first).map_err(|error| error.to_string())?,
                 "# First\noriginal\n"
@@ -2427,6 +2456,52 @@ mod tests {
                 fs::read_to_string(&second).map_err(|error| error.to_string())?,
                 "# Second\noriginal\n"
             );
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn failed_link_repair_rollback_retains_the_recovery_copy() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let first = library.join("First.md");
+        let second = library.join("Second.md");
+        fs::write(&first, "# First\noriginal\n").unwrap();
+        fs::write(&second, "# Second\noriginal\n").unwrap();
+
+        let result = (|| -> Result<(), String> {
+            let mut staged = stage_file_updates(vec![
+                LinkRewrite {
+                    path: first.clone(),
+                    content: "# First\nrewritten\n".into(),
+                },
+                LinkRewrite {
+                    path: second.clone(),
+                    content: "# Second\nrewritten\n".into(),
+                },
+            ])?;
+            let recovery_copy = staged[0].backup.clone();
+
+            // Simulate a failure after the first replacement and an inability
+            // to restore it. The original content must remain recoverable.
+            let error = apply_staged_file_updates(&mut staged, Some(1), Some(0))
+                .expect_err("the simulated rollback must fail");
+            assert!(error.contains(recovery_copy.to_string_lossy().as_ref()));
+            assert_eq!(
+                fs::read_to_string(&first).map_err(|error| error.to_string())?,
+                "# First\nrewritten\n"
+            );
+            assert_eq!(
+                fs::read_to_string(&recovery_copy).map_err(|error| error.to_string())?,
+                "# First\noriginal\n"
+            );
+            assert_eq!(
+                fs::read_to_string(&second).map_err(|error| error.to_string())?,
+                "# Second\noriginal\n"
+            );
+            fs::remove_file(&recovery_copy).map_err(|error| error.to_string())?;
             Ok(())
         })();
         fs::remove_dir_all(&library).ok();
