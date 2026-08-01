@@ -46,3 +46,4 @@
 - Native-window integration and staged-update installation coverage.
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
+- Code-fence language autocomplete: suggest supported languages and aliases while typing after an opening triple-backtick fence, while still allowing custom language identifiers.
