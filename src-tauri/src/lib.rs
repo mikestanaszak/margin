@@ -1091,20 +1091,32 @@ struct LinkRewrite {
     content: String,
 }
 
+#[derive(Debug)]
+struct StagedFileUpdate {
+    target: PathBuf,
+    replacement: PathBuf,
+    backup: PathBuf,
+    applied: bool,
+}
+
 /// Returns the byte offset immediately after YAML front matter, so link repair
 /// never alters a note's metadata values.
 fn markdown_body_offset(content: &str) -> usize {
-    if !content.starts_with("---\n") {
-        return 0;
-    }
-    let mut offset = 4;
+    let mut offset = 0;
+    let mut first_line = true;
     while offset < content.len() {
         let remaining = &content[offset..];
         let Some(line_end) = remaining.find('\n') else {
-            break;
+            return 0;
         };
         let end = offset + line_end;
-        if &content[offset..end] == "---" {
+        let line = content[offset..end].trim_end_matches('\r');
+        if first_line {
+            if line != "---" {
+                return 0;
+            }
+            first_line = false;
+        } else if line == "---" {
             return end + 1;
         }
         offset = end + 1;
@@ -1258,6 +1270,97 @@ fn plan_link_rewrites(
     Ok(rewrites)
 }
 
+fn cleanup_staged_file_updates(updates: &[StagedFileUpdate]) {
+    for update in updates {
+        let _ = fs::remove_file(&update.replacement);
+        let _ = fs::remove_file(&update.backup);
+    }
+}
+
+fn stage_file_updates(rewrites: Vec<LinkRewrite>) -> Result<Vec<StagedFileUpdate>, String> {
+    let mut updates = Vec::with_capacity(rewrites.len());
+    for rewrite in rewrites {
+        let original = match fs::read(&rewrite.path) {
+            Ok(content) => content,
+            Err(error) => {
+                cleanup_staged_file_updates(&updates);
+                return Err(error.to_string());
+            }
+        };
+        let backup = unique_temporary_path(&rewrite.path);
+        let replacement = unique_temporary_path(&rewrite.path);
+        if let Err(error) =
+            fs::write(&backup, original).and_then(|_| fs::write(&replacement, rewrite.content))
+        {
+            let _ = fs::remove_file(&backup);
+            let _ = fs::remove_file(&replacement);
+            cleanup_staged_file_updates(&updates);
+            return Err(error.to_string());
+        }
+        updates.push(StagedFileUpdate {
+            target: rewrite.path,
+            replacement,
+            backup,
+            applied: false,
+        });
+    }
+    Ok(updates)
+}
+
+fn rollback_staged_file_updates(updates: &mut [StagedFileUpdate]) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for update in updates.iter_mut().rev() {
+        if update.applied {
+            if let Err(error) = fs::rename(&update.backup, &update.target) {
+                errors.push(error.to_string());
+            } else {
+                update.applied = false;
+            }
+        }
+    }
+    cleanup_staged_file_updates(updates);
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+/// Replacements are all staged before the first file changes. If any commit
+/// fails, every already-applied replacement is restored from its same-folder
+/// backup before the error reaches the caller.
+fn apply_staged_file_updates(
+    updates: &mut [StagedFileUpdate],
+    fail_before_index: Option<usize>,
+) -> Result<(), String> {
+    for index in 0..updates.len() {
+        if fail_before_index == Some(index) {
+            let rollback = rollback_staged_file_updates(updates);
+            return Err(match rollback {
+                Ok(()) => "A staged link repair could not be applied".into(),
+                Err(rollback_error) => format!(
+                    "A staged link repair could not be applied; rollback failed: {}",
+                    rollback_error
+                ),
+            });
+        }
+        let result = {
+            let update = &mut updates[index];
+            fs::rename(&update.replacement, &update.target).map(|()| {
+                update.applied = true;
+            })
+        };
+        if let Err(error) = result {
+            let rollback = rollback_staged_file_updates(updates);
+            return Err(match rollback {
+                Ok(()) => error.to_string(),
+                Err(rollback_error) => format!("{}; rollback failed: {}", error, rollback_error),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn rename_file_safely(source: &Path, destination: &Path) -> Result<(), String> {
     if source == destination {
         return Ok(());
@@ -1312,30 +1415,50 @@ fn save_note_checked(
     let yaml =
         serde_yaml::to_string(&front).map_err(|error| SaveNoteFailure::Error(error.to_string()))?;
     let content = format!("---\n{}---\n\n{}", yaml, note.body);
-    let temporary = unique_temporary_path(&path);
-    fs::write(&temporary, content).map_err(|error| SaveNoteFailure::Error(error.to_string()))?;
-    fs::rename(&temporary, &path).map_err(|error| {
-        let _ = fs::remove_file(&temporary);
-        SaveNoteFailure::Error(error.to_string())
-    })?;
     let destination = path_for_title(&path, &title).map_err(SaveNoteFailure::Error)?;
-    if destination != path {
-        let rewrites = match library {
+    if destination == path {
+        let temporary = unique_temporary_path(&path);
+        fs::write(&temporary, content)
+            .map_err(|error| SaveNoteFailure::Error(error.to_string()))?;
+        fs::rename(&temporary, &path).map_err(|error| {
+            let _ = fs::remove_file(&temporary);
+            SaveNoteFailure::Error(error.to_string())
+        })?;
+    } else {
+        let mut rewrites = match library {
             Some(library) if path.starts_with(library) && destination.starts_with(library) => {
                 plan_link_rewrites(library, &path, &destination).map_err(SaveNoteFailure::Error)?
             }
             _ => Vec::new(),
         };
-        rename_file_safely(&path, &destination).map_err(SaveNoteFailure::Error)?;
-        for rewrite in rewrites {
-            let rewrite_path = if rewrite.path == path {
-                &destination
-            } else {
-                &rewrite.path
-            };
-            fs::write(rewrite_path, rewrite.content)
-                .map_err(|error| SaveNoteFailure::Error(error.to_string()))?;
+        // Replace the old on-disk source plan with the new note body so self
+        // links are repaired without discarding the edit being saved.
+        rewrites.retain(|rewrite| rewrite.path != path);
+        let source_body_offset = markdown_body_offset(&content);
+        let rewritten_source_body =
+            rewrite_markdown_links(&content[source_body_offset..], &path, &path, &destination);
+        rewrites.push(LinkRewrite {
+            path: path.clone(),
+            content: format!(
+                "{}{}",
+                &content[..source_body_offset],
+                rewritten_source_body
+            ),
+        });
+
+        let mut staged = stage_file_updates(rewrites).map_err(SaveNoteFailure::Error)?;
+        if let Err(error) = apply_staged_file_updates(&mut staged, None) {
+            return Err(SaveNoteFailure::Error(error));
         }
+        if let Err(error) = rename_file_safely(&path, &destination) {
+            let rollback = rollback_staged_file_updates(&mut staged);
+            let message = match rollback {
+                Ok(()) => error,
+                Err(rollback_error) => format!("{}; rollback failed: {}", error, rollback_error),
+            };
+            return Err(SaveNoteFailure::Error(message));
+        }
+        cleanup_staged_file_updates(&staged);
     }
     read_note_file(&destination).map_err(SaveNoteFailure::Error)
 }
@@ -1774,7 +1897,7 @@ mod tests {
         move_note_to_trash, normalize_tags, path_for_title, read_library_note_file, read_note_file,
         relative_note_id, rename_file_safely, rename_folder, rename_note, restore_note_from_trash,
         safe_file_stem, save_note, save_note_document, search_snapshot, split_front_matter,
-        LibraryIndex, SaveNoteResult,
+        stage_file_updates, apply_staged_file_updates, LibraryIndex, LinkRewrite, SaveNoteResult,
     };
     use std::{
         fs,
@@ -2244,11 +2367,8 @@ mod tests {
                 "---\ntags: [project]\n---\n\n# Old title\n\n[self](Old title.md)\n",
             )
             .map_err(|error| error.to_string())?;
-            fs::write(
-                &links_path,
-                "---\nlink: ../Projects/Old title.md\n---\n\n# Links\n\n[relative](../Projects/Old title.md)\n[external](https://example.com/Old title.md)\n[anchor](../Projects/Old title.md#part)\n[absolute](/Projects/Old title.md)\n[missing](../Projects/Missing.md)\n`[code](../Projects/Old title.md)`\n",
-            )
-            .map_err(|error| error.to_string())?;
+            let links_source = "---\r\nlink: ../Projects/Old title.md\r\n---\r\n\r\n# Links\r\n\r\n[relative](../Projects/Old title.md)\r\n[external](https://example.com/Old title.md)\r\n[anchor](../Projects/Old title.md#part)\r\n[absolute](/Projects/Old title.md)\r\n[missing](../Projects/Missing.md)\r\n`[code](../Projects/Old title.md)`\r\n";
+            fs::write(&links_path, links_source).map_err(|error| error.to_string())?;
 
             let mut note = read_note_file(&old_path)?;
             note.body = "# New title\n\n[self](Old title.md)\n".into();
@@ -2263,13 +2383,50 @@ mod tests {
             let renamed = fs::read_to_string(&saved.path).map_err(|error| error.to_string())?;
             assert!(renamed.contains("[self](New title.md)"));
             let links = fs::read_to_string(&links_path).map_err(|error| error.to_string())?;
-            assert!(links.contains("link: ../Projects/Old title.md"));
+            assert!(links.starts_with("---\r\nlink: ../Projects/Old title.md\r\n---\r\n\r\n"));
             assert!(links.contains("[relative](../Projects/New title.md)"));
             assert!(links.contains("[external](https://example.com/Old title.md)"));
             assert!(links.contains("[anchor](../Projects/Old title.md#part)"));
             assert!(links.contains("[absolute](/Projects/Old title.md)"));
             assert!(links.contains("[missing](../Projects/Missing.md)"));
             assert!(links.contains("`[code](../Projects/Old title.md)`"));
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn staged_link_repair_failure_rolls_back_every_previously_written_file() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let first = library.join("First.md");
+        let second = library.join("Second.md");
+        fs::write(&first, "# First\noriginal\n").unwrap();
+        fs::write(&second, "# Second\noriginal\n").unwrap();
+
+        let result = (|| -> Result<(), String> {
+            let mut staged = stage_file_updates(vec![
+                LinkRewrite {
+                    path: first.clone(),
+                    content: "# First\nrewritten\n".into(),
+                },
+                LinkRewrite {
+                    path: second.clone(),
+                    content: "# Second\nrewritten\n".into(),
+                },
+            ])?;
+            // Simulate a failure after the first atomic replacement. The helper
+            // must restore that write before reporting the error.
+            assert!(apply_staged_file_updates(&mut staged, Some(1)).is_err());
+            assert_eq!(
+                fs::read_to_string(&first).map_err(|error| error.to_string())?,
+                "# First\noriginal\n"
+            );
+            assert_eq!(
+                fs::read_to_string(&second).map_err(|error| error.to_string())?,
+                "# Second\noriginal\n"
+            );
             Ok(())
         })();
         fs::remove_dir_all(&library).ok();
