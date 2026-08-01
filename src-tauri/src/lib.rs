@@ -1632,7 +1632,14 @@ fn rename_note(path: String, name: String, library_path: String) -> Result<NoteD
     }
     let mut note = read_library_note_file(&library, &path)?;
     note.body = body_with_title(&note.body, name.trim_end_matches(".md").trim());
-    managed_note(&library, save_note_document(note)?)
+    let saved = match save_note_checked(note, Some(&library)) {
+        Ok(note) => note,
+        Err(SaveNoteFailure::Conflict(_)) => {
+            return Err("The note changed on disk before it could be saved".into())
+        }
+        Err(SaveNoteFailure::Error(message)) => return Err(message),
+    };
+    managed_note(&library, saved)
 }
 
 #[tauri::command]
@@ -2457,6 +2464,39 @@ mod tests {
 
             let renamed = fs::read_to_string(&saved.path).map_err(|error| error.to_string())?;
             assert!(renamed.contains("[self](New title.md)"));
+            let links = fs::read_to_string(&links_path).map_err(|error| error.to_string())?;
+            assert!(links.contains("[relative](../Projects/New title.md)"));
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn explicit_renames_repair_relative_markdown_links() {
+        let library = temporary_library();
+        fs::create_dir_all(library.join("Projects")).unwrap();
+        fs::create_dir_all(library.join("Reference")).unwrap();
+        let library_path = library.to_string_lossy().to_string();
+        let old_path = library.join("Projects").join("Old title.md");
+        let links_path = library.join("Reference").join("Links.md");
+        let result = (|| -> Result<(), String> {
+            fs::write(&old_path, "# Old title\n").map_err(|error| error.to_string())?;
+            fs::write(
+                &links_path,
+                "# Links\n\n[relative](../Projects/Old title.md)\n",
+            )
+            .map_err(|error| error.to_string())?;
+            let canonical_old_path =
+                fs::canonicalize(&old_path).map_err(|error| error.to_string())?;
+
+            let renamed = rename_note(
+                canonical_old_path.to_string_lossy().to_string(),
+                "New title".into(),
+                library_path,
+            )?;
+            assert!(renamed.path.ends_with("New title.md"));
+            assert!(!old_path.exists());
             let links = fs::read_to_string(&links_path).map_err(|error| error.to_string())?;
             assert!(links.contains("[relative](../Projects/New title.md)"));
             Ok(())
