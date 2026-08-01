@@ -2,6 +2,12 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## 0.3.1 — 2026-08-01
+
+### Fixed
+
+- Installed Windows builds no longer open a background Command Prompt window.
+
 ## 0.3.0 — 2026-08-01
 
 ### Improved
