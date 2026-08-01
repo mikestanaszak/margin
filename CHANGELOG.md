@@ -2,6 +2,19 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## 0.2.1 — 2026-08-01
+
+### Fixed
+
+- Autosave now detects an external edit before writing and presents a conflict instead of silently overwriting it.
+- Note loading, queued saves, library refreshes, and system-opened Markdown files now remain scoped to the correct note and selected library.
+- Fixed corrupted symbols in the app interface.
+- Libraries now index both `.md` and `.markdown` files.
+
+### Improved
+
+- Library refreshes use one guarded snapshot request and skip Margin's internal storage.
+
 ## 0.2.0 — 2026-08-01
 
 ### Added
