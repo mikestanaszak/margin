@@ -74,7 +74,7 @@ type Filter = {
   type: "all" | "today" | "favorites" | "trash" | "folder";
   folder?: string;
 };
-type Conflict = { disk: NoteDocument; mine: NoteDocument };
+type Conflict = { disk: NoteDocument; mine: NoteDocument; path: string };
 type MarkdownNode = {
   type?: string;
   lang?: string | null;
@@ -205,6 +205,7 @@ function pathIsInLibrary(path: string, library: string) {
 
 function App() {
   const [library, setLibrary] = useState<string | null>(null);
+  const [libraryInitialized, setLibraryInitialized] = useState(false);
   const [libraryPaneWidth, setLibraryPaneWidth] = useState(() =>
     loadPaneWidth(libraryPaneWidthKey, 232),
   );
@@ -279,11 +280,15 @@ function App() {
   const activePathRef = useRef<string | null>(null);
   const libraryRef = useRef<string | null>(null);
   const noteRef = useRef<NoteDocument | null>(null);
+  const noteBaselines = useRef(new Map<string, NoteDocument>());
+  const savedPathAliases = useRef(new Map<string, string>());
+  const saveQueueKeys = useRef(new Map<string, string>());
+  const pendingOpenedMarkdown = useRef<string[]>([]);
   const noteLoadGeneration = useRef(0);
   const refreshGeneration = useRef(0);
   const refreshInFlight = useRef<Promise<void> | null>(null);
   const refreshQueued = useRef(false);
-  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const saveQueues = useRef(new Map<string, Promise<void>>());
   const internallyMovedPath = useRef<string | null>(null);
   const registeredCaptureShortcut = useRef(defaultShortcuts.quickCapture);
   const viewScrollRatios = useRef(new Map<string, number>());
@@ -466,8 +471,10 @@ function App() {
     };
   }, [shortcuts.quickCapture]);
   useEffect(() => {
+    let disposed = false;
     void invoke<string | null>("load_selected_library")
       .then(async (selected) => {
+        if (disposed) return;
         if (selected) {
           setLibrary(selected);
           return;
@@ -480,11 +487,21 @@ function App() {
           setLibrary(legacyLibrary);
         }
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (!disposed) setLibraryInitialized(true);
+      });
+    return () => {
+      disposed = true;
+    };
   }, []);
   const receiveOpenedMarkdown = useCallback(
     (path: string) => {
       if (!path) return;
+      if (!libraryInitialized) {
+        pendingOpenedMarkdown.current.push(path);
+        return;
+      }
       if (library && pathIsInLibrary(path, library)) {
         setActivePath(path);
         setStatus("Opened Markdown file");
@@ -492,9 +509,15 @@ function App() {
         setOpenedMarkdownPath(path);
       }
     },
-    [library],
+    [library, libraryInitialized],
   );
   useEffect(() => {
+    if (!libraryInitialized) return;
+    const pending = pendingOpenedMarkdown.current.splice(0);
+    pending.forEach(receiveOpenedMarkdown);
+  }, [library, libraryInitialized, receiveOpenedMarkdown]);
+  useEffect(() => {
+    if (!libraryInitialized) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void (async () => {
@@ -511,7 +534,7 @@ function App() {
       disposed = true;
       unlisten?.();
     };
-  }, [receiveOpenedMarkdown]);
+  }, [libraryInitialized, receiveOpenedMarkdown]);
   // This is a desktop application, not a browser tab. The webview's built-in
   // menu exposes browser actions (reload, inspect, and similar) that do not
   // belong in the product surface. Keyboard cut/copy/paste remains native.
@@ -554,6 +577,7 @@ function App() {
         )
           return;
         baseline.current = loaded;
+        noteBaselines.current.set(loaded.path, loaded);
         setNote(loaded);
         setMode("preview");
       } catch (error) {
@@ -591,9 +615,10 @@ function App() {
           disk.revision !== currentBaseline.revision &&
           hasUnsavedChanges(currentNote, currentBaseline)
         )
-          setConflict({ disk, mine: currentNote });
+          setConflict({ disk, mine: currentNote, path: currentNote.path });
         else if (disk.revision !== currentBaseline.revision) {
           baseline.current = disk;
+          noteBaselines.current.set(disk.path, disk);
           setNote(disk);
           setStatus("Updated from disk");
         }
@@ -800,10 +825,15 @@ function App() {
       setStatus(`Could not rename folder: ${String(error)}`);
     }
   };
-  const saveNote = async (draft: NoteDocument) => {
+  const saveNote = async (draft: NoteDocument, queueKey: string) => {
     try {
-      const previousPath = activePathRef.current ?? draft.path;
-      const currentBaseline = baseline.current;
+      const originalPath = draft.path;
+      const previousPath =
+        savedPathAliases.current.get(originalPath) ?? originalPath;
+      const currentBaseline =
+        noteBaselines.current.get(previousPath) ??
+        noteBaselines.current.get(originalPath) ??
+        null;
       const noteToSave = {
         ...draft,
         path: previousPath,
@@ -812,23 +842,31 @@ function App() {
             ? currentBaseline.revision
             : draft.revision,
       };
-      if (!hasUnsavedChanges(noteToSave, baseline.current)) return;
-      setStatus("Saving…");
+      if (!hasUnsavedChanges(noteToSave, currentBaseline)) return;
+      const isActive =
+        activePathRef.current === previousPath ||
+        activePathRef.current === originalPath;
+      if (isActive) setStatus("Saving…");
       const result = await invoke<SaveNoteResult>("save_note", {
         note: noteToSave,
       });
       if (result.status === "conflict") {
-        setConflict({ disk: result.disk, mine: noteToSave });
-        setStatus("Save conflict: the note changed on disk");
+        setConflict({ disk: result.disk, mine: noteToSave, path: previousPath });
+        if (isActive) setStatus("Save conflict: the note changed on disk");
         return;
       }
       if (result.status === "error") {
-        setStatus(`Save failed: ${result.message}`);
+        if (isActive) setStatus(`Save failed: ${result.message}`);
         return;
       }
       const saved = result.note;
       const pathChanged = saved.path !== previousPath;
-      if (activePathRef.current === previousPath) {
+      savedPathAliases.current.set(originalPath, saved.path);
+      saveQueueKeys.current.set(originalPath, queueKey);
+      saveQueueKeys.current.set(saved.path, queueKey);
+      noteBaselines.current.set(originalPath, saved);
+      noteBaselines.current.set(saved.path, saved);
+      if (isActive) {
         activePathRef.current = saved.path;
         baseline.current = saved;
         if (pathChanged) {
@@ -852,7 +890,9 @@ function App() {
           : current,
       );
       const updateSummary = (item: NoteSummary) =>
-        item.path === previousPath
+        item.path === originalPath ||
+        item.path === previousPath ||
+        item.path === saved.path
           ? {
               ...item,
               path: saved.path,
@@ -864,17 +904,25 @@ function App() {
           : item;
       setNotes((current) => current.map(updateSummary));
       setTrashNotes((current) => current.map(updateSummary));
-      setStatus("Saved");
+      if (isActive) setStatus("Saved");
     } catch (error) {
-      setStatus(`Save failed: ${String(error)}`);
+      if (activePathRef.current === draft.path)
+        setStatus(`Save failed: ${String(error)}`);
     }
   };
   const enqueueSave = (draft: NoteDocument) => {
     const queuedDraft = { ...draft, tags: [...draft.tags] };
-    const queued = saveQueue.current
+    const queueKey =
+      saveQueueKeys.current.get(queuedDraft.path) ?? queuedDraft.path;
+    const previous = saveQueues.current.get(queueKey) ?? Promise.resolve();
+    const queued = previous
       .catch(() => undefined)
-      .then(() => saveNote(queuedDraft));
-    saveQueue.current = queued;
+      .then(() => saveNote(queuedDraft, queueKey));
+    saveQueues.current.set(queueKey, queued);
+    void queued.finally(() => {
+      if (saveQueues.current.get(queueKey) === queued)
+        saveQueues.current.delete(queueKey);
+    });
     return queued;
   };
   const duplicateNote = async (source: Pick<NoteSummary, "path">) => {
@@ -1710,11 +1758,15 @@ function App() {
         <ConflictDialog
           conflict={conflict}
           onChoose={(choice) => {
+            const conflictIsActive = activePathRef.current === conflict.path;
+            noteBaselines.current.set(conflict.path, conflict.disk);
             if (choice === "disk") {
-              baseline.current = conflict.disk;
-              setNote(conflict.disk);
+              if (conflictIsActive) {
+                baseline.current = conflict.disk;
+                setNote(conflict.disk);
+              }
             } else {
-              baseline.current = conflict.disk;
+              if (conflictIsActive) baseline.current = conflict.disk;
               void enqueueSave(conflict.mine);
             }
             setConflict(null);
