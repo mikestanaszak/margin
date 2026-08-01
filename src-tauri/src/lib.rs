@@ -1917,14 +1917,15 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_quick_note, backlinks_for_snapshot, body_with_title, build_library_snapshot,
-        create_folder, create_note, delete_note_permanently, duplicate_note, existing_library_path,
-        import_daily_note, import_daily_note_to_new_note, import_markdown_file, library_folder,
-        load_folders, load_library, load_trash, move_folder_to_trash, move_note_to_folder,
-        move_note_to_trash, normalize_tags, path_for_title, read_library_note_file, read_note_file,
-        relative_note_id, rename_file_safely, rename_folder, rename_note, restore_note_from_trash,
-        safe_file_stem, save_note, save_note_document, search_snapshot, split_front_matter,
-        stage_file_updates, apply_staged_file_updates, LibraryIndex, LinkRewrite, SaveNoteResult,
+        append_quick_note, apply_staged_file_updates, backlinks_for_snapshot, body_with_title,
+        build_library_snapshot, create_folder, create_note, delete_note_permanently,
+        duplicate_note, existing_library_path, import_daily_note, import_daily_note_to_new_note,
+        import_markdown_file, library_folder, load_folders, load_library, load_trash,
+        move_folder_to_trash, move_note_to_folder, move_note_to_trash, normalize_tags,
+        path_for_title, read_library_note_file, read_note_file, relative_note_id,
+        rename_file_safely, rename_folder, rename_note, restore_note_from_trash, safe_file_stem,
+        save_note, save_note_document, search_snapshot, split_front_matter, stage_file_updates,
+        LibraryIndex, LinkRewrite, SaveNoteResult,
     };
     use std::{
         fs,
@@ -2397,9 +2398,11 @@ mod tests {
             let links_source = "---\r\nlink: ../Projects/Old title.md\r\n---\r\n\r\n# Links\r\n\r\n[relative](../Projects/Old title.md)\r\n[external](https://example.com/Old title.md)\r\n[anchor](../Projects/Old title.md#part)\r\n[absolute](/Projects/Old title.md)\r\n[missing](../Projects/Missing.md)\r\n`[code](../Projects/Old title.md)`\r\n";
             fs::write(&links_path, links_source).map_err(|error| error.to_string())?;
 
-            let mut note = read_note_file(&old_path)?;
+            let canonical_old_path =
+                fs::canonicalize(&old_path).map_err(|error| error.to_string())?;
+            let mut note = read_note_file(&canonical_old_path)?;
             note.body = "# New title\n\n[self](Old title.md)\n".into();
-            let saved = match save_note(note, Some(library_path.clone())) {
+            let saved = match save_note(note, library_path.clone()) {
                 SaveNoteResult::Saved { note } => note,
                 SaveNoteResult::Conflict { .. } => return Err("unexpected save conflict".into()),
                 SaveNoteResult::Error { message } => return Err(message),
@@ -2440,9 +2443,11 @@ mod tests {
             )
             .map_err(|error| error.to_string())?;
 
-            let mut note = read_note_file(&old_path)?;
+            let canonical_old_path =
+                fs::canonicalize(&old_path).map_err(|error| error.to_string())?;
+            let mut note = read_note_file(&canonical_old_path)?;
             note.body = "# New title\n\n[self](Old title.markdown)\n".into();
-            let saved = match save_note(note, Some(library_path.clone())) {
+            let saved = match save_note(note, library_path.clone()) {
                 SaveNoteResult::Saved { note } => note,
                 SaveNoteResult::Conflict { .. } => return Err("unexpected save conflict".into()),
                 SaveNoteResult::Error { message } => return Err(message),
