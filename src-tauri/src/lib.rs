@@ -1,18 +1,21 @@
 use chrono::Local;
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
     sync::{
-        atomic::{AtomicU64, Ordering},
-        Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 #[cfg(target_os = "macos")]
 use tauri::Emitter;
-use tauri::{window::Color, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{
+    window::Color, AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 use walkdir::WalkDir;
@@ -230,16 +233,89 @@ struct NoteSummary {
     title: String,
     tags: Vec<String>,
     updated: u64,
+    #[serde(skip_serializing)]
     searchable_text: String,
     excerpt: String,
     folder: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct LibrarySnapshot {
     notes: Vec<NoteSummary>,
     folders: Vec<String>,
     trash: Vec<NoteSummary>,
+}
+
+/// A process-owned snapshot keeps note contents and search data out of the
+/// webview. The watcher marks the snapshot stale; the next normal refresh
+/// rebuilds it, while a low-frequency reconciliation catches missed events.
+/// Margin deliberately indexes one selected library at a time.
+struct LibraryIndex(Mutex<Option<IndexedLibrary>>);
+
+struct IndexedLibrary {
+    path: PathBuf,
+    snapshot: LibrarySnapshot,
+    dirty: Arc<AtomicBool>,
+    reconciled_at: Instant,
+    _watcher: RecommendedWatcher,
+}
+
+const INDEX_RECONCILIATION_INTERVAL: Duration = Duration::from_secs(45);
+
+impl LibraryIndex {
+    fn snapshot(&self, library_path: &str, force: bool) -> Result<LibrarySnapshot, String> {
+        let requested = PathBuf::from(library_path);
+        let library = fs::canonicalize(&requested)
+            .map_err(|error| format!("Could not open the selected library: {error}"))?;
+        if !library.is_dir() {
+            return Err("Choose an existing notes folder".into());
+        }
+
+        let mut state = self.0.lock().map_err(|_| "Library index is unavailable")?;
+        let replace_index = state.as_ref().is_none_or(|current| current.path != library);
+        if replace_index {
+            *state = Some(index_library(&library)?);
+        }
+        let current = state.as_mut().expect("library index was initialized");
+        let should_rebuild = force
+            || current.dirty.swap(false, Ordering::AcqRel)
+            || current.reconciled_at.elapsed() >= INDEX_RECONCILIATION_INTERVAL;
+        if should_rebuild {
+            current.snapshot = build_library_snapshot(&current.path);
+            current.reconciled_at = Instant::now();
+        }
+        Ok(current.snapshot.clone())
+    }
+}
+
+fn build_library_snapshot(library: &Path) -> LibrarySnapshot {
+    let (notes, folders) = load_library_contents(library);
+    LibrarySnapshot {
+        notes,
+        folders,
+        trash: load_trash_contents(library),
+    }
+}
+
+fn index_library(library: &Path) -> Result<IndexedLibrary, String> {
+    let dirty = Arc::new(AtomicBool::new(false));
+    let watcher_dirty = Arc::clone(&dirty);
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        if event.is_ok() {
+            watcher_dirty.store(true, Ordering::Release);
+        }
+    })
+    .map_err(|error| format!("Could not watch the selected library: {error}"))?;
+    watcher
+        .watch(library, RecursiveMode::Recursive)
+        .map_err(|error| format!("Could not watch the selected library: {error}"))?;
+    Ok(IndexedLibrary {
+        path: library.to_path_buf(),
+        snapshot: build_library_snapshot(library),
+        dirty,
+        reconciled_at: Instant::now(),
+        _watcher: watcher,
+    })
 }
 
 #[derive(Serialize)]
@@ -506,14 +582,87 @@ fn load_library(library_path: String) -> Result<Vec<NoteSummary>, String> {
 }
 
 #[tauri::command]
-fn load_library_snapshot(library_path: String) -> Result<LibrarySnapshot, String> {
-    let library = PathBuf::from(&library_path);
-    let (notes, folders) = load_library_contents(&library);
-    Ok(LibrarySnapshot {
-        notes,
-        folders,
-        trash: load_trash_contents(&library),
-    })
+fn load_library_snapshot(
+    library_index: State<'_, LibraryIndex>,
+    library_path: String,
+    force: Option<bool>,
+) -> Result<LibrarySnapshot, String> {
+    library_index.snapshot(&library_path, force.unwrap_or(false))
+}
+
+fn wiki_targets(text: &str) -> Vec<&str> {
+    let mut targets = Vec::new();
+    let mut remaining = text;
+    while let Some(start) = remaining.find("[[") {
+        let after_start = &remaining[start + 2..];
+        let Some(end) = after_start.find("]]") else {
+            break;
+        };
+        let target = after_start[..end].split('|').next().unwrap_or("").trim();
+        if !target.is_empty() {
+            targets.push(target);
+        }
+        remaining = &after_start[end + 2..];
+    }
+    targets
+}
+
+#[tauri::command]
+fn search_library(
+    library_index: State<'_, LibraryIndex>,
+    library_path: String,
+    query: String,
+) -> Result<Vec<NoteSummary>, String> {
+    Ok(search_snapshot(
+        &library_index.snapshot(&library_path, false)?,
+        &query,
+    ))
+}
+
+#[tauri::command]
+fn find_backlinks(
+    library_index: State<'_, LibraryIndex>,
+    library_path: String,
+    note_path: String,
+    title: String,
+) -> Result<Vec<NoteSummary>, String> {
+    Ok(backlinks_for_snapshot(
+        &library_index.snapshot(&library_path, false)?,
+        &note_path,
+        &title,
+    ))
+}
+
+fn search_snapshot(snapshot: &LibrarySnapshot, query: &str) -> Vec<NoteSummary> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    snapshot
+        .notes
+        .iter()
+        .filter(|note| note.searchable_text.contains(&query))
+        .cloned()
+        .collect()
+}
+
+fn backlinks_for_snapshot(
+    snapshot: &LibrarySnapshot,
+    note_path: &str,
+    title: &str,
+) -> Vec<NoteSummary> {
+    let target = title.to_lowercase();
+    snapshot
+        .notes
+        .iter()
+        .filter(|item| {
+            item.path != note_path
+                && wiki_targets(&item.searchable_text)
+                    .iter()
+                    .any(|link| link.to_lowercase() == target)
+        })
+        .cloned()
+        .collect()
 }
 
 #[tauri::command]
@@ -1162,6 +1311,7 @@ pub fn run() {
                 .build(),
         )
         .setup(move |app| {
+            app.manage(LibraryIndex(Mutex::new(None)));
             app.manage(OpenedMarkdownFiles(Mutex::new(markdown_file_paths(
                 std::env::args_os().skip(1).map(PathBuf::from),
             ))));
@@ -1202,6 +1352,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_library,
             load_library_snapshot,
+            search_library,
+            find_backlinks,
             load_trash,
             read_note,
             create_note,
@@ -1254,18 +1406,23 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_quick_note, body_with_title, create_folder, create_note, delete_note_permanently,
-        duplicate_note, import_daily_note, import_daily_note_to_new_note, import_markdown_file,
-        library_folder, load_folders, load_library, load_library_snapshot, load_trash,
-        move_folder_to_trash, move_note_to_folder, move_note_to_trash, normalize_tags,
-        read_note_file, rename_folder, rename_note, restore_note_from_trash, safe_file_stem,
-        save_note, save_note_document, split_front_matter, SaveNoteResult,
+        append_quick_note, backlinks_for_snapshot, body_with_title, build_library_snapshot,
+        create_folder, create_note, delete_note_permanently, duplicate_note, import_daily_note,
+        import_daily_note_to_new_note, import_markdown_file, library_folder, load_folders,
+        load_library, load_trash, move_folder_to_trash, move_note_to_folder, move_note_to_trash,
+        normalize_tags, read_note_file, rename_folder, rename_note, restore_note_from_trash,
+        safe_file_stem, save_note, save_note_document, search_snapshot, split_front_matter,
+        LibraryIndex, SaveNoteResult,
     };
     use std::{
         fs,
         path::{Path, PathBuf},
-        sync::atomic::{AtomicU64, Ordering},
-        time::{SystemTime, UNIX_EPOCH},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Mutex,
+        },
+        thread,
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     static TEMP_LIBRARY_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1441,7 +1598,7 @@ mod tests {
             )
             .map_err(|error| error.to_string())?;
 
-            let snapshot = load_library_snapshot(library.to_string_lossy().to_string())?;
+            let snapshot = build_library_snapshot(&library);
             assert_eq!(snapshot.notes.len(), 1);
             assert_eq!(snapshot.notes[0].title, "Project plan");
             assert_eq!(snapshot.folders, ["Projects"]);
@@ -1784,6 +1941,79 @@ mod tests {
             .contains("changed outside margin"));
 
         fs::remove_dir_all(&library).ok();
+    }
+
+    #[test]
+    fn native_index_watches_changes_and_reconciles_on_demand() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let path = library.join("Watched.md");
+        fs::write(&path, "# Before\n\nOriginal text").unwrap();
+        let index = LibraryIndex(Mutex::new(None));
+        let library_path = library.to_string_lossy().to_string();
+
+        assert_eq!(
+            index.snapshot(&library_path, false).unwrap().notes[0].title,
+            "Before"
+        );
+        fs::write(&path, "# After\n\nChanged outside Margin").unwrap();
+
+        let mut watched_title = String::new();
+        for _ in 0..30 {
+            thread::sleep(Duration::from_millis(100));
+            watched_title = index.snapshot(&library_path, false).unwrap().notes[0]
+                .title
+                .clone();
+            if watched_title == "After" {
+                break;
+            }
+        }
+        assert_eq!(watched_title, "After");
+
+        fs::write(&path, "# Reconciled\n\nExplicit refresh").unwrap();
+        assert_eq!(
+            index.snapshot(&library_path, true).unwrap().notes[0].title,
+            "Reconciled"
+        );
+        fs::remove_dir_all(&library).ok();
+    }
+
+    #[test]
+    fn native_search_and_backlinks_keep_note_bodies_out_of_snapshot_payloads() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let result = (|| -> Result<(), String> {
+            fs::write(
+                library.join("Project.md"),
+                format!(
+                    "# Project\n\n{} alpine architecture.",
+                    "Background ".repeat(40)
+                ),
+            )
+            .map_err(|error| error.to_string())?;
+            fs::write(
+                library.join("Reference.md"),
+                "# Reference\n\nSee [[Project]] for the next milestone.",
+            )
+            .map_err(|error| error.to_string())?;
+            let snapshot = build_library_snapshot(&library);
+            assert_eq!(search_snapshot(&snapshot, "alpine").len(), 1);
+            let project = snapshot
+                .notes
+                .iter()
+                .find(|note| note.title == "Project")
+                .ok_or("Project was not indexed")?;
+            assert_eq!(
+                backlinks_for_snapshot(&snapshot, &project.path, &project.title)[0].title,
+                "Reference"
+            );
+            let payload = serde_json::to_value(&snapshot).map_err(|error| error.to_string())?;
+            assert!(!payload.to_string().contains("alpine architecture"));
+            assert!(!payload.to_string().contains("searchable_text"));
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
     }
 
     #[test]
