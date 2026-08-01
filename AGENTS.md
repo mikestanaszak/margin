@@ -37,3 +37,5 @@ No automated test framework is currently configured. Before submitting changes, 
 ## Commit & Pull Request Guidelines
 
 Recent history uses concise, imperative, sentence-case subjects, for example `Fix external change detection races` and `Add Markdown syntax highlighting`. Keep commits focused and avoid generic messages. Pull requests should explain the user-visible change, link the relevant issue or spec section, list validation commands run, and include screenshots or a short recording for UI changes. Call out changes to note-file format, migrations, or platform packaging explicitly.
+
+For every release, update `CHANGELOG.md` with the version, release date, and user-facing additions, changes, and fixes before creating the release tag.
