@@ -240,7 +240,7 @@ function App() {
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [quickCaptureStatus, setQuickCaptureStatus] = useState(
-    "Registering global shortcutΓÇª",
+    "Registering global shortcut…",
   );
   const [noteContextMenu, setNoteContextMenu] = useState<{
     note: NoteSummary;
@@ -813,7 +813,7 @@ function App() {
             : draft.revision,
       };
       if (!hasUnsavedChanges(noteToSave, baseline.current)) return;
-      setStatus("SavingΓÇª");
+      setStatus("Saving…");
       const result = await invoke<SaveNoteResult>("save_note", {
         note: noteToSave,
       });
@@ -923,7 +923,7 @@ function App() {
   const trashNote = async (source: NoteSummary) => {
     if (
       !library ||
-      !confirm(`Move ΓÇ£${source.title}ΓÇ¥ to this libraryΓÇÖs trash?`)
+      !confirm(`Move “${source.title}” to this library’s trash?`)
     )
       return;
     try {
@@ -945,7 +945,7 @@ function App() {
     );
     if (
       !confirm(
-        `Move ΓÇ£${folder}ΓÇ¥ and its ${contained.length} ${contained.length === 1 ? "note" : "notes"} to Trash? You can restore its notes later.`,
+        `Move “${folder}” and its ${contained.length} ${contained.length === 1 ? "note" : "notes"} to Trash? You can restore its notes later.`,
       )
     )
       return;
@@ -991,7 +991,7 @@ function App() {
     if (
       !library ||
       !confirm(
-        `Permanently delete ΓÇ£${source.title}ΓÇ¥? This cannot be undone.`,
+        `Permanently delete “${source.title}”? This cannot be undone.`,
       )
     )
       return;
@@ -1269,11 +1269,11 @@ function App() {
     >
       <header className="app-topbar">
         <div className="top-brand">
-          <span className="brand-mark">Γ£ª</span>
+          <span className="brand-mark">✦</span>
           <span>Margin</span>
         </div>
         <label className="top-search">
-          <span>Γîò</span>
+          <span>⌕</span>
           <input
             id="note-search"
             value={query}
@@ -1297,13 +1297,13 @@ function App() {
             title="Settings"
             onClick={() => setSettingsOpen(true)}
           >
-            ΓÜÖ
+            ⚙
           </button>
         </div>
       </header>
       <aside className="sidebar" aria-label="Library navigation">
         <button className="new-note" onClick={() => void createNote()}>
-          ∩╝ï New note <kbd>{formatShortcut(shortcuts.newNote)}</kbd>
+          ＋ New note <kbd>{formatShortcut(shortcuts.newNote)}</kbd>
         </button>
         <nav>
           <button
@@ -1320,7 +1320,7 @@ function App() {
             onClick={() => void openToday()}
           >
             <span>Today</span>
-            <small>Γåù</small>
+            <small>↗</small>
           </button>
           <button
             className={
@@ -1357,7 +1357,7 @@ function App() {
                 setFolderDialogOpen(true);
               }}
             >
-              ∩╝ï
+              ＋
             </button>
           </div>
           <FolderTree
@@ -1509,7 +1509,7 @@ function App() {
           </>
         ) : (
           <div className="welcome">
-            <div className="welcome-icon">Γ£ª</div>
+            <div className="welcome-icon">✦</div>
             <h1>
               {library
                 ? "Choose a note or create one"
@@ -1622,7 +1622,7 @@ function App() {
           onClose={() => setFolderRenameTarget(null)}
           onCreate={(name) => void renameFolder(folderRenameTarget, name)}
           title="Rename folder"
-          description="This keeps the folderΓÇÖs notes and subfolders together."
+          description="This keeps the folder’s notes and subfolders together."
           placeholder="Folder name"
           submitLabel="Rename folder"
           initialValue={folderRenameTarget.split("/").pop() || ""}
@@ -1814,7 +1814,7 @@ function NoteContextMenu({
               }}
             >
               <option value="" disabled>
-                Choose folderΓÇª
+                Choose folder…
               </option>
               <option value="__top_level__">Top level</option>
               <CascadingFolderOptions folders={folders} />
@@ -1955,7 +1955,7 @@ function FolderTree({
                 aria-expanded={!isCollapsed}
                 onClick={() => onToggle(folder)}
               >
-                <span>Γû╛</span>
+                <span>▾</span>
               </button>
             ) : (
               <span className="folder-spacer" />
@@ -1978,7 +1978,7 @@ function FolderTree({
               aria-label={`Add subfolder to ${name}`}
               onClick={() => onAddSubfolder(folder)}
             >
-              ∩╝ï
+              ＋
             </button>
             <button
               type="button"
@@ -1987,7 +1987,7 @@ function FolderTree({
               aria-label={`Delete ${name}`}
               onClick={() => onDelete(folder)}
             >
-              ├ù
+              ×
             </button>
           </div>
           {nested.length > 0 && !isCollapsed && render(folder, depth + 1)}
@@ -2270,7 +2270,7 @@ function Outline({
           title="Close outline (Esc)"
           onClick={onClose}
         >
-          ├ù
+          ×
         </button>
       </header>
       {items.length ? (
@@ -2439,7 +2439,7 @@ function TableEditorDialog({
           <div>
             <h2>Edit table</h2>
             <p>
-              Drag Γá┐ to reorder. Use ∩╝ï beside a row or column to add after
+              Drag ⠿ to reorder. Use ＋ beside a row or column to add after
               it.
             </p>
           </div>
@@ -2448,7 +2448,7 @@ function TableEditorDialog({
             aria-label="Close table editor"
             onClick={onClose}
           >
-            ├ù
+          ×
           </button>
         </header>
         <div className="table-grid-wrap">
@@ -2472,7 +2472,7 @@ function TableEditorDialog({
                         )
                       }
                     >
-                      Γá┐
+                      ⠿
                     </button>
                     <input
                       aria-label={`Header ${column + 1}`}
@@ -2488,7 +2488,7 @@ function TableEditorDialog({
                         aria-label={`Add column after ${column + 1}`}
                         onClick={() => addColumn(column + 1)}
                       >
-                        ∩╝ï
+                        ＋
                       </button>
                       <button
                         type="button"
@@ -2497,7 +2497,7 @@ function TableEditorDialog({
                         disabled={headers.length <= 1}
                         onClick={() => removeColumn(column)}
                       >
-                        ├ù
+                        ×
                       </button>
                     </span>
                   </th>
@@ -2523,7 +2523,7 @@ function TableEditorDialog({
                         )
                       }
                     >
-                      Γá┐
+                      ⠿
                     </button>
                   </td>
                   {headers.map((_, column) => (
@@ -2545,7 +2545,7 @@ function TableEditorDialog({
                       aria-label={`Add row after ${rowIndex + 1}`}
                       onClick={() => addRow(rowIndex + 1)}
                     >
-                      ∩╝ï
+                      ＋
                     </button>
                     <button
                       type="button"
@@ -2558,7 +2558,7 @@ function TableEditorDialog({
                         )
                       }
                     >
-                      ├ù
+                      ×
                     </button>
                   </td>
                 </tr>
@@ -2610,19 +2610,19 @@ function UpdateDialog({
             <h2>Margin {update.version}</h2>
           </div>
           <button aria-label="Close update" onClick={onClose}>
-            ├ù
+            ×
           </button>
         </header>
         <p>{update.body || "A newer version of Margin is ready to install."}</p>
         {error && <p className="update-status">{error}</p>}
         {busy && (
           <p className="update-status">
-            Downloading and verifying the updateΓÇª
+            Downloading and verifying the update…
           </p>
         )}
         {ready && (
           <p className="update-status">
-            Update installed. Restart Margin when youΓÇÖre ready.
+            Update installed. Restart Margin when you’re ready.
           </p>
         )}
         <div>
@@ -2637,7 +2637,7 @@ function UpdateDialog({
                 onClick={onInstall}
                 disabled={busy}
               >
-                {busy ? "UpdatingΓÇª" : "Update now"}
+                {busy ? "Updating…" : "Update now"}
               </button>
             </>
           )}
@@ -2723,19 +2723,19 @@ function QuickCaptureDialog({
         <header>
           <div>
             <p className="eyebrow">Quick capture</p>
-            <h2>WhatΓÇÖs on your mind?</h2>
+            <h2>What’s on your mind?</h2>
           </div>
           <button
             type="button"
             aria-label="Close quick capture"
             onClick={onClose}
           >
-            ├ù
+            ×
           </button>
         </header>
         <textarea
           autoFocus
-          placeholder="Start typingΓÇª"
+          placeholder="Start typing…"
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
@@ -2750,9 +2750,9 @@ function QuickCaptureDialog({
           }}
         />
         <footer>
-          <span>Saved to todayΓÇÖs Daily note</span>
+          <span>Saved to today’s Daily note</span>
           <span>
-            <kbd>{shortcut}</kbd> opens ┬╖ <kbd>ΓîÿΓå╡</kbd> saves
+            <kbd>{shortcut}</kbd> opens · <kbd>⌘↵</kbd> saves
           </span>
         </footer>
         <div>
@@ -2888,7 +2888,7 @@ function CaptureWindow() {
   const save = async () => {
     if (!text.trim()) return;
     if (!libraryReady) {
-      setStatus("Loading your notes folderΓÇª");
+      setStatus("Loading your notes folder…");
       return;
     }
     if (!library) {
@@ -2906,7 +2906,7 @@ function CaptureWindow() {
         ),
       });
       setText("");
-      setStatus("Saved to todayΓÇÖs Daily note");
+      setStatus("Saved to today’s Daily note");
       window.setTimeout(hide, 160);
     } catch (error) {
       setStatus(`Could not save: ${String(error)}`);
@@ -2932,13 +2932,13 @@ function CaptureWindow() {
             aria-label="Hide quick capture"
             onClick={hide}
           >
-            ├ù
+            ×
           </button>
         </header>
         <div className="capture-composer">
           <textarea
             ref={input}
-            placeholder="Start typingΓÇª"
+            placeholder="Start typing…"
             value={text}
             onChange={(event) => setText(event.target.value)}
             onKeyDown={(event) => {
@@ -2972,13 +2972,13 @@ function CaptureWindow() {
           <span className="capture-status">
             {status ||
               (libraryReady
-                ? "Adds to todayΓÇÖs Daily note"
-                : "Loading your notes folderΓÇª")}
+                ? "Adds to today’s Daily note"
+                : "Loading your notes folder…")}
           </span>
           <span className="capture-hint">
             <kbd>{shortcut}</kbd>
             <span>opens</span>
-            <kbd>{isMac ? "ΓîÿΓå╡" : "Ctrl+Enter"}</kbd>
+            <kbd>{isMac ? "⌘↵" : "Ctrl+Enter"}</kbd>
             <span>saves</span>
           </span>
         </footer>
@@ -2996,7 +2996,7 @@ function CaptureWindow() {
 }
 function folderOptionLabel(folder: string) {
   const parts = folder.split("/");
-  return `${"ΓÇâ".repeat(parts.length - 1)}Γû╛ ${parts[parts.length - 1]}`;
+  return `${"—".repeat(parts.length - 1)}▾ ${parts[parts.length - 1]}`;
 }
 function CascadingFolderOptions({ folders }: { folders: string[] }) {
   return (
@@ -3040,11 +3040,11 @@ function CascadingNoteOptions({
       const name = child.slice(child.lastIndexOf("/") + 1);
       return [
         <option key={`folder-${child}`} value={`folder-${child}`} disabled>
-          {"ΓÇâ".repeat(depth)}Γû╛ {name}
+          {"—".repeat(depth)}▾ {name}
         </option>,
         ...directNotes(child).map((note) => (
           <option key={note.path} value={note.path}>
-            {"ΓÇâ".repeat(depth + 1)}ΓÇó {note.title}
+            {"—".repeat(depth + 1)}• {note.title}
           </option>
         )),
         ...render(child, depth + 1),
@@ -3054,7 +3054,7 @@ function CascadingNoteOptions({
     <>
       {directNotes("").map((note) => (
         <option key={note.path} value={note.path}>
-          ΓÇó {note.title}
+          • {note.title}
         </option>
       ))}
       {render("", 0)}
@@ -3355,7 +3355,7 @@ function TemplateEditorDialog({
             <h2>Templates</h2>
           </div>
           <button aria-label="Close templates" onClick={onClose}>
-            ├ù
+            ×
           </button>
         </header>
         <div className="template-editor-body">
@@ -3370,7 +3370,7 @@ function TemplateEditorDialog({
               </button>
             ))}
             <button className="template-add" onClick={add}>
-              ∩╝ï New template
+              ＋ New template
             </button>
           </nav>
           {selected && (
@@ -3421,7 +3421,7 @@ function TemplateEditorDialog({
               </div>
               <p className="template-help">
                 Variables: <code>{"{{date}}"}</code> and{" "}
-                <code>{"{{time}}"}</code>. The template named ΓÇ£Daily noteΓÇ¥
+                <code>{"{{time}}"}</code>. The template named “Daily note”
                 powers Today and Quick Capture.
               </p>
             </div>
@@ -3491,7 +3491,7 @@ function SettingsDialog({
         <header>
           <h2>Settings</h2>
           <button aria-label="Close settings" onClick={onClose}>
-            ├ù
+            ×
           </button>
         </header>
         <label className="setting-row">
@@ -3575,7 +3575,7 @@ function SettingsDialog({
             onClick={onCheckForUpdates}
             disabled={updateState === "checking"}
           >
-            {updateState === "checking" ? "CheckingΓÇª" : "Check for updates"}
+            {updateState === "checking" ? "Checking…" : "Check for updates"}
           </button>
           {updateMessage && (
             <p className="settings-update-status">{updateMessage}</p>
