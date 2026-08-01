@@ -16,6 +16,7 @@
 - **Make Preview useful.** Check off tasks directly in Preview, follow Markdown and wiki links, open web links in your default browser, and view highlighted code, images, and tables.
 - **Edit tables like a person.** Hover a Preview table to open its editor, then add, remove, reorder, and fill rows or columns without hand-editing pipes.
 - **Keep filenames understandable.** The first top-level heading becomes the note title and filename, so the folder still makes sense outside Margin.
+- **Start with today.** Open Today for a dated Daily note, or create reusable Markdown templates with `{{date}}` and `{{time}}` variables.
 
 ## A calmer way to manage a library
 
@@ -31,9 +32,13 @@ Margin is designed around the little things that make a note app pleasant to liv
 
 ## Catch thoughts before they disappear
 
-Press **Ctrl+Alt+Shift+Space** on Windows or **Command+Option+Shift+Space** on macOS to open Quick Capture from anywhere. It remembers the library and destination you choose, understands basic list continuation while you type, and saves with **Ctrl/Command+Enter**.
+Press **Ctrl+Alt+Shift+Space** on Windows or **Command+Option+Shift+Space** on macOS to open Quick Capture from anywhere. It remembers your library, uses your Daily note template on the first capture of the day, understands basic list continuation while you type, and saves with **Ctrl/Command+Enter**.
 
 Later, import captures into today’s daily note, append them to any existing note, create a separate note, or choose a folder. This is handy for a daily work log that eventually becomes part of a weekly or yearly record.
+
+## Bring your existing Markdown
+
+On Windows and macOS, Margin can register as a Markdown editor. Open a `.md` file from your file manager and Margin will open it directly when it belongs to your library. For a file outside the library, it offers a safe choice: open the original, or import a copy into the folder you choose. Your source file is never modified.
 
 <p align="center">
   <img src="docs/images/quick-capture-current.png" alt="Margin Quick Capture window" width="520" />
@@ -77,13 +82,14 @@ Margin uses **Command** on macOS and **Control** on Windows for usual in-app sho
 | Search notes | Cmd/Ctrl + K |
 | Open Quick Capture | Cmd/Ctrl + Alt + Shift + Space |
 | Save Quick Capture | Cmd/Ctrl + Enter |
+| Show / hide library | Cmd/Ctrl + Shift + B |
 | Close a panel or capture | Escape |
 
 Settings includes the full configurable shortcut list, the quick-capture destination, theme controls, and supported code-block languages.
 
 ## Updates and privacy
 
-Margin checks for signed updates daily and shows an unobtrusive notice in Settings when one is ready. Downloads are verified before installation.
+Margin checks for signed updates daily and shows an unobtrusive notice in Settings when one is ready. Downloads are verified before installation. See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 Your writing stays in the folder you chose. Margin does not require an account and does not put notes in a proprietary database.
 
