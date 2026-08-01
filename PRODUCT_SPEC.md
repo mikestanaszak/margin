@@ -26,7 +26,9 @@
 ### Capture, import, and customization
 
 - Global Quick Capture: Cmd+Option+Shift+Space on macOS; Ctrl+Alt+Shift+Space elsewhere by default.
-- Quick Capture supports Markdown list continuation and appends to a daily note.
+- Quick Capture supports Markdown list continuation and applies the Daily note template when it creates the day’s note.
+- Today opens or creates the current date’s note in the Daily folder.
+- Template editor: create, rename, duplicate, delete, preview, and create a note from reusable Markdown templates. `{{date}}` and `{{time}}` variables are supported.
 - Daily captures can be imported into a configured default note, another existing note, or a new note in any folder.
 - Light, dark, and system appearance; system is the default.
 - Settings for library location, hotkeys, Quick Capture destination, supported code-block languages, and manual update checks.
@@ -34,13 +36,14 @@
 ### Desktop and updates
 
 - Native Tauri app for Windows and Apple Silicon macOS.
+- Margin registers as an editor for `.md` and `.markdown` files. Files already
+  inside the selected library open directly; files outside it can be opened as
+  their original or imported as a copy into a chosen folder.
 - Signed in-app updates, with daily checks and an available-update prompt.
 
 ## Planned
 
-- Templates and daily-note creation options.
 - Linux packages.
 - Native-window integration and staged-update installation coverage.
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
-- Platform-specific `.md` file association so Margin can be chosen as the default Markdown opener. For Markdown opened outside a library, preserve the source file and offer: import as a new note, append all or a selection to an existing note, or copy selected Markdown.
