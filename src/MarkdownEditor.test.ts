@@ -1,12 +1,15 @@
 import { EditorSelection, EditorState, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { history, undo, undoDepth } from "@codemirror/commands";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render } from "@testing-library/react";
+import { createElement } from "react";
 import {
   applyHeading,
   captureViewState,
   insertLink,
   insertTable,
+  MarkdownEditor,
   selectionFromSaved,
   wrapSelection,
 } from "./MarkdownEditor";
@@ -79,6 +82,25 @@ describe("Markdown editor formatting", () => {
       "Before\n\n| Column 1 | Column 2 |\n| --- | --- |\n|   |   |\n|   |   |\n\nAfter",
     );
     expect(view.state.selection.main.head).toBe(10);
+  });
+
+  it("does not apply formatting shortcuts to read-only documents", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      createElement(MarkdownEditor, {
+        notePath: "outside.md",
+        value: "Read-only external note",
+        onChange,
+        readOnly: true,
+      }),
+    );
+    const content = container.querySelector<HTMLElement>(".cm-content");
+    expect(content).not.toBeNull();
+
+    fireEvent.keyDown(content!, { key: "b", ctrlKey: true });
+
+    expect(content).toHaveTextContent("Read-only external note");
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
 

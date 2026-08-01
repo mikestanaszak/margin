@@ -64,7 +64,13 @@ irm https://raw.githubusercontent.com/mikestanaszak/margin/main/install.ps1 | ie
 
 ### Linux
 
-Margin publishes two x64 Linux downloads on every release:
+Margin publishes signed x64 Linux downloads on every release. Install the latest AppImage with one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mikestanaszak/margin/main/install-linux.sh | bash
+```
+
+Or install manually:
 
 - **Debian / Ubuntu:** download the `.deb` from the [latest release](https://github.com/mikestanaszak/margin/releases/latest), then install it with `sudo apt install ./Margin_*.deb`.
 - **Other distributions:** download the `.AppImage`, make it executable with `chmod +x Margin_*.AppImage`, then run it directly.
@@ -92,6 +98,8 @@ Settings includes the full configurable shortcut list, the quick-capture destina
 Margin checks for signed updates daily and shows an unobtrusive notice in Settings when one is ready. Downloads are verified before installation. See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 Your writing stays in the folder you chose. Margin does not require an account and does not put notes in a proprietary database.
+
+For safety, Margin does not follow symlinks inside a notes library. Choose the real folder as the library (a symlink used to select that top-level folder is resolved once), and keep linked files outside the library as normal external files.
 
 ## Build from source
 

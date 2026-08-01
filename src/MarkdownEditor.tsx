@@ -39,6 +39,7 @@ export type MarkdownEditorProps = {
   ariaLabel?: string;
   autoFocus?: boolean;
   spellCheck?: boolean;
+  readOnly?: boolean;
 };
 
 export type MarkdownEditorHandle = {
@@ -263,6 +264,7 @@ export const MarkdownEditor = forwardRef<
     ariaLabel = "Markdown note",
     autoFocus = false,
     spellCheck = true,
+    readOnly = false,
   },
   ref,
 ) {
@@ -311,10 +313,13 @@ export const MarkdownEditor = forwardRef<
       history({ minDepth: 500, newGroupDelay: 300 }),
       closeBrackets(),
       EditorView.lineWrapping,
+      EditorState.readOnly.of(readOnly),
+      EditorView.editable.of(!readOnly),
       editorTheme,
       placeholderExtension(placeholder),
       EditorView.contentAttributes.of({
         "aria-label": ariaLabel,
+        "aria-readonly": readOnly ? "true" : "false",
         spellcheck: spellCheck ? "true" : "false",
       }),
       EditorView.updateListener.of((update) => {
@@ -329,6 +334,7 @@ export const MarkdownEditor = forwardRef<
           return false;
         },
         keydown: (event, editorView) => {
+          if (readOnly) return false;
           if (!primaryShortcutPressed(event) || event.altKey) return false;
           const key = event.key.toLowerCase();
           if (key !== "b" && key !== "i" && key !== "k") return false;
@@ -434,7 +440,7 @@ export const MarkdownEditor = forwardRef<
       style={{ minHeight: 0, ...style }}
       data-note-path={notePath}
     >
-      {toolbarPosition && <div className="markdown-editor-toolbar" style={toolbarPosition} role="toolbar" aria-label="Format selected text" onMouseDown={event => event.preventDefault()}>
+      {!readOnly && toolbarPosition && <div className="markdown-editor-toolbar" style={toolbarPosition} role="toolbar" aria-label="Format selected text" onMouseDown={event => event.preventDefault()}>
         <button type="button" title="Heading 2" onClick={() => viewRef.current && applyHeading(viewRef.current, 2)}>H2</button>
         <button type="button" title="Heading 3" onClick={() => viewRef.current && applyHeading(viewRef.current, 3)}>H3</button>
         <span aria-hidden="true" />

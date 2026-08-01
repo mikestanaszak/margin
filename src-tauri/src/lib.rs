@@ -40,6 +40,89 @@ fn is_markdown_path(path: &Path) -> bool {
     })
 }
 
+/// Margin stores its managed note identifiers as forward-slash relative paths.
+/// The UI may still receive an absolute path for OS integrations, but every
+/// managed filesystem operation is resolved through these helpers first.
+///
+/// Symlink policy: a selected library may itself be a symlink (we persist its
+/// canonical target), but symlinks *inside* a library are never followed. This
+/// keeps a library from accidentally exposing or modifying files elsewhere.
+fn canonical_library_root(path: impl AsRef<Path>) -> Result<PathBuf, String> {
+    let root = fs::canonicalize(path.as_ref())
+        .map_err(|error| format!("Choose an existing notes folder: {error}"))?;
+    if !root.is_dir() {
+        return Err("Choose an existing notes folder".into());
+    }
+    Ok(root)
+}
+
+fn relative_note_id(library: &Path, path: &Path) -> Result<String, String> {
+    let relative = path
+        .strip_prefix(library)
+        .map_err(|_| "Note is outside the selected library")?;
+    if relative.as_os_str().is_empty() || !is_markdown_path(relative) {
+        return Err("Choose a Markdown note inside the selected library".into());
+    }
+    Ok(relative.to_string_lossy().replace('\\', "/"))
+}
+
+fn reject_symlink_components(library: &Path, candidate: &Path) -> Result<(), String> {
+    let relative = candidate
+        .strip_prefix(library)
+        .map_err(|_| "Path is outside the selected library")?;
+    let mut current = library.to_path_buf();
+    for component in relative.components() {
+        match component {
+            std::path::Component::Normal(part) => current.push(part),
+            _ => return Err("Path is outside the selected library".into()),
+        }
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err("Symlinks inside a Margin library are not supported".into())
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(())
+}
+
+fn existing_library_path(library: &Path, raw: impl AsRef<Path>) -> Result<PathBuf, String> {
+    let candidate = raw.as_ref();
+    if !candidate.starts_with(library) {
+        return Err("Path is outside the selected library".into());
+    }
+    reject_symlink_components(library, candidate)?;
+    let canonical = fs::canonicalize(candidate).map_err(|error| error.to_string())?;
+    if !canonical.starts_with(library) {
+        return Err("Path is outside the selected library".into());
+    }
+    Ok(canonical)
+}
+
+fn library_path_for_relative(library: &Path, relative: &str) -> Result<PathBuf, String> {
+    let candidate = Path::new(relative.trim());
+    if candidate.as_os_str().is_empty() {
+        return Ok(library.to_path_buf());
+    }
+    if candidate.is_absolute()
+        || candidate.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err("Folder must be inside the selected library".into());
+    }
+    let destination = library.join(candidate);
+    reject_symlink_components(library, &destination)?;
+    Ok(destination)
+}
+
 fn markdown_file_paths<I>(paths: I) -> Vec<String>
 where
     I: IntoIterator<Item = PathBuf>,
@@ -167,10 +250,7 @@ fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
 
 #[tauri::command]
 fn save_selected_library(app: AppHandle, library_path: String) -> Result<(), String> {
-    let library = PathBuf::from(library_path.trim());
-    if !library.is_dir() {
-        return Err("Choose an existing notes folder".into());
-    }
+    let library = canonical_library_root(library_path.trim())?;
     fs::write(
         selected_library_file(&app)?,
         library.to_string_lossy().as_bytes(),
@@ -182,12 +262,10 @@ fn save_selected_library(app: AppHandle, library_path: String) -> Result<(), Str
 fn load_selected_library(app: AppHandle) -> Result<Option<String>, String> {
     let path = selected_library_file(&app)?;
     match fs::read_to_string(path) {
-        Ok(value) => {
-            let library = PathBuf::from(value.trim());
-            Ok(library
-                .is_dir()
-                .then(|| library.to_string_lossy().to_string()))
-        }
+        Ok(value) => match canonical_library_root(value.trim()) {
+            Ok(library) => Ok(Some(library.to_string_lossy().to_string())),
+            Err(_) => Ok(None),
+        },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.to_string()),
     }
@@ -229,6 +307,7 @@ async fn configure_quick_capture_shortcut(app: AppHandle, shortcut: String) -> R
 
 #[derive(Clone, Serialize, Deserialize)]
 struct NoteSummary {
+    id: String,
     path: String,
     title: String,
     tags: Vec<String>,
@@ -289,11 +368,18 @@ impl LibraryIndex {
 }
 
 fn build_library_snapshot(library: &Path) -> LibrarySnapshot {
-    let (notes, folders) = load_library_contents(library);
+    let Ok(library) = fs::canonicalize(library) else {
+        return LibrarySnapshot {
+            notes: Vec::new(),
+            folders: Vec::new(),
+            trash: Vec::new(),
+        };
+    };
+    let (notes, folders) = load_library_contents(&library);
     LibrarySnapshot {
         notes,
         folders,
-        trash: load_trash_contents(library),
+        trash: load_trash_contents(&library),
     }
 }
 
@@ -350,31 +436,13 @@ fn relative_folder_path(library: &Path, path: &Path) -> Result<String, String> {
 /// Converts an app-provided folder name into a path that is guaranteed to stay
 /// inside the selected library. Notes stay ordinary files in these folders.
 fn library_folder(library: &Path, folder: Option<String>) -> Result<PathBuf, String> {
-    let Some(folder) = folder else {
-        return Ok(library.to_path_buf());
-    };
-    let folder = folder.trim();
-    if folder.is_empty() {
-        return Ok(library.to_path_buf());
-    }
-    let candidate = Path::new(folder);
-    if candidate.is_absolute()
-        || candidate.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir
-                    | std::path::Component::RootDir
-                    | std::path::Component::Prefix(_)
-            )
-        })
-    {
-        return Err("Folder must be inside the selected library".into());
-    }
-    Ok(library.join(candidate))
+    library_path_for_relative(library, folder.as_deref().unwrap_or_default())
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 struct NoteDocument {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
     path: String,
     title: String,
     tags: Vec<String>,
@@ -513,6 +581,7 @@ fn read_note_file(path: &Path) -> Result<NoteDocument, String> {
         .and_then(|v| v.to_str())
         .unwrap_or("Untitled");
     Ok(NoteDocument {
+        id: None,
         path: path.to_string_lossy().to_string(),
         // The visible first heading is the canonical note title. Front matter
         // remains for compatibility, but must never mask what the note says.
@@ -526,9 +595,23 @@ fn read_note_file(path: &Path) -> Result<NoteDocument, String> {
     })
 }
 
+fn read_library_note_file(library: &Path, path: &Path) -> Result<NoteDocument, String> {
+    let path = existing_library_path(library, path)?;
+    let mut note = read_note_file(&path)?;
+    note.id = Some(relative_note_id(library, &path)?);
+    Ok(note)
+}
+
+fn managed_note(library: &Path, note: NoteDocument) -> Result<NoteDocument, String> {
+    read_library_note_file(library, Path::new(&note.path))
+}
+
 fn note_summary(note: NoteDocument, library: &Path) -> NoteSummary {
     let folder = folder_for_path(library, Path::new(&note.path));
     NoteSummary {
+        id: note.id.unwrap_or_else(|| {
+            relative_note_id(library, Path::new(&note.path)).unwrap_or_default()
+        }),
         searchable_text: format!(
             "{} {} {} {}",
             note.title,
@@ -554,10 +637,14 @@ fn load_library_contents(library: &Path) -> (Vec<NoteSummary>, Vec<String>) {
     let mut folders = Vec::new();
     for entry in WalkDir::new(library)
         .min_depth(1)
+        .follow_links(false)
         .into_iter()
         .filter_entry(|entry| entry.file_name() != ".markdown-notes")
         .filter_map(Result::ok)
     {
+        if entry.file_type().is_symlink() {
+            continue;
+        }
         if entry.file_type().is_dir() {
             if let Ok(relative) = entry.path().strip_prefix(library) {
                 let folder = relative.to_string_lossy().replace('\\', "/");
@@ -566,7 +653,7 @@ fn load_library_contents(library: &Path) -> (Vec<NoteSummary>, Vec<String>) {
                 }
             }
         } else if entry.file_type().is_file() && is_markdown_path(entry.path()) {
-            if let Ok(note) = read_note_file(entry.path()) {
+            if let Ok(note) = read_library_note_file(library, entry.path()) {
                 notes.push(note_summary(note, library));
             }
         }
@@ -578,7 +665,8 @@ fn load_library_contents(library: &Path) -> (Vec<NoteSummary>, Vec<String>) {
 
 #[tauri::command]
 fn load_library(library_path: String) -> Result<Vec<NoteSummary>, String> {
-    Ok(load_library_contents(&PathBuf::from(library_path)).0)
+    let library = canonical_library_root(library_path)?;
+    Ok(load_library_contents(&library).0)
 }
 
 #[tauri::command]
@@ -672,7 +760,7 @@ fn read_note(path: String) -> Result<NoteDocument, String> {
 
 #[tauri::command]
 fn create_note(library_path: String, folder: Option<String>) -> Result<NoteDocument, String> {
-    let library = PathBuf::from(library_path);
+    let library = canonical_library_root(library_path)?;
     let folder = library_folder(&library, folder)?;
     fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     let mut index = 0;
@@ -694,12 +782,12 @@ fn create_note(library_path: String, folder: Option<String>) -> Result<NoteDocum
         now, now
     );
     fs::write(&path, content).map_err(|e| e.to_string())?;
-    read_note_file(&path)
+    read_library_note_file(&library, &path)
 }
 
 #[tauri::command]
 fn create_folder(library_path: String, folder: String) -> Result<String, String> {
-    let library = PathBuf::from(library_path);
+    let library = canonical_library_root(library_path)?;
     let destination = library_folder(&library, Some(folder))?;
     fs::create_dir_all(&destination).map_err(|e| e.to_string())?;
     relative_folder_path(&library, &destination)
@@ -711,8 +799,8 @@ fn rename_folder(
     name: String,
     library_path: String,
 ) -> Result<FolderRenameResult, String> {
-    let library = PathBuf::from(library_path);
-    let source = library_folder(&library, Some(folder))?;
+    let library = canonical_library_root(library_path)?;
+    let source = existing_library_path(&library, library_folder(&library, Some(folder))?)?;
     if relative_folder_path(&library, &source)?.is_empty() {
         return Err("Choose a folder inside the selected library".into());
     }
@@ -775,10 +863,7 @@ fn rename_folder(
 
 #[tauri::command]
 fn load_folders(library_path: String) -> Result<Vec<String>, String> {
-    let library = PathBuf::from(&library_path);
-    if !library.exists() {
-        return Ok(Vec::new());
-    }
+    let library = canonical_library_root(library_path)?;
     Ok(load_library_contents(&library).1)
 }
 
@@ -788,10 +873,15 @@ fn load_trash_contents(library: &Path) -> Vec<NoteSummary> {
         return Vec::new();
     }
     let mut notes = WalkDir::new(&trash)
+        .follow_links(false)
         .into_iter()
         .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_file() && is_markdown_path(entry.path()))
-        .filter_map(|entry| read_note_file(entry.path()).ok())
+        .filter(|entry| {
+            !entry.file_type().is_symlink()
+                && entry.file_type().is_file()
+                && is_markdown_path(entry.path())
+        })
+        .filter_map(|entry| read_library_note_file(library, entry.path()).ok())
         .map(|note| NoteSummary {
             folder: "Trash".into(),
             ..note_summary(note, library)
@@ -803,14 +893,16 @@ fn load_trash_contents(library: &Path) -> Vec<NoteSummary> {
 
 #[tauri::command]
 fn load_trash(library_path: String) -> Result<Vec<NoteSummary>, String> {
-    Ok(load_trash_contents(&PathBuf::from(library_path)))
+    let library = canonical_library_root(library_path)?;
+    Ok(load_trash_contents(&library))
 }
 
 #[tauri::command]
 fn restore_note_from_trash(path: String, library_path: String) -> Result<NoteDocument, String> {
-    let source = PathBuf::from(&path);
-    let library = PathBuf::from(library_path);
-    let trash = library.join(".markdown-notes").join("trash");
+    let library = canonical_library_root(library_path)?;
+    let source = existing_library_path(&library, path)?;
+    let trash = fs::canonicalize(library.join(".markdown-notes").join("trash"))
+        .map_err(|_| "Note is not in this library's trash")?;
     if !source.starts_with(&trash) {
         return Err("Note is not in this library's trash".into());
     }
@@ -832,22 +924,19 @@ fn restore_note_from_trash(path: String, library_path: String) -> Result<NoteDoc
         requested
     };
     fs::rename(source, &destination).map_err(|e| e.to_string())?;
-    read_note_file(&destination)
+    read_library_note_file(&library, &destination)
 }
 
 #[tauri::command]
 fn delete_note_permanently(path: String, library_path: String) -> Result<(), String> {
-    let source = PathBuf::from(path);
-    let trash = PathBuf::from(library_path)
-        .join(".markdown-notes")
-        .join("trash");
+    let library = canonical_library_root(library_path)?;
+    let source = existing_library_path(&library, path)?;
+    let trash = fs::canonicalize(library.join(".markdown-notes").join("trash"))
+        .map_err(|_| "Only notes in this library's trash can be permanently deleted")?;
     if !source.starts_with(&trash) {
         return Err("Only notes in this library's trash can be permanently deleted".into());
     }
-    if !source
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-    {
+    if !is_markdown_path(&source) {
         return Err("Only Markdown notes can be permanently deleted".into());
     }
     fs::remove_file(source).map_err(|e| e.to_string())
@@ -864,7 +953,7 @@ fn append_quick_note(
     if text.is_empty() {
         return Err("Quick note cannot be empty".into());
     }
-    let library = PathBuf::from(library_path);
+    let library = canonical_library_root(library_path)?;
     let date = Local::now().format("%Y-%m-%d").to_string();
     let time = Local::now().format("%H:%M").to_string();
     let folder = library_folder(&library, daily_folder.or_else(|| Some("Daily".into())))?;
@@ -874,6 +963,7 @@ fn append_quick_note(
         read_note_file(&path)?
     } else {
         NoteDocument {
+            id: None,
             path: path.to_string_lossy().to_string(),
             title: date.clone(),
             tags: Vec::new(),
@@ -888,7 +978,7 @@ fn append_quick_note(
         }
     };
     note.body = format!("{}\n\n## {}\n\n{}\n", note.body.trim_end(), time, text);
-    save_note_document(note)
+    managed_note(&library, save_note_document(note)?)
 }
 
 #[tauri::command]
@@ -897,9 +987,9 @@ fn import_daily_note(
     target_path: String,
     library_path: String,
 ) -> Result<NoteDocument, String> {
-    let library = PathBuf::from(library_path);
-    let source = PathBuf::from(&source_path);
-    let target = PathBuf::from(&target_path);
+    let library = canonical_library_root(library_path)?;
+    let source = existing_library_path(&library, source_path)?;
+    let target = existing_library_path(&library, target_path)?;
     if !source.starts_with(library.join("Daily")) || !target.starts_with(&library) {
         return Err("Quick-note import must stay inside the selected library".into());
     }
@@ -923,7 +1013,7 @@ fn import_daily_note(
         source_note.title,
         entries
     );
-    save_note_document(target_note)
+    managed_note(&library, save_note_document(target_note)?)
 }
 
 #[tauri::command]
@@ -933,8 +1023,8 @@ fn import_daily_note_to_new_note(
     title: String,
     library_path: String,
 ) -> Result<NoteDocument, String> {
-    let library = PathBuf::from(library_path);
-    let source = PathBuf::from(&source_path);
+    let library = canonical_library_root(library_path)?;
+    let source = existing_library_path(&library, source_path)?;
     if !source.starts_with(library.join("Daily")) {
         return Err("Quick-note import must come from this library's Daily folder".into());
     }
@@ -960,16 +1050,20 @@ fn import_daily_note_to_new_note(
     let destination_folder = library_folder(&library, folder)?;
     fs::create_dir_all(&destination_folder).map_err(|error| error.to_string())?;
     let destination = unique_path(&destination_folder, &title);
-    save_note_document(NoteDocument {
-        path: destination.to_string_lossy().to_string(),
-        title: title.clone(),
-        tags: Vec::new(),
-        body: format!("# {}\n\n## {}\n\n{}\n", title, source_note.title, entries),
-        updated: 0,
-        revision: String::new(),
-        created: Some(now_rfc3339()),
-        updated_at: None,
-    })
+    managed_note(
+        &library,
+        save_note_document(NoteDocument {
+            id: None,
+            path: destination.to_string_lossy().to_string(),
+            title: title.clone(),
+            tags: Vec::new(),
+            body: format!("# {}\n\n## {}\n\n{}\n", title, source_note.title, entries),
+            updated: 0,
+            revision: String::new(),
+            created: Some(now_rfc3339()),
+            updated_at: None,
+        })?,
+    )
 }
 
 fn unique_temporary_path(path: &Path) -> PathBuf {
@@ -1045,8 +1139,20 @@ fn save_note_document(note: NoteDocument) -> Result<NoteDocument, String> {
 }
 
 #[tauri::command]
-fn save_note(note: NoteDocument) -> SaveNoteResult {
-    match save_note_checked(note) {
+fn save_note(note: NoteDocument, library_path: String) -> SaveNoteResult {
+    let result = (|| -> Result<NoteDocument, SaveNoteFailure> {
+        let library = canonical_library_root(library_path).map_err(SaveNoteFailure::Error)?;
+        let path = existing_library_path(&library, &note.path).map_err(SaveNoteFailure::Error)?;
+        if !is_markdown_path(&path) {
+            return Err(SaveNoteFailure::Error(
+                "Only Markdown notes can be saved".into(),
+            ));
+        }
+        let mut note = note;
+        note.path = path.to_string_lossy().to_string();
+        managed_note(&library, save_note_checked(note)?).map_err(SaveNoteFailure::Error)
+    })();
+    match result {
         Ok(note) => SaveNoteResult::Saved { note },
         Err(SaveNoteFailure::Conflict(disk)) => SaveNoteResult::Conflict { disk },
         Err(SaveNoteFailure::Error(message)) => SaveNoteResult::Error { message },
@@ -1117,23 +1223,32 @@ fn path_for_title(source: &Path, title: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-fn rename_note(path: String, name: String) -> Result<NoteDocument, String> {
-    let mut note = read_note_file(Path::new(&path))?;
+fn rename_note(path: String, name: String, library_path: String) -> Result<NoteDocument, String> {
+    let library = canonical_library_root(library_path)?;
+    let path = existing_library_path(&library, path)?;
+    if !is_markdown_path(&path) {
+        return Err("Only Markdown notes can be renamed".into());
+    }
+    let mut note = read_library_note_file(&library, &path)?;
     note.body = body_with_title(&note.body, name.trim_end_matches(".md").trim());
-    save_note_document(note)
+    managed_note(&library, save_note_document(note)?)
 }
 
 #[tauri::command]
-fn duplicate_note(path: String) -> Result<NoteDocument, String> {
-    let source = PathBuf::from(path);
+fn duplicate_note(path: String, library_path: String) -> Result<NoteDocument, String> {
+    let library = canonical_library_root(library_path)?;
+    let source = existing_library_path(&library, path)?;
+    if !is_markdown_path(&source) {
+        return Err("Only Markdown notes can be duplicated".into());
+    }
     let parent = source.parent().ok_or("Note has no parent folder")?;
-    let original = read_note_file(&source)?;
+    let original = read_library_note_file(&library, &source)?;
     let copy_title = format!("{} copy", original.title);
     let destination = unique_path(parent, &copy_title);
     fs::copy(source, &destination).map_err(|e| e.to_string())?;
-    let mut copy = read_note_file(&destination)?;
+    let mut copy = read_library_note_file(&library, &destination)?;
     copy.body = body_with_title(&copy.body, &copy_title);
-    save_note_document(copy)
+    managed_note(&library, save_note_document(copy)?)
 }
 
 /// Imports a standalone Markdown file as a new note without changing the
@@ -1145,23 +1260,20 @@ fn import_markdown_file(
     library_path: String,
     folder: Option<String>,
 ) -> Result<NoteDocument, String> {
-    let source = PathBuf::from(source_path);
+    let source = fs::canonicalize(source_path).map_err(|_| "Choose an existing Markdown file")?;
     if !source.is_file() || !is_markdown_path(&source) {
         return Err("Choose an existing Markdown file".into());
     }
-    let library = PathBuf::from(library_path);
-    if !library.is_dir() {
-        return Err("Choose an existing notes folder".into());
-    }
+    let library = canonical_library_root(library_path)?;
     if source.starts_with(&library) {
-        return read_note_file(&source);
+        return read_library_note_file(&library, &source);
     }
     let destination_folder = library_folder(&library, folder)?;
     fs::create_dir_all(&destination_folder).map_err(|error| error.to_string())?;
     let source_note = read_note_file(&source)?;
     let destination = unique_path(&destination_folder, &source_note.title);
     fs::copy(&source, &destination).map_err(|error| error.to_string())?;
-    read_note_file(&destination)
+    read_library_note_file(&library, &destination)
 }
 
 #[tauri::command]
@@ -1170,9 +1282,9 @@ fn move_note_to_folder(
     folder: Option<String>,
     library_path: String,
 ) -> Result<NoteDocument, String> {
-    let source = PathBuf::from(path);
-    let library = PathBuf::from(library_path);
-    if !source.is_file() || !source.starts_with(&library) {
+    let library = canonical_library_root(library_path)?;
+    let source = existing_library_path(&library, path)?;
+    if !source.is_file() || !is_markdown_path(&source) {
         return Err("Note is outside the selected library".into());
     }
     let destination_folder = library_folder(&library, folder)?;
@@ -1192,14 +1304,14 @@ fn move_note_to_folder(
     if destination != source {
         fs::rename(&source, &destination).map_err(|error| error.to_string())?;
     }
-    read_note_file(&destination)
+    read_library_note_file(&library, &destination)
 }
 
 #[tauri::command]
 fn reveal_note_in_file_manager(path: String, library_path: String) -> Result<(), String> {
-    let note = PathBuf::from(path);
-    let library = PathBuf::from(library_path);
-    if !note.is_file() || !note.starts_with(&library) {
+    let library = canonical_library_root(library_path)?;
+    let note = existing_library_path(&library, path)?;
+    if !note.is_file() || !is_markdown_path(&note) {
         return Err("Note is outside the selected library".into());
     }
     #[cfg(target_os = "macos")]
@@ -1217,11 +1329,9 @@ fn reveal_note_in_file_manager(path: String, library_path: String) -> Result<(),
 
 #[tauri::command]
 fn move_note_to_trash(path: String, library_path: String) -> Result<(), String> {
-    let source = PathBuf::from(path);
-    let library = PathBuf::from(library_path);
-    if !source.starts_with(&library) {
-        return Err("Note is outside the selected library".into());
-    }
+    let library = canonical_library_root(library_path)?;
+    let source = existing_library_path(&library, path)?;
+    relative_note_id(&library, &source)?;
     let trash = library.join(".markdown-notes").join("trash");
     let relative = source
         .strip_prefix(&library)
@@ -1267,8 +1377,8 @@ fn move_folder_to_trash(folder: String, library_path: String) -> Result<(), Stri
     if folder.trim().is_empty() {
         return Err("Choose a folder to delete".into());
     }
-    let library = PathBuf::from(library_path);
-    let source = library_folder(&library, Some(folder))?;
+    let library = canonical_library_root(library_path)?;
+    let source = existing_library_path(&library, library_folder(&library, Some(folder))?)?;
     if source.starts_with(library.join(".markdown-notes")) {
         return Err("Margin's internal storage cannot be moved".into());
     }
@@ -1407,12 +1517,13 @@ pub fn run() {
 mod tests {
     use super::{
         append_quick_note, backlinks_for_snapshot, body_with_title, build_library_snapshot,
-        create_folder, create_note, delete_note_permanently, duplicate_note, import_daily_note,
-        import_daily_note_to_new_note, import_markdown_file, library_folder, load_folders,
-        load_library, load_trash, move_folder_to_trash, move_note_to_folder, move_note_to_trash,
-        normalize_tags, read_note_file, rename_folder, rename_note, restore_note_from_trash,
-        safe_file_stem, save_note, save_note_document, search_snapshot, split_front_matter,
-        LibraryIndex, SaveNoteResult,
+        create_folder, create_note, delete_note_permanently, duplicate_note, existing_library_path,
+        import_daily_note, import_daily_note_to_new_note, import_markdown_file, library_folder,
+        load_folders, load_library, load_trash, move_folder_to_trash, move_note_to_folder,
+        move_note_to_trash, normalize_tags, read_library_note_file, read_note_file,
+        relative_note_id, rename_folder, rename_note, restore_note_from_trash, safe_file_stem,
+        save_note, save_note_document, search_snapshot, split_front_matter, LibraryIndex,
+        SaveNoteResult,
     };
     use std::{
         fs,
@@ -1515,11 +1626,15 @@ mod tests {
             let collision = save_note_document(same_title)?;
             assert!(collision.path.ends_with("Project plan-1.md"));
 
-            let duplicate = duplicate_note(saved.path.clone())?;
+            let duplicate = duplicate_note(saved.path.clone(), library_path.clone())?;
             assert_eq!(duplicate.title, "Project plan copy");
             assert!(duplicate.path.ends_with("Project plan copy.md"));
 
-            let renamed = rename_note(duplicate.path, "Project archive".into())?;
+            let renamed = rename_note(
+                duplicate.path,
+                "Project archive".into(),
+                library_path.clone(),
+            )?;
             assert_eq!(renamed.title, "Project archive");
             assert!(renamed.path.ends_with("Project archive.md"));
 
@@ -1548,7 +1663,7 @@ mod tests {
         fs::create_dir_all(&library).unwrap();
         let library_path = library.to_string_lossy().to_string();
         let result = (|| -> Result<(), String> {
-            let mut note = create_note(library_path, None)?;
+            let mut note = create_note(library_path.clone(), None)?;
             note.body = "# Before\n\nOriginal body\n".into();
             let saved = save_note_document(note)?;
             let mut stale = saved.clone();
@@ -1557,7 +1672,7 @@ mod tests {
             fs::write(&saved.path, "# On disk\n\nExternal change\n")
                 .map_err(|error| error.to_string())?;
 
-            match save_note(stale) {
+            match save_note(stale, library_path) {
                 SaveNoteResult::Conflict { disk } => {
                     assert_eq!(disk.title, "On disk");
                     assert!(disk.body.contains("External change"));
@@ -1889,10 +2004,94 @@ mod tests {
             library_path.clone()
         )
         .is_err());
+        let mut outside_document = read_note_file(&outside_note).unwrap();
+        outside_document.body = "# Attempted external write\n".into();
+        assert!(matches!(
+            save_note(outside_document, library_path.clone()),
+            SaveNoteResult::Error { .. }
+        ));
+        assert!(rename_note(
+            outside_note.to_string_lossy().to_string(),
+            "Renamed outside".into(),
+            library_path.clone(),
+        )
+        .is_err());
+        assert!(duplicate_note(
+            outside_note.to_string_lossy().to_string(),
+            library_path.clone(),
+        )
+        .is_err());
         assert!(
             delete_note_permanently(inside_note.to_string_lossy().to_string(), library_path)
                 .is_err()
         );
+
+        fs::remove_dir_all(&library).ok();
+        fs::remove_dir_all(&outside).ok();
+    }
+
+    #[test]
+    fn permanently_deletes_markdown_extension_notes() {
+        let library = temporary_library();
+        let trash = library.join(".markdown-notes").join("trash");
+        fs::create_dir_all(&trash).unwrap();
+        let note = trash.join("Legacy.markdown");
+        fs::write(&note, "# Legacy\n").unwrap();
+        let note_path = fs::canonicalize(&note).unwrap();
+
+        delete_note_permanently(
+            note_path.to_string_lossy().to_string(),
+            library.to_string_lossy().to_string(),
+        )
+        .unwrap();
+        assert!(!note.exists());
+
+        fs::remove_dir_all(&library).ok();
+    }
+
+    #[test]
+    fn managed_notes_have_canonical_relative_ids_and_reject_escaped_paths() {
+        let library = temporary_library();
+        let outside = temporary_library();
+        fs::create_dir_all(library.join("Work")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let note = library.join("Work").join("Plan.md");
+        let escaped = outside.join("Outside.md");
+        fs::write(&note, "# Plan\n").unwrap();
+        fs::write(&escaped, "# Outside\n").unwrap();
+
+        let root = fs::canonicalize(&library).unwrap();
+        let note = fs::canonicalize(&note).unwrap();
+        assert_eq!(relative_note_id(&root, &note).unwrap(), "Work/Plan.md");
+        assert_eq!(
+            read_library_note_file(&root, &note).unwrap().id.as_deref(),
+            Some("Work/Plan.md")
+        );
+        assert!(existing_library_path(&root, &escaped).is_err());
+
+        fs::remove_dir_all(&library).ok();
+        fs::remove_dir_all(&outside).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_operations_reject_symlinks_inside_libraries() {
+        use std::os::unix::fs::symlink;
+
+        let library = temporary_library();
+        let outside = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let target = outside.join("Outside.md");
+        fs::write(&target, "# Outside\n").unwrap();
+        let link = library.join("Linked.md");
+        symlink(&target, &link).unwrap();
+
+        let root = fs::canonicalize(&library).unwrap();
+        assert!(existing_library_path(&root, &link).is_err());
+        assert!(load_library(root.to_string_lossy().to_string())
+            .unwrap()
+            .is_empty());
 
         fs::remove_dir_all(&library).ok();
         fs::remove_dir_all(&outside).ok();

@@ -4,7 +4,17 @@
   "version": "0.2.1",
   "identifier": "com.local.margin",
   "build": { "frontendDist": "../dist", "devUrl": "http://localhost:1420", "beforeDevCommand": "pnpm dev", "beforeBuildCommand": "pnpm build" },
-  "app": { "macOSPrivateApi": true, "windows": [{ "title": "Margin", "width": 1200, "height": 760, "minWidth": 900, "minHeight": 600 }], "security": { "csp": null, "assetProtocol": { "enable": true, "scope": ["**"] } } },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [{ "title": "Margin", "width": 1200, "height": 760, "minWidth": 900, "minHeight": 600 }],
+    "security": {
+      "csp": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-src 'none'; form-action 'none'; connect-src 'self' ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1420; img-src 'self' asset: http://asset.localhost https: data: blob:; media-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' http://localhost:1420; font-src 'self' data:; worker-src 'self' blob:",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**/*.avif", "**/*.gif", "**/*.jpeg", "**/*.jpg", "**/*.png", "**/*.svg", "**/*.webp"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
