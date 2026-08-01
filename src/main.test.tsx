@@ -17,6 +17,7 @@ import {
   CascadingNoteOptions,
   captureMarkdownEdit,
   ConflictDialog,
+  createRefreshCoordinator,
   FolderNoteTree,
   FolderTree,
   MarkdownPreview,
@@ -262,5 +263,36 @@ describe("quick capture Markdown assistance", () => {
     expect(captureMarkdownEdit("- ", 2, 2, "Enter")).toEqual({ value: "", selectionStart: 0, selectionEnd: 0 });
     expect(captureMarkdownEdit("- Child", 7, 7, "Tab")).toEqual({ value: "  - Child", selectionStart: 9, selectionEnd: 9 });
     expect(captureMarkdownEdit("  - Child", 9, 9, "Tab", true)).toEqual({ value: "- Child", selectionStart: 7, selectionEnd: 7 });
+  });
+});
+
+describe("library refresh coordination", () => {
+  it("runs a forced mutation refresh immediately after an in-flight normal poll", async () => {
+    let releaseNormal: () => void = () => {};
+    let releaseForced: () => void = () => {};
+    const normal = new Promise<void>((resolve) => {
+      releaseNormal = resolve;
+    });
+    const forced = new Promise<void>((resolve) => {
+      releaseForced = resolve;
+    });
+    const calls: Array<{ path: string; force: boolean }> = [];
+    const refresh = createRefreshCoordinator(async (request) => {
+      calls.push(request);
+      await (request.force ? forced : normal);
+    });
+
+    const polling = refresh({ path: "C:/Notes", force: false });
+    const mutation = refresh({ path: "C:/Notes", force: true });
+    expect(calls).toEqual([{ path: "C:/Notes", force: false }]);
+
+    releaseNormal();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(calls).toEqual([
+      { path: "C:/Notes", force: false },
+      { path: "C:/Notes", force: true },
+    ]);
+    releaseForced();
+    await Promise.all([polling, mutation]);
   });
 });

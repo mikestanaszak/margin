@@ -106,6 +106,7 @@ type ShortcutId =
   | "quickCapture";
 type Shortcuts = Record<ShortcutId, string>;
 type NoteTemplate = { id: string; name: string; body: string };
+type RefreshRequest = { path: string; force: boolean };
 const libraryKey = "markdown-notes.library-path";
 const favoritesKey = "markdown-notes.pinned";
 const themeKey = "markdown-notes.theme";
@@ -225,6 +226,36 @@ function shouldVirtualizeNoteList(
   return !isHierarchicalFolderView && count >= noteListVirtualizationThreshold;
 }
 
+/**
+ * Coalesce library refreshes without losing a forced refresh behind a normal
+ * poll. Every caller resolves only after the queue is drained, so a mutation
+ * can immediately observe its own note/folder changes even before the native
+ * filesystem watcher delivers an event.
+ */
+function createRefreshCoordinator(
+  run: (request: RefreshRequest) => Promise<void>,
+) {
+  let inFlight: Promise<void> | null = null;
+  let pending: RefreshRequest | null = null;
+  return (request: RefreshRequest) => {
+    if (pending?.path === request.path)
+      pending = { ...pending, force: pending.force || request.force };
+    else pending = request;
+    if (!inFlight) {
+      inFlight = (async () => {
+        while (pending) {
+          const next = pending;
+          pending = null;
+          await run(next);
+        }
+      })().finally(() => {
+        inFlight = null;
+      });
+    }
+    return inFlight;
+  };
+}
+
 function App() {
   const [library, setLibrary] = useState<string | null>(null);
   const [libraryInitialized, setLibraryInitialized] = useState(false);
@@ -310,8 +341,7 @@ function App() {
   const pendingOpenedMarkdown = useRef<string[]>([]);
   const noteLoadGeneration = useRef(0);
   const refreshGeneration = useRef(0);
-  const refreshInFlight = useRef<Promise<void> | null>(null);
-  const refreshQueued = useRef(false);
+  const refreshCoordinator = useRef<ReturnType<typeof createRefreshCoordinator> | null>(null);
   const saveQueues = useRef(new Map<string, Promise<void>>());
   const internallyMovedPath = useRef<string | null>(null);
   const registeredCaptureShortcut = useRef(defaultShortcuts.quickCapture);
@@ -360,51 +390,38 @@ function App() {
     setUpdateState("idle");
   };
 
-  const refresh = useCallback(async (path = libraryRef.current, force = false) => {
-    if (!path) return;
-    if (refreshInFlight.current) {
-      refreshQueued.current = true;
-      return refreshInFlight.current;
-    }
-    const requestPath = path;
-    const generation = ++refreshGeneration.current;
-    const request = (async () => {
-      try {
-        const snapshot = await invoke<LibrarySnapshot>("load_library_snapshot", {
-          libraryPath: requestPath,
-          force,
-        });
-        if (
-          generation !== refreshGeneration.current ||
-          libraryRef.current !== requestPath
-        )
-          return;
-        setNotes(snapshot.notes);
-        setFolders(snapshot.folders);
-        setTrashNotes(snapshot.trash);
-        setStatus(
-          `${snapshot.notes.length} ${snapshot.notes.length === 1 ? "note" : "notes"}`,
-        );
-      } catch (error) {
-        if (
-          generation === refreshGeneration.current &&
-          libraryRef.current === requestPath
-        )
-          setStatus(`Could not read library: ${String(error)}`);
-      }
-    })();
-    refreshInFlight.current = request;
-    try {
-      await request;
-    } finally {
-      if (refreshInFlight.current === request) {
-        refreshInFlight.current = null;
-        if (refreshQueued.current) {
-          refreshQueued.current = false;
-          void refresh(libraryRef.current, force);
+  const refresh = useCallback((path?: string | null, force = path === undefined) => {
+    const requestPath = path ?? libraryRef.current;
+    if (!requestPath) return Promise.resolve();
+    if (!refreshCoordinator.current) {
+      refreshCoordinator.current = createRefreshCoordinator(async (request) => {
+        const generation = ++refreshGeneration.current;
+        try {
+          const snapshot = await invoke<LibrarySnapshot>("load_library_snapshot", {
+            libraryPath: request.path,
+            force: request.force,
+          });
+          if (
+            generation !== refreshGeneration.current ||
+            libraryRef.current !== request.path
+          )
+            return;
+          setNotes(snapshot.notes);
+          setFolders(snapshot.folders);
+          setTrashNotes(snapshot.trash);
+          setStatus(
+            `${snapshot.notes.length} ${snapshot.notes.length === 1 ? "note" : "notes"}`,
+          );
+        } catch (error) {
+          if (
+            generation === refreshGeneration.current &&
+            libraryRef.current === request.path
+          )
+            setStatus(`Could not read library: ${String(error)}`);
         }
-      }
+      });
     }
+    return refreshCoordinator.current({ path: requestPath, force });
   }, []);
   const rememberWorkspaceScroll = () => {
     if (!note) return;
@@ -4081,6 +4098,7 @@ export {
   CascadingNoteOptions,
   captureMarkdownEdit,
   ConflictDialog,
+  createRefreshCoordinator,
   FolderNoteTree,
   FolderTree,
   MarkdownPreview,
