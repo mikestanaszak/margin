@@ -52,3 +52,4 @@
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
 - Optional AI-agent integrations for user-directed note drafting, summarizing, organizing, and appending work logs, with explicit per-action approval and no automatic access to a library.
+- Code-fence language autocomplete: suggest supported languages and aliases while typing after an opening triple-backtick fence, while still allowing custom language identifiers.
