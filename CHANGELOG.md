@@ -2,6 +2,21 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## 0.3.0 — 2026-08-01
+
+### Improved
+
+- Large libraries and long notes stay responsive: note lists virtualize when needed, previews and backlinks avoid unnecessary work while typing, and outlines are calculated only when shown.
+- Libraries now use a native index with filesystem watching, lightweight reconciliation, native search, and native backlinks.
+- Renaming a managed note repairs unambiguous relative links to it, including `.md` and `.markdown` links, with recovery-safe rollback if an update fails.
+
+### Fixed
+
+- Hardened library boundaries across file operations with canonical relative IDs, containment checks, and a policy that rejects in-library symlinks.
+- System-opened Markdown files are read-only until imported into a Margin library.
+- Added portable filename validation for Unicode normalization, reserved Windows names, control characters, byte length, and case-only renames.
+- Added a restrictive desktop content security policy while preserving Markdown image previews.
+
 ## 0.2.1 — 2026-08-01
 
 ### Fixed
