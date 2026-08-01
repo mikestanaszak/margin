@@ -5,7 +5,7 @@
 ### Notes and libraries
 
 - Local Markdown libraries: recursive indexing, external-file refresh, and normal UTF-8 `.md` files.
-- First H1 is the note title; filenames stay aligned with titles.
+- First H1 is the note title; filenames stay aligned with titles. When a title rename changes a filename, Margin repairs only unambiguous internal relative Markdown links and leaves external URLs, anchors, absolute paths, and unresolved links untouched.
 - Notes can be created, duplicated, renamed, moved, trashed, restored, permanently deleted, and revealed in Finder or File Explorer.
 - Folders can be created, nested, renamed by double-clicking their name, and moved to Trash. The inline plus button adds a subfolder.
 - Selecting a parent folder groups notes by nested folders instead of flattening them.
