@@ -368,11 +368,18 @@ impl LibraryIndex {
 }
 
 fn build_library_snapshot(library: &Path) -> LibrarySnapshot {
-    let (notes, folders) = load_library_contents(library);
+    let Ok(library) = fs::canonicalize(library) else {
+        return LibrarySnapshot {
+            notes: Vec::new(),
+            folders: Vec::new(),
+            trash: Vec::new(),
+        };
+    };
+    let (notes, folders) = load_library_contents(&library);
     LibrarySnapshot {
         notes,
         folders,
-        trash: load_trash_contents(library),
+        trash: load_trash_contents(&library),
     }
 }
 
