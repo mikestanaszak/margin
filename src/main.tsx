@@ -61,7 +61,7 @@ type FolderRenameResult = {
   paths: { from: string; to: string }[];
 };
 type Filter = {
-  type: "all" | "favorites" | "trash" | "folder";
+  type: "all" | "today" | "favorites" | "trash" | "folder";
   folder?: string;
 };
 type Conflict = { disk: NoteDocument; mine: NoteDocument };
@@ -612,6 +612,7 @@ function App() {
     const existing = notes.find(
       (item) => item.folder === "Daily" && item.title === title,
     );
+    setFilter({ type: "today" });
     if (existing) {
       setActivePath(existing.path);
       return;
@@ -915,6 +916,8 @@ function App() {
               item.folder === filter.folder ||
               item.folder.startsWith(`${filter.folder}/`)) &&
             (filter.type !== "favorites" || favorites.includes(item.path)) &&
+            (filter.type !== "today" ||
+              (item.folder === "Daily" && item.title === todayTitle())) &&
             item.searchable_text.includes(query.toLowerCase()),
         )
         .sort(
@@ -1038,7 +1041,9 @@ function App() {
         ? "Favorites"
         : filter.type === "trash"
           ? "Trash"
-          : "All notes";
+          : filter.type === "today"
+            ? "Today"
+            : "All notes";
   const isTrashedNote = Boolean(
     note && trashNotes.some((item) => item.path === note.path),
   );
@@ -1133,7 +1138,12 @@ function App() {
             <span>All notes</span>
             <small>{notes.length}</small>
           </button>
-          <button className="nav-item" onClick={() => void openToday()}>
+          <button
+            className={
+              filter.type === "today" ? "nav-item selected" : "nav-item"
+            }
+            onClick={() => void openToday()}
+          >
             <span>Today</span>
             <small>↗</small>
           </button>
