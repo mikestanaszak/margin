@@ -217,7 +217,11 @@ describe("navigation structures and safety dialogs", () => {
     };
     render(
       <ConflictDialog
-        conflict={{ mine: base, disk: { ...base, body: "# Project Alpha\nDisk", revision: "disk" } }}
+        conflict={{
+          mine: base,
+          disk: { ...base, body: "# Project Alpha\nDisk", revision: "disk" },
+          path: base.path,
+        }}
         onChoose={onChoose}
       />,
     );

@@ -4,7 +4,10 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 #[cfg(target_os = "macos")]
@@ -233,6 +236,13 @@ struct NoteSummary {
 }
 
 #[derive(Serialize)]
+struct LibrarySnapshot {
+    notes: Vec<NoteSummary>,
+    folders: Vec<String>,
+    trash: Vec<NoteSummary>,
+}
+
+#[derive(Serialize)]
 struct FolderRenamePath {
     from: String,
     to: String,
@@ -300,6 +310,21 @@ struct NoteDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     updated_at: Option<String>,
 }
+
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum SaveNoteResult {
+    Saved { note: NoteDocument },
+    Conflict { disk: NoteDocument },
+    Error { message: String },
+}
+
+enum SaveNoteFailure {
+    Conflict(NoteDocument),
+    Error(String),
+}
+
+static TEMPORARY_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Default, Serialize, Deserialize)]
 struct FrontMatter {
@@ -425,49 +450,70 @@ fn read_note_file(path: &Path) -> Result<NoteDocument, String> {
     })
 }
 
+fn note_summary(note: NoteDocument, library: &Path) -> NoteSummary {
+    let folder = folder_for_path(library, Path::new(&note.path));
+    NoteSummary {
+        searchable_text: format!(
+            "{} {} {} {}",
+            note.title,
+            Path::new(&note.path)
+                .file_name()
+                .and_then(|v| v.to_str())
+                .unwrap_or(""),
+            note.tags.join(" "),
+            note.body
+        )
+        .to_lowercase(),
+        excerpt: note_excerpt(&note.body),
+        path: note.path,
+        title: note.title,
+        tags: note.tags,
+        updated: note.updated,
+        folder,
+    }
+}
+
+fn load_library_contents(library: &Path) -> (Vec<NoteSummary>, Vec<String>) {
+    let mut notes = Vec::new();
+    let mut folders = Vec::new();
+    for entry in WalkDir::new(library)
+        .min_depth(1)
+        .into_iter()
+        .filter_entry(|entry| entry.file_name() != ".markdown-notes")
+        .filter_map(Result::ok)
+    {
+        if entry.file_type().is_dir() {
+            if let Ok(relative) = entry.path().strip_prefix(library) {
+                let folder = relative.to_string_lossy().replace('\\', "/");
+                if !folder.is_empty() {
+                    folders.push(folder);
+                }
+            }
+        } else if entry.file_type().is_file() && is_markdown_path(entry.path()) {
+            if let Ok(note) = read_note_file(entry.path()) {
+                notes.push(note_summary(note, library));
+            }
+        }
+    }
+    notes.sort_by(|a, b| b.updated.cmp(&a.updated));
+    folders.sort_by_key(|folder| folder.to_lowercase());
+    (notes, folders)
+}
+
 #[tauri::command]
 fn load_library(library_path: String) -> Result<Vec<NoteSummary>, String> {
+    Ok(load_library_contents(&PathBuf::from(library_path)).0)
+}
+
+#[tauri::command]
+fn load_library_snapshot(library_path: String) -> Result<LibrarySnapshot, String> {
     let library = PathBuf::from(&library_path);
-    let mut notes = WalkDir::new(library_path)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            entry.file_type().is_file()
-                && !entry
-                    .path()
-                    .components()
-                    .any(|part| part.as_os_str() == ".markdown-notes")
-                && entry
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-        })
-        .filter_map(|entry| read_note_file(entry.path()).ok())
-        .map(|note| {
-            let folder = folder_for_path(&library, Path::new(&note.path));
-            NoteSummary {
-                searchable_text: format!(
-                    "{} {} {} {}",
-                    note.title,
-                    Path::new(&note.path)
-                        .file_name()
-                        .and_then(|v| v.to_str())
-                        .unwrap_or(""),
-                    note.tags.join(" "),
-                    note.body
-                )
-                .to_lowercase(),
-                excerpt: note_excerpt(&note.body),
-                path: note.path,
-                title: note.title,
-                tags: note.tags,
-                updated: note.updated,
-                folder,
-            }
-        })
-        .collect::<Vec<_>>();
-    notes.sort_by(|a, b| b.updated.cmp(&a.updated));
-    Ok(notes)
+    let (notes, folders) = load_library_contents(&library);
+    Ok(LibrarySnapshot {
+        notes,
+        folders,
+        trash: load_trash_contents(&library),
+    })
 }
 
 #[tauri::command]
@@ -584,61 +630,31 @@ fn load_folders(library_path: String) -> Result<Vec<String>, String> {
     if !library.exists() {
         return Ok(Vec::new());
     }
-    let mut folders = WalkDir::new(&library)
-        .min_depth(1)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            entry.file_type().is_dir()
-                && !entry
-                    .path()
-                    .components()
-                    .any(|part| part.as_os_str() == ".markdown-notes")
-        })
-        .map(|entry| {
-            entry
-                .path()
-                .strip_prefix(&library)
-                .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-                .unwrap_or_default()
-        })
-        .filter(|folder| !folder.is_empty())
-        .collect::<Vec<_>>();
-    folders.sort_by_key(|folder| folder.to_lowercase());
-    Ok(folders)
+    Ok(load_library_contents(&library).1)
 }
 
-#[tauri::command]
-fn load_trash(library_path: String) -> Result<Vec<NoteSummary>, String> {
-    let library = PathBuf::from(library_path);
+fn load_trash_contents(library: &Path) -> Vec<NoteSummary> {
     let trash = library.join(".markdown-notes").join("trash");
     if !trash.exists() {
-        return Ok(Vec::new());
+        return Vec::new();
     }
     let mut notes = WalkDir::new(&trash)
         .into_iter()
         .filter_map(Result::ok)
-        .filter(|entry| {
-            entry.file_type().is_file()
-                && entry
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-        })
+        .filter(|entry| entry.file_type().is_file() && is_markdown_path(entry.path()))
         .filter_map(|entry| read_note_file(entry.path()).ok())
         .map(|note| NoteSummary {
-            searchable_text: format!("{} {} {}", note.title, note.tags.join(" "), note.body)
-                .to_lowercase(),
-            excerpt: note_excerpt(&note.body),
-            path: note.path,
-            title: note.title,
-            tags: note.tags,
-            updated: note.updated,
             folder: "Trash".into(),
+            ..note_summary(note, library)
         })
         .collect::<Vec<_>>();
     notes.sort_by(|a, b| b.updated.cmp(&a.updated));
-    Ok(notes)
+    notes
+}
+
+#[tauri::command]
+fn load_trash(library_path: String) -> Result<Vec<NoteSummary>, String> {
+    Ok(load_trash_contents(&PathBuf::from(library_path)))
 }
 
 #[tauri::command]
@@ -723,7 +739,7 @@ fn append_quick_note(
         }
     };
     note.body = format!("{}\n\n## {}\n\n{}\n", note.body.trim_end(), time, text);
-    save_note(note)
+    save_note_document(note)
 }
 
 #[tauri::command]
@@ -758,7 +774,7 @@ fn import_daily_note(
         source_note.title,
         entries
     );
-    save_note(target_note)
+    save_note_document(target_note)
 }
 
 #[tauri::command]
@@ -795,7 +811,7 @@ fn import_daily_note_to_new_note(
     let destination_folder = library_folder(&library, folder)?;
     fs::create_dir_all(&destination_folder).map_err(|error| error.to_string())?;
     let destination = unique_path(&destination_folder, &title);
-    save_note(NoteDocument {
+    save_note_document(NoteDocument {
         path: destination.to_string_lossy().to_string(),
         title: title.clone(),
         tags: Vec::new(),
@@ -807,9 +823,36 @@ fn import_daily_note_to_new_note(
     })
 }
 
-#[tauri::command]
-fn save_note(note: NoteDocument) -> Result<NoteDocument, String> {
+fn unique_temporary_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("note.md");
+    let sequence = TEMPORARY_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    path.with_file_name(format!(
+        ".{}.margin-{}-{}-{}.tmp",
+        file_name,
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+        sequence
+    ))
+}
+
+fn save_note_checked(note: NoteDocument) -> Result<NoteDocument, SaveNoteFailure> {
     let path = PathBuf::from(&note.path);
+    if path.exists() {
+        let disk = read_note_file(&path).map_err(SaveNoteFailure::Error)?;
+        if note.revision.is_empty() || note.revision != disk.revision {
+            return Err(SaveNoteFailure::Conflict(disk));
+        }
+    } else if !note.revision.is_empty() {
+        return Err(SaveNoteFailure::Error(
+            "The note no longer exists on disk".into(),
+        ));
+    }
     let created = note.created.or_else(|| Some(now_rfc3339()));
     let title = title_from_body(&note.body, "Untitled");
     let front = FrontMatter {
@@ -825,16 +868,40 @@ fn save_note(note: NoteDocument) -> Result<NoteDocument, String> {
         created,
         updated: Some(now_rfc3339()),
     };
-    let yaml = serde_yaml::to_string(&front).map_err(|e| e.to_string())?;
+    let yaml =
+        serde_yaml::to_string(&front).map_err(|error| SaveNoteFailure::Error(error.to_string()))?;
     let content = format!("---\n{}---\n\n{}", yaml, note.body);
-    let temporary = path.with_extension("md.tmp");
-    fs::write(&temporary, content).map_err(|e| e.to_string())?;
-    fs::rename(&temporary, &path).map_err(|e| e.to_string())?;
-    let destination = path_for_title(&path, &title)?;
+    let temporary = unique_temporary_path(&path);
+    fs::write(&temporary, content).map_err(|error| SaveNoteFailure::Error(error.to_string()))?;
+    fs::rename(&temporary, &path).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        SaveNoteFailure::Error(error.to_string())
+    })?;
+    let destination = path_for_title(&path, &title).map_err(SaveNoteFailure::Error)?;
     if destination != path {
-        fs::rename(&path, &destination).map_err(|e| e.to_string())?;
+        fs::rename(&path, &destination)
+            .map_err(|error| SaveNoteFailure::Error(error.to_string()))?;
     }
-    read_note_file(&destination)
+    read_note_file(&destination).map_err(SaveNoteFailure::Error)
+}
+
+fn save_note_document(note: NoteDocument) -> Result<NoteDocument, String> {
+    match save_note_checked(note) {
+        Ok(saved) => Ok(saved),
+        Err(SaveNoteFailure::Conflict(_)) => {
+            Err("The note changed on disk before it could be saved".into())
+        }
+        Err(SaveNoteFailure::Error(message)) => Err(message),
+    }
+}
+
+#[tauri::command]
+fn save_note(note: NoteDocument) -> SaveNoteResult {
+    match save_note_checked(note) {
+        Ok(note) => SaveNoteResult::Saved { note },
+        Err(SaveNoteFailure::Conflict(disk)) => SaveNoteResult::Conflict { disk },
+        Err(SaveNoteFailure::Error(message)) => SaveNoteResult::Error { message },
+    }
 }
 
 fn unique_path(parent: &Path, stem: &str) -> PathBuf {
@@ -904,7 +971,7 @@ fn path_for_title(source: &Path, title: &str) -> Result<PathBuf, String> {
 fn rename_note(path: String, name: String) -> Result<NoteDocument, String> {
     let mut note = read_note_file(Path::new(&path))?;
     note.body = body_with_title(&note.body, name.trim_end_matches(".md").trim());
-    save_note(note)
+    save_note_document(note)
 }
 
 #[tauri::command]
@@ -917,7 +984,7 @@ fn duplicate_note(path: String) -> Result<NoteDocument, String> {
     fs::copy(source, &destination).map_err(|e| e.to_string())?;
     let mut copy = read_note_file(&destination)?;
     copy.body = body_with_title(&copy.body, &copy_title);
-    save_note(copy)
+    save_note_document(copy)
 }
 
 /// Imports a standalone Markdown file as a new note without changing the
@@ -1134,6 +1201,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             load_library,
+            load_library_snapshot,
             load_trash,
             read_note,
             create_note,
@@ -1188,9 +1256,10 @@ mod tests {
     use super::{
         append_quick_note, body_with_title, create_folder, create_note, delete_note_permanently,
         duplicate_note, import_daily_note, import_daily_note_to_new_note, import_markdown_file,
-        library_folder, load_folders, load_library, load_trash, move_folder_to_trash,
-        move_note_to_folder, move_note_to_trash, normalize_tags, read_note_file, rename_folder,
-        rename_note, restore_note_from_trash, safe_file_stem, save_note, split_front_matter,
+        library_folder, load_folders, load_library, load_library_snapshot, load_trash,
+        move_folder_to_trash, move_note_to_folder, move_note_to_trash, normalize_tags,
+        read_note_file, rename_folder, rename_note, restore_note_from_trash, safe_file_stem,
+        save_note, save_note_document, split_front_matter, SaveNoteResult,
     };
     use std::{
         fs,
@@ -1278,7 +1347,7 @@ mod tests {
             note.title = "Ignored metadata title".into();
             note.tags = vec!["work".into(), "planning".into()];
             note.body = "# Project plan\n\n- [ ] Start here".into();
-            let saved = save_note(note)?;
+            let saved = save_note_document(note)?;
             assert_eq!(saved.title, "Project plan");
             assert!(saved.path.ends_with("Project plan.md"));
             assert!(PathBuf::from(&saved.path).exists());
@@ -1286,7 +1355,7 @@ mod tests {
 
             let mut same_title = create_note(library_path.clone(), None)?;
             same_title.body = "# Project plan\n".into();
-            let collision = save_note(same_title)?;
+            let collision = save_note_document(same_title)?;
             assert!(collision.path.ends_with("Project plan-1.md"));
 
             let duplicate = duplicate_note(saved.path.clone())?;
@@ -1317,6 +1386,74 @@ mod tests {
     }
 
     #[test]
+    fn stale_save_returns_the_external_disk_version() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let library_path = library.to_string_lossy().to_string();
+        let result = (|| -> Result<(), String> {
+            let mut note = create_note(library_path, None)?;
+            note.body = "# Before\n\nOriginal body\n".into();
+            let saved = save_note_document(note)?;
+            let mut stale = saved.clone();
+            stale.body = "# Mine\n\nUnsaved local change\n".into();
+
+            fs::write(&saved.path, "# On disk\n\nExternal change\n")
+                .map_err(|error| error.to_string())?;
+
+            match save_note(stale) {
+                SaveNoteResult::Conflict { disk } => {
+                    assert_eq!(disk.title, "On disk");
+                    assert!(disk.body.contains("External change"));
+                }
+                SaveNoteResult::Saved { .. } => {
+                    return Err("stale save overwrote the external change".into());
+                }
+                SaveNoteResult::Error { message } => return Err(message),
+            }
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn library_snapshot_indexes_markdown_and_prunes_internal_storage() {
+        let library = temporary_library();
+        fs::create_dir_all(library.join("Projects")).unwrap();
+        fs::create_dir_all(library.join(".markdown-notes").join("trash")).unwrap();
+        let result = (|| -> Result<(), String> {
+            fs::write(
+                library.join("Projects").join("Plan.markdown"),
+                "# Project plan\n\nVisible note\n",
+            )
+            .map_err(|error| error.to_string())?;
+            fs::write(
+                library.join(".markdown-notes").join("hidden.md"),
+                "# Internal note\n",
+            )
+            .map_err(|error| error.to_string())?;
+            fs::write(
+                library
+                    .join(".markdown-notes")
+                    .join("trash")
+                    .join("Deleted.markdown"),
+                "# Deleted note\n",
+            )
+            .map_err(|error| error.to_string())?;
+
+            let snapshot = load_library_snapshot(library.to_string_lossy().to_string())?;
+            assert_eq!(snapshot.notes.len(), 1);
+            assert_eq!(snapshot.notes[0].title, "Project plan");
+            assert_eq!(snapshot.folders, ["Projects"]);
+            assert_eq!(snapshot.trash.len(), 1);
+            assert_eq!(snapshot.trash[0].title, "Deleted note");
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
     fn folders_are_real_directories_and_trash_restores_them() {
         let library = temporary_library();
         fs::create_dir_all(&library).unwrap();
@@ -1328,7 +1465,7 @@ mod tests {
             );
             let mut note = create_note(library_path.clone(), Some("Work/Planning".into()))?;
             note.body = "# Sprint\n".into();
-            let saved = save_note(note)?;
+            let saved = save_note_document(note)?;
             assert!(
                 PathBuf::from(&saved.path)
                     .ends_with(Path::new("Work").join("Planning").join("Sprint.md")),
@@ -1361,7 +1498,7 @@ mod tests {
             );
             let mut inbox_note = create_note(library_path.clone(), Some("Inbox".into()))?;
             inbox_note.body = "# Triage item\n".into();
-            save_note(inbox_note)?;
+            save_note_document(inbox_note)?;
             let renamed_top_level =
                 rename_folder("Inbox".into(), "Triage".into(), library_path.clone())?;
             assert_eq!(renamed_top_level.folder, "Triage");
@@ -1394,7 +1531,7 @@ mod tests {
             create_folder(library_path.clone(), "Archive/Completed".into())?;
             let mut archived = create_note(library_path.clone(), Some("Archive/Completed".into()))?;
             archived.body = "# Completed work\n".into();
-            save_note(archived)?;
+            save_note_document(archived)?;
             move_folder_to_trash("Archive".into(), library_path.clone())?;
             assert!(!library.join("Archive").exists());
             assert!(library
@@ -1418,7 +1555,7 @@ mod tests {
         let result = (|| -> Result<(), String> {
             let mut log = create_note(library_path.clone(), None)?;
             log.body = "# 2026 Work Log\n\n## Week 31\n".into();
-            let log = save_note(log)?;
+            let log = save_note_document(log)?;
 
             let first = append_quick_note(
                 library_path.clone(),
@@ -1611,7 +1748,7 @@ mod tests {
         let result = (|| -> Result<(), String> {
             let mut duplicate = create_note(library_path.clone(), Some("Personal".into()))?;
             duplicate.body = "# Project Alpha\n".into();
-            let duplicate = save_note(duplicate)?;
+            let duplicate = save_note_document(duplicate)?;
             let moved =
                 move_note_to_folder(duplicate.path, Some("Work".into()), library_path.clone())?;
             assert!(moved.path.ends_with("Project Alpha-1.md"));

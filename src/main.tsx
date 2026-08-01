@@ -57,6 +57,15 @@ type NoteDocument = NoteSummary & {
   created?: string;
   updated_at?: string;
 };
+type LibrarySnapshot = {
+  notes: NoteSummary[];
+  folders: string[];
+  trash: NoteSummary[];
+};
+type SaveNoteResult =
+  | { status: "saved"; note: NoteDocument }
+  | { status: "conflict"; disk: NoteDocument }
+  | { status: "error"; message: string };
 type FolderRenameResult = {
   folder: string;
   paths: { from: string; to: string }[];
@@ -65,7 +74,7 @@ type Filter = {
   type: "all" | "today" | "favorites" | "trash" | "folder";
   folder?: string;
 };
-type Conflict = { disk: NoteDocument; mine: NoteDocument };
+type Conflict = { disk: NoteDocument; mine: NoteDocument; path: string };
 type MarkdownNode = {
   type?: string;
   lang?: string | null;
@@ -195,9 +204,8 @@ function pathIsInLibrary(path: string, library: string) {
 }
 
 function App() {
-  const [library, setLibrary] = useState<string | null>(
-    localStorage.getItem(libraryKey),
-  );
+  const [library, setLibrary] = useState<string | null>(null);
+  const [libraryInitialized, setLibraryInitialized] = useState(false);
   const [libraryPaneWidth, setLibraryPaneWidth] = useState(() =>
     loadPaneWidth(libraryPaneWidthKey, 232),
   );
@@ -233,7 +241,7 @@ function App() {
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [quickCaptureStatus, setQuickCaptureStatus] = useState(
-    "Registering global shortcutΓÇª",
+    "Registering global shortcut…",
   );
   const [noteContextMenu, setNoteContextMenu] = useState<{
     note: NoteSummary;
@@ -270,6 +278,17 @@ function App() {
   const baseline = useRef<NoteDocument | null>(null);
   const editor = useRef<MarkdownEditorHandle>(null);
   const activePathRef = useRef<string | null>(null);
+  const libraryRef = useRef<string | null>(null);
+  const noteRef = useRef<NoteDocument | null>(null);
+  const noteBaselines = useRef(new Map<string, NoteDocument>());
+  const savedPathAliases = useRef(new Map<string, string>());
+  const saveQueueKeys = useRef(new Map<string, string>());
+  const pendingOpenedMarkdown = useRef<string[]>([]);
+  const noteLoadGeneration = useRef(0);
+  const refreshGeneration = useRef(0);
+  const refreshInFlight = useRef<Promise<void> | null>(null);
+  const refreshQueued = useRef(false);
+  const saveQueues = useRef(new Map<string, Promise<void>>());
   const internallyMovedPath = useRef<string | null>(null);
   const registeredCaptureShortcut = useRef(defaultShortcuts.quickCapture);
   const viewScrollRatios = useRef(new Map<string, number>());
@@ -317,22 +336,51 @@ function App() {
     setUpdateState("idle");
   };
 
-  const refresh = async (path = library) => {
+  const refresh = useCallback(async (path = libraryRef.current) => {
     if (!path) return;
-    try {
-      const [indexed, indexedFolders, deleted] = await Promise.all([
-        invoke<NoteSummary[]>("load_library", { libraryPath: path }),
-        invoke<string[]>("load_folders", { libraryPath: path }),
-        invoke<NoteSummary[]>("load_trash", { libraryPath: path }),
-      ]);
-      setNotes(indexed);
-      setFolders(indexedFolders);
-      setTrashNotes(deleted);
-      setStatus(`${indexed.length} ${indexed.length === 1 ? "note" : "notes"}`);
-    } catch (error) {
-      setStatus(`Could not read library: ${String(error)}`);
+    if (refreshInFlight.current) {
+      refreshQueued.current = true;
+      return refreshInFlight.current;
     }
-  };
+    const requestPath = path;
+    const generation = ++refreshGeneration.current;
+    const request = (async () => {
+      try {
+        const snapshot = await invoke<LibrarySnapshot>("load_library_snapshot", {
+          libraryPath: requestPath,
+        });
+        if (
+          generation !== refreshGeneration.current ||
+          libraryRef.current !== requestPath
+        )
+          return;
+        setNotes(snapshot.notes);
+        setFolders(snapshot.folders);
+        setTrashNotes(snapshot.trash);
+        setStatus(
+          `${snapshot.notes.length} ${snapshot.notes.length === 1 ? "note" : "notes"}`,
+        );
+      } catch (error) {
+        if (
+          generation === refreshGeneration.current &&
+          libraryRef.current === requestPath
+        )
+          setStatus(`Could not read library: ${String(error)}`);
+      }
+    })();
+    refreshInFlight.current = request;
+    try {
+      await request;
+    } finally {
+      if (refreshInFlight.current === request) {
+        refreshInFlight.current = null;
+        if (refreshQueued.current) {
+          refreshQueued.current = false;
+          void refresh(libraryRef.current);
+        }
+      }
+    }
+  }, []);
   const rememberWorkspaceScroll = () => {
     if (!note) return;
     const scroller =
@@ -349,8 +397,10 @@ function App() {
     setMode(next);
   };
   useEffect(() => {
-    void refresh();
-  }, [library]);
+    libraryRef.current = library;
+    refreshGeneration.current += 1;
+    if (library) void refresh(library);
+  }, [library, refresh]);
   useEffect(() => {
     if (
       Date.now() - Number(localStorage.getItem(updateLastCheckedKey) || 0) >=
@@ -361,6 +411,9 @@ function App() {
   useEffect(() => {
     activePathRef.current = activePath;
   }, [activePath]);
+  useEffect(() => {
+    noteRef.current = note;
+  }, [note]);
   useEffect(() => {
     localStorage.setItem(favoritesKey, JSON.stringify(favorites));
   }, [favorites]);
@@ -418,22 +471,37 @@ function App() {
     };
   }, [shortcuts.quickCapture]);
   useEffect(() => {
+    let disposed = false;
     void invoke<string | null>("load_selected_library")
-      .then((selected) => {
+      .then(async (selected) => {
+        if (disposed) return;
         if (selected) {
-          localStorage.setItem(libraryKey, selected);
           setLibrary(selected);
-        } else if (library) {
-          void invoke("save_selected_library", { libraryPath: library }).catch(
-            () => undefined,
-          );
+          return;
+        }
+        const legacyLibrary = localStorage.getItem(libraryKey);
+        if (legacyLibrary) {
+          await invoke("save_selected_library", {
+            libraryPath: legacyLibrary,
+          }).catch(() => undefined);
+          setLibrary(legacyLibrary);
         }
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (!disposed) setLibraryInitialized(true);
+      });
+    return () => {
+      disposed = true;
+    };
   }, []);
   const receiveOpenedMarkdown = useCallback(
     (path: string) => {
       if (!path) return;
+      if (!libraryInitialized) {
+        pendingOpenedMarkdown.current.push(path);
+        return;
+      }
       if (library && pathIsInLibrary(path, library)) {
         setActivePath(path);
         setStatus("Opened Markdown file");
@@ -441,9 +509,15 @@ function App() {
         setOpenedMarkdownPath(path);
       }
     },
-    [library],
+    [library, libraryInitialized],
   );
   useEffect(() => {
+    if (!libraryInitialized) return;
+    const pending = pendingOpenedMarkdown.current.splice(0);
+    pending.forEach(receiveOpenedMarkdown);
+  }, [library, libraryInitialized, receiveOpenedMarkdown]);
+  useEffect(() => {
+    if (!libraryInitialized) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void (async () => {
@@ -460,7 +534,7 @@ function App() {
       disposed = true;
       unlisten?.();
     };
-  }, [receiveOpenedMarkdown]);
+  }, [libraryInitialized, receiveOpenedMarkdown]);
   // This is a desktop application, not a browser tab. The webview's built-in
   // menu exposes browser actions (reload, inspect, and similar) that do not
   // belong in the product surface. Keyboard cut/copy/paste remains native.
@@ -483,6 +557,7 @@ function App() {
     };
   }, [noteContextMenu]);
   useEffect(() => {
+    const generation = ++noteLoadGeneration.current;
     if (!activePath) {
       setNote(null);
       return;
@@ -496,51 +571,70 @@ function App() {
         const loaded = await invoke<NoteDocument>("read_note", {
           path: activePath,
         });
+        if (
+          generation !== noteLoadGeneration.current ||
+          activePathRef.current !== activePath
+        )
+          return;
         baseline.current = loaded;
+        noteBaselines.current.set(loaded.path, loaded);
         setNote(loaded);
         setMode("preview");
       } catch (error) {
-        setStatus(`Could not open note: ${String(error)}`);
+        if (generation === noteLoadGeneration.current)
+          setStatus(`Could not open note: ${String(error)}`);
       }
     })();
   }, [activePath]);
   useEffect(() => {
     if (!note || !hasUnsavedChanges(note, baseline.current)) return;
-    const timer = window.setTimeout(() => void saveNote(note), 700);
+    const timer = window.setTimeout(() => void enqueueSave(note), 700);
     return () => window.clearTimeout(timer);
   }, [note?.body, note?.title, note?.tags.join("\0")]);
   useEffect(() => {
-    const interval = window.setInterval(async () => {
-      if (!library) return;
-      await refresh();
-      if (note && baseline.current) {
-        try {
-          const disk = await invoke<NoteDocument>("read_note", {
-            path: note.path,
-          });
-          if (
-            disk.revision !== baseline.current.revision &&
-            (note.title !== baseline.current.title ||
-              note.body !== baseline.current.body ||
-              note.tags.join("\0") !== baseline.current.tags.join("\0"))
-          )
-            setConflict({ disk, mine: note });
-          else if (disk.revision !== baseline.current.revision) {
-            baseline.current = disk;
-            setNote(disk);
-            setStatus("Updated from disk");
-          }
-        } catch {
-          /* it may have moved */
+    const checkForExternalChanges = async () => {
+      const currentNote = noteRef.current;
+      const currentBaseline = baseline.current;
+      if (!library || !currentNote || !currentBaseline) return;
+      await refresh(library);
+      if (
+        noteRef.current?.path !== currentNote.path ||
+        baseline.current?.revision !== currentBaseline.revision
+      )
+        return;
+      try {
+        const disk = await invoke<NoteDocument>("read_note", {
+          path: currentNote.path,
+        });
+        if (
+          noteRef.current?.path !== currentNote.path ||
+          baseline.current?.revision !== currentBaseline.revision
+        )
+          return;
+        if (
+          disk.revision !== currentBaseline.revision &&
+          hasUnsavedChanges(currentNote, currentBaseline)
+        )
+          setConflict({ disk, mine: currentNote, path: currentNote.path });
+        else if (disk.revision !== currentBaseline.revision) {
+          baseline.current = disk;
+          noteBaselines.current.set(disk.path, disk);
+          setNote(disk);
+          setStatus("Updated from disk");
         }
+      } catch {
+        /* it may have moved */
       }
+    };
+    const interval = window.setInterval(() => {
+      void checkForExternalChanges();
     }, 2500);
     return () => clearInterval(interval);
-  }, [library, note?.path, note?.title, note?.body, note?.tags]);
+  }, [library, refresh]);
   useEffect(() => {
     if (!library) return;
     const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void refresh();
+      if (document.visibilityState === "visible") void refresh(library);
     };
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
@@ -548,7 +642,7 @@ function App() {
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [library]);
+  }, [library, refresh]);
   useEffect(() => {
     if (!note) return;
     const ratio = viewScrollRatios.current.get(note.path);
@@ -594,7 +688,7 @@ function App() {
         setQuickOpen(true);
       } else if (matchesShortcut(event, shortcuts.save) && note) {
         event.preventDefault();
-        void saveNote(note);
+        void enqueueSave(note);
       } else if (matchesShortcut(event, shortcuts.view) && note) {
         event.preventDefault();
         setViewMode(mode === "edit" ? "preview" : "edit");
@@ -617,7 +711,6 @@ function App() {
       title: "Choose your notes folder",
     });
     if (typeof selected === "string") {
-      localStorage.setItem(libraryKey, selected);
       await invoke("save_selected_library", { libraryPath: selected }).catch(
         () => undefined,
       );
@@ -655,11 +748,16 @@ function App() {
         libraryPath: library,
         folder,
       });
-      const saved = body
-        ? await invoke<NoteDocument>("save_note", {
-            note: { ...created, body },
-          })
-        : created;
+      let saved = created;
+      if (body) {
+        const result = await invoke<SaveNoteResult>("save_note", {
+          note: { ...created, body },
+        });
+        if (result.status === "saved") saved = result.note;
+        else if (result.status === "conflict")
+          throw new Error("The new note changed on disk before it could be saved");
+        else throw new Error(result.message);
+      }
       await refresh();
       setActivePath(saved.path);
       setStatus(folder ? `New note created in ${folder}` : "New note created");
@@ -727,18 +825,48 @@ function App() {
       setStatus(`Could not rename folder: ${String(error)}`);
     }
   };
-  const saveNote = async (draft: NoteDocument) => {
+  const saveNote = async (draft: NoteDocument, queueKey: string) => {
     try {
-      const previousPath = activePathRef.current ?? draft.path;
-      const noteToSave =
-        previousPath === draft.path ? draft : { ...draft, path: previousPath };
-      if (!hasUnsavedChanges(noteToSave, baseline.current)) return;
-      setStatus("SavingΓÇª");
-      const saved = await invoke<NoteDocument>("save_note", {
+      const originalPath = draft.path;
+      const previousPath =
+        savedPathAliases.current.get(originalPath) ?? originalPath;
+      const currentBaseline =
+        noteBaselines.current.get(previousPath) ??
+        noteBaselines.current.get(originalPath) ??
+        null;
+      const noteToSave = {
+        ...draft,
+        path: previousPath,
+        revision:
+          currentBaseline?.path === previousPath
+            ? currentBaseline.revision
+            : draft.revision,
+      };
+      if (!hasUnsavedChanges(noteToSave, currentBaseline)) return;
+      const isActive =
+        activePathRef.current === previousPath ||
+        activePathRef.current === originalPath;
+      if (isActive) setStatus("Saving…");
+      const result = await invoke<SaveNoteResult>("save_note", {
         note: noteToSave,
       });
+      if (result.status === "conflict") {
+        setConflict({ disk: result.disk, mine: noteToSave, path: previousPath });
+        if (isActive) setStatus("Save conflict: the note changed on disk");
+        return;
+      }
+      if (result.status === "error") {
+        if (isActive) setStatus(`Save failed: ${result.message}`);
+        return;
+      }
+      const saved = result.note;
       const pathChanged = saved.path !== previousPath;
-      if (activePathRef.current === previousPath) {
+      savedPathAliases.current.set(originalPath, saved.path);
+      saveQueueKeys.current.set(originalPath, queueKey);
+      saveQueueKeys.current.set(saved.path, queueKey);
+      noteBaselines.current.set(originalPath, saved);
+      noteBaselines.current.set(saved.path, saved);
+      if (isActive) {
         activePathRef.current = saved.path;
         baseline.current = saved;
         if (pathChanged) {
@@ -761,11 +889,41 @@ function App() {
             }
           : current,
       );
-      await refresh();
-      setStatus("Saved");
+      const updateSummary = (item: NoteSummary) =>
+        item.path === originalPath ||
+        item.path === previousPath ||
+        item.path === saved.path
+          ? {
+              ...item,
+              path: saved.path,
+              title: saved.title,
+              tags: saved.tags,
+              updated: saved.updated,
+              searchable_text: `${saved.title} ${fileStem(saved.path)} ${saved.tags.join(" ")} ${saved.body}`.toLowerCase(),
+            }
+          : item;
+      setNotes((current) => current.map(updateSummary));
+      setTrashNotes((current) => current.map(updateSummary));
+      if (isActive) setStatus("Saved");
     } catch (error) {
-      setStatus(`Save failed: ${String(error)}`);
+      if (activePathRef.current === draft.path)
+        setStatus(`Save failed: ${String(error)}`);
     }
+  };
+  const enqueueSave = (draft: NoteDocument) => {
+    const queuedDraft = { ...draft, tags: [...draft.tags] };
+    const queueKey =
+      saveQueueKeys.current.get(queuedDraft.path) ?? queuedDraft.path;
+    const previous = saveQueues.current.get(queueKey) ?? Promise.resolve();
+    const queued = previous
+      .catch(() => undefined)
+      .then(() => saveNote(queuedDraft, queueKey));
+    saveQueues.current.set(queueKey, queued);
+    void queued.finally(() => {
+      if (saveQueues.current.get(queueKey) === queued)
+        saveQueues.current.delete(queueKey);
+    });
+    return queued;
   };
   const duplicateNote = async (source: Pick<NoteSummary, "path">) => {
     try {
@@ -813,7 +971,7 @@ function App() {
   const trashNote = async (source: NoteSummary) => {
     if (
       !library ||
-      !confirm(`Move ΓÇ£${source.title}ΓÇ¥ to this libraryΓÇÖs trash?`)
+      !confirm(`Move “${source.title}” to this library’s trash?`)
     )
       return;
     try {
@@ -835,7 +993,7 @@ function App() {
     );
     if (
       !confirm(
-        `Move ΓÇ£${folder}ΓÇ¥ and its ${contained.length} ${contained.length === 1 ? "note" : "notes"} to Trash? You can restore its notes later.`,
+        `Move “${folder}” and its ${contained.length} ${contained.length === 1 ? "note" : "notes"} to Trash? You can restore its notes later.`,
       )
     )
       return;
@@ -881,7 +1039,7 @@ function App() {
     if (
       !library ||
       !confirm(
-        `Permanently delete ΓÇ£${source.title}ΓÇ¥? This cannot be undone.`,
+        `Permanently delete “${source.title}”? This cannot be undone.`,
       )
     )
       return;
@@ -1044,7 +1202,7 @@ function App() {
             : current,
         )
       }
-      onBlur={() => void saveNote(note)}
+      onBlur={() => void enqueueSave(note)}
       autoFocus
       className="markdown-editor"
     />
@@ -1159,11 +1317,11 @@ function App() {
     >
       <header className="app-topbar">
         <div className="top-brand">
-          <span className="brand-mark">Γ£ª</span>
+          <span className="brand-mark">✦</span>
           <span>Margin</span>
         </div>
         <label className="top-search">
-          <span>Γîò</span>
+          <span>⌕</span>
           <input
             id="note-search"
             value={query}
@@ -1187,13 +1345,13 @@ function App() {
             title="Settings"
             onClick={() => setSettingsOpen(true)}
           >
-            ΓÜÖ
+            ⚙
           </button>
         </div>
       </header>
       <aside className="sidebar" aria-label="Library navigation">
         <button className="new-note" onClick={() => void createNote()}>
-          ∩╝ï New note <kbd>{formatShortcut(shortcuts.newNote)}</kbd>
+          ＋ New note <kbd>{formatShortcut(shortcuts.newNote)}</kbd>
         </button>
         <nav>
           <button
@@ -1210,7 +1368,7 @@ function App() {
             onClick={() => void openToday()}
           >
             <span>Today</span>
-            <small>Γåù</small>
+            <small>↗</small>
           </button>
           <button
             className={
@@ -1247,7 +1405,7 @@ function App() {
                 setFolderDialogOpen(true);
               }}
             >
-              ∩╝ï
+              ＋
             </button>
           </div>
           <FolderTree
@@ -1399,7 +1557,7 @@ function App() {
           </>
         ) : (
           <div className="welcome">
-            <div className="welcome-icon">Γ£ª</div>
+            <div className="welcome-icon">✦</div>
             <h1>
               {library
                 ? "Choose a note or create one"
@@ -1512,7 +1670,7 @@ function App() {
           onClose={() => setFolderRenameTarget(null)}
           onCreate={(name) => void renameFolder(folderRenameTarget, name)}
           title="Rename folder"
-          description="This keeps the folderΓÇÖs notes and subfolders together."
+          description="This keeps the folder’s notes and subfolders together."
           placeholder="Folder name"
           submitLabel="Rename folder"
           initialValue={folderRenameTarget.split("/").pop() || ""}
@@ -1600,12 +1758,16 @@ function App() {
         <ConflictDialog
           conflict={conflict}
           onChoose={(choice) => {
+            const conflictIsActive = activePathRef.current === conflict.path;
+            noteBaselines.current.set(conflict.path, conflict.disk);
             if (choice === "disk") {
-              baseline.current = conflict.disk;
-              setNote(conflict.disk);
+              if (conflictIsActive) {
+                baseline.current = conflict.disk;
+                setNote(conflict.disk);
+              }
             } else {
-              baseline.current = conflict.disk;
-              void saveNote(conflict.mine);
+              if (conflictIsActive) baseline.current = conflict.disk;
+              void enqueueSave(conflict.mine);
             }
             setConflict(null);
           }}
@@ -1704,7 +1866,7 @@ function NoteContextMenu({
               }}
             >
               <option value="" disabled>
-                Choose folderΓÇª
+                Choose folder…
               </option>
               <option value="__top_level__">Top level</option>
               <CascadingFolderOptions folders={folders} />
@@ -1845,7 +2007,7 @@ function FolderTree({
                 aria-expanded={!isCollapsed}
                 onClick={() => onToggle(folder)}
               >
-                <span>Γû╛</span>
+                <span>▾</span>
               </button>
             ) : (
               <span className="folder-spacer" />
@@ -1868,7 +2030,7 @@ function FolderTree({
               aria-label={`Add subfolder to ${name}`}
               onClick={() => onAddSubfolder(folder)}
             >
-              ∩╝ï
+              ＋
             </button>
             <button
               type="button"
@@ -1877,7 +2039,7 @@ function FolderTree({
               aria-label={`Delete ${name}`}
               onClick={() => onDelete(folder)}
             >
-              ├ù
+              ×
             </button>
           </div>
           {nested.length > 0 && !isCollapsed && render(folder, depth + 1)}
@@ -2160,7 +2322,7 @@ function Outline({
           title="Close outline (Esc)"
           onClick={onClose}
         >
-          ├ù
+          ×
         </button>
       </header>
       {items.length ? (
@@ -2329,7 +2491,7 @@ function TableEditorDialog({
           <div>
             <h2>Edit table</h2>
             <p>
-              Drag Γá┐ to reorder. Use ∩╝ï beside a row or column to add after
+              Drag ⠿ to reorder. Use ＋ beside a row or column to add after
               it.
             </p>
           </div>
@@ -2338,7 +2500,7 @@ function TableEditorDialog({
             aria-label="Close table editor"
             onClick={onClose}
           >
-            ├ù
+          ×
           </button>
         </header>
         <div className="table-grid-wrap">
@@ -2362,7 +2524,7 @@ function TableEditorDialog({
                         )
                       }
                     >
-                      Γá┐
+                      ⠿
                     </button>
                     <input
                       aria-label={`Header ${column + 1}`}
@@ -2378,7 +2540,7 @@ function TableEditorDialog({
                         aria-label={`Add column after ${column + 1}`}
                         onClick={() => addColumn(column + 1)}
                       >
-                        ∩╝ï
+                        ＋
                       </button>
                       <button
                         type="button"
@@ -2387,7 +2549,7 @@ function TableEditorDialog({
                         disabled={headers.length <= 1}
                         onClick={() => removeColumn(column)}
                       >
-                        ├ù
+                        ×
                       </button>
                     </span>
                   </th>
@@ -2413,7 +2575,7 @@ function TableEditorDialog({
                         )
                       }
                     >
-                      Γá┐
+                      ⠿
                     </button>
                   </td>
                   {headers.map((_, column) => (
@@ -2435,7 +2597,7 @@ function TableEditorDialog({
                       aria-label={`Add row after ${rowIndex + 1}`}
                       onClick={() => addRow(rowIndex + 1)}
                     >
-                      ∩╝ï
+                      ＋
                     </button>
                     <button
                       type="button"
@@ -2448,7 +2610,7 @@ function TableEditorDialog({
                         )
                       }
                     >
-                      ├ù
+                      ×
                     </button>
                   </td>
                 </tr>
@@ -2500,19 +2662,19 @@ function UpdateDialog({
             <h2>Margin {update.version}</h2>
           </div>
           <button aria-label="Close update" onClick={onClose}>
-            ├ù
+            ×
           </button>
         </header>
         <p>{update.body || "A newer version of Margin is ready to install."}</p>
         {error && <p className="update-status">{error}</p>}
         {busy && (
           <p className="update-status">
-            Downloading and verifying the updateΓÇª
+            Downloading and verifying the update…
           </p>
         )}
         {ready && (
           <p className="update-status">
-            Update installed. Restart Margin when youΓÇÖre ready.
+            Update installed. Restart Margin when you’re ready.
           </p>
         )}
         <div>
@@ -2527,7 +2689,7 @@ function UpdateDialog({
                 onClick={onInstall}
                 disabled={busy}
               >
-                {busy ? "UpdatingΓÇª" : "Update now"}
+                {busy ? "Updating…" : "Update now"}
               </button>
             </>
           )}
@@ -2613,19 +2775,19 @@ function QuickCaptureDialog({
         <header>
           <div>
             <p className="eyebrow">Quick capture</p>
-            <h2>WhatΓÇÖs on your mind?</h2>
+            <h2>What’s on your mind?</h2>
           </div>
           <button
             type="button"
             aria-label="Close quick capture"
             onClick={onClose}
           >
-            ├ù
+            ×
           </button>
         </header>
         <textarea
           autoFocus
-          placeholder="Start typingΓÇª"
+          placeholder="Start typing…"
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
@@ -2640,9 +2802,9 @@ function QuickCaptureDialog({
           }}
         />
         <footer>
-          <span>Saved to todayΓÇÖs Daily note</span>
+          <span>Saved to today’s Daily note</span>
           <span>
-            <kbd>{shortcut}</kbd> opens ┬╖ <kbd>ΓîÿΓå╡</kbd> saves
+            <kbd>{shortcut}</kbd> opens · <kbd>⌘↵</kbd> saves
           </span>
         </footer>
         <div>
@@ -2778,7 +2940,7 @@ function CaptureWindow() {
   const save = async () => {
     if (!text.trim()) return;
     if (!libraryReady) {
-      setStatus("Loading your notes folderΓÇª");
+      setStatus("Loading your notes folder…");
       return;
     }
     if (!library) {
@@ -2796,7 +2958,7 @@ function CaptureWindow() {
         ),
       });
       setText("");
-      setStatus("Saved to todayΓÇÖs Daily note");
+      setStatus("Saved to today’s Daily note");
       window.setTimeout(hide, 160);
     } catch (error) {
       setStatus(`Could not save: ${String(error)}`);
@@ -2822,13 +2984,13 @@ function CaptureWindow() {
             aria-label="Hide quick capture"
             onClick={hide}
           >
-            ├ù
+            ×
           </button>
         </header>
         <div className="capture-composer">
           <textarea
             ref={input}
-            placeholder="Start typingΓÇª"
+            placeholder="Start typing…"
             value={text}
             onChange={(event) => setText(event.target.value)}
             onKeyDown={(event) => {
@@ -2862,13 +3024,13 @@ function CaptureWindow() {
           <span className="capture-status">
             {status ||
               (libraryReady
-                ? "Adds to todayΓÇÖs Daily note"
-                : "Loading your notes folderΓÇª")}
+                ? "Adds to today’s Daily note"
+                : "Loading your notes folder…")}
           </span>
           <span className="capture-hint">
             <kbd>{shortcut}</kbd>
             <span>opens</span>
-            <kbd>{isMac ? "ΓîÿΓå╡" : "Ctrl+Enter"}</kbd>
+            <kbd>{isMac ? "⌘↵" : "Ctrl+Enter"}</kbd>
             <span>saves</span>
           </span>
         </footer>
@@ -2886,7 +3048,7 @@ function CaptureWindow() {
 }
 function folderOptionLabel(folder: string) {
   const parts = folder.split("/");
-  return `${"ΓÇâ".repeat(parts.length - 1)}Γû╛ ${parts[parts.length - 1]}`;
+  return `${"—".repeat(parts.length - 1)}▾ ${parts[parts.length - 1]}`;
 }
 function CascadingFolderOptions({ folders }: { folders: string[] }) {
   return (
@@ -2930,11 +3092,11 @@ function CascadingNoteOptions({
       const name = child.slice(child.lastIndexOf("/") + 1);
       return [
         <option key={`folder-${child}`} value={`folder-${child}`} disabled>
-          {"ΓÇâ".repeat(depth)}Γû╛ {name}
+          {"—".repeat(depth)}▾ {name}
         </option>,
         ...directNotes(child).map((note) => (
           <option key={note.path} value={note.path}>
-            {"ΓÇâ".repeat(depth + 1)}ΓÇó {note.title}
+            {"—".repeat(depth + 1)}• {note.title}
           </option>
         )),
         ...render(child, depth + 1),
@@ -2944,7 +3106,7 @@ function CascadingNoteOptions({
     <>
       {directNotes("").map((note) => (
         <option key={note.path} value={note.path}>
-          ΓÇó {note.title}
+          • {note.title}
         </option>
       ))}
       {render("", 0)}
@@ -3245,7 +3407,7 @@ function TemplateEditorDialog({
             <h2>Templates</h2>
           </div>
           <button aria-label="Close templates" onClick={onClose}>
-            ├ù
+            ×
           </button>
         </header>
         <div className="template-editor-body">
@@ -3260,7 +3422,7 @@ function TemplateEditorDialog({
               </button>
             ))}
             <button className="template-add" onClick={add}>
-              ∩╝ï New template
+              ＋ New template
             </button>
           </nav>
           {selected && (
@@ -3311,7 +3473,7 @@ function TemplateEditorDialog({
               </div>
               <p className="template-help">
                 Variables: <code>{"{{date}}"}</code> and{" "}
-                <code>{"{{time}}"}</code>. The template named ΓÇ£Daily noteΓÇ¥
+                <code>{"{{time}}"}</code>. The template named “Daily note”
                 powers Today and Quick Capture.
               </p>
             </div>
@@ -3381,7 +3543,7 @@ function SettingsDialog({
         <header>
           <h2>Settings</h2>
           <button aria-label="Close settings" onClick={onClose}>
-            ├ù
+            ×
           </button>
         </header>
         <label className="setting-row">
@@ -3465,7 +3627,7 @@ function SettingsDialog({
             onClick={onCheckForUpdates}
             disabled={updateState === "checking"}
           >
-            {updateState === "checking" ? "CheckingΓÇª" : "Check for updates"}
+            {updateState === "checking" ? "Checking…" : "Check for updates"}
           </button>
           {updateMessage && (
             <p className="settings-update-status">{updateMessage}</p>
