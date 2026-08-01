@@ -36,6 +36,9 @@
 ### Desktop and updates
 
 - Native Tauri app for Windows and Apple Silicon macOS.
+- Margin registers as an editor for `.md` and `.markdown` files. Files already
+  inside the selected library open directly; files outside it can be opened as
+  their original or imported as a copy into a chosen folder.
 - Signed in-app updates, with daily checks and an available-update prompt.
 
 ## Planned
@@ -44,4 +47,3 @@
 - Native-window integration and staged-update installation coverage.
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
-- Platform-specific `.md` file association so Margin can be chosen as the default Markdown opener. For Markdown opened outside a library, preserve the source file and offer: import as a new note, append all or a selection to an existing note, or copy selected Markdown.

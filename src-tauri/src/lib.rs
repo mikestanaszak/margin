@@ -7,6 +7,8 @@ use std::{
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
+#[cfg(target_os = "macos")]
+use tauri::Emitter;
 use tauri::{window::Color, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
@@ -19,6 +21,58 @@ struct CaptureShortcut(Mutex<CaptureShortcutState>);
 struct CaptureShortcutState {
     shortcut: Shortcut,
     registered: bool,
+}
+
+/// Markdown paths delivered by the OS before the webview is ready. Keeping
+/// these in memory lets a normal file-open launch work without copying or
+/// modifying the user's source file.
+struct OpenedMarkdownFiles(Mutex<Vec<String>>);
+
+fn is_markdown_path(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown")
+    })
+}
+
+fn markdown_file_paths<I>(paths: I) -> Vec<String>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    let mut result = Vec::new();
+    for path in paths {
+        if path.is_file() && is_markdown_path(&path) {
+            let value = path.to_string_lossy().to_string();
+            if !result.iter().any(|existing| existing == &value) {
+                result.push(value);
+            }
+        }
+    }
+    result
+}
+
+#[cfg(target_os = "macos")]
+fn queue_opened_markdown_files(app: &AppHandle, paths: Vec<String>) {
+    if paths.is_empty() {
+        return;
+    }
+    if let Ok(mut pending) = app.state::<OpenedMarkdownFiles>().0.lock() {
+        for path in &paths {
+            if !pending.iter().any(|existing| existing == path) {
+                pending.push(path.clone());
+            }
+        }
+    }
+    let _ = app.emit("margin://open-markdown-files", paths);
+}
+
+#[tauri::command]
+fn take_opened_markdown_files(app: AppHandle) -> Result<Vec<String>, String> {
+    let opened = app.state::<OpenedMarkdownFiles>();
+    let mut pending = opened
+        .0
+        .lock()
+        .map_err(|_| "Opened Markdown queue is unavailable")?;
+    Ok(std::mem::take(&mut *pending))
 }
 
 fn default_capture_shortcut() -> Shortcut {
@@ -866,6 +920,34 @@ fn duplicate_note(path: String) -> Result<NoteDocument, String> {
     save_note(copy)
 }
 
+/// Imports a standalone Markdown file as a new note without changing the
+/// original. This is used when Margin is selected as the system Markdown
+/// opener and the opened file is outside the active library.
+#[tauri::command]
+fn import_markdown_file(
+    source_path: String,
+    library_path: String,
+    folder: Option<String>,
+) -> Result<NoteDocument, String> {
+    let source = PathBuf::from(source_path);
+    if !source.is_file() || !is_markdown_path(&source) {
+        return Err("Choose an existing Markdown file".into());
+    }
+    let library = PathBuf::from(library_path);
+    if !library.is_dir() {
+        return Err("Choose an existing notes folder".into());
+    }
+    if source.starts_with(&library) {
+        return read_note_file(&source);
+    }
+    let destination_folder = library_folder(&library, folder)?;
+    fs::create_dir_all(&destination_folder).map_err(|error| error.to_string())?;
+    let source_note = read_note_file(&source)?;
+    let destination = unique_path(&destination_folder, &source_note.title);
+    fs::copy(&source, &destination).map_err(|error| error.to_string())?;
+    read_note_file(&destination)
+}
+
 #[tauri::command]
 fn move_note_to_folder(
     path: String,
@@ -1013,6 +1095,9 @@ pub fn run() {
                 .build(),
         )
         .setup(move |app| {
+            app.manage(OpenedMarkdownFiles(Mutex::new(markdown_file_paths(
+                std::env::args_os().skip(1).map(PathBuf::from),
+            ))));
             let registered = app.global_shortcut().register(default_capture).is_ok();
             app.manage(CaptureShortcut(Mutex::new(CaptureShortcutState {
                 shortcut: default_capture,
@@ -1058,6 +1143,7 @@ pub fn run() {
             save_note,
             rename_note,
             duplicate_note,
+            import_markdown_file,
             move_note_to_folder,
             reveal_note_in_file_manager,
             move_note_to_trash,
@@ -1072,14 +1158,25 @@ pub fn run() {
             open_external_url,
             save_selected_library,
             load_selected_library,
-            configure_quick_capture_shortcut
+            configure_quick_capture_shortcut,
+            take_opened_markdown_files
         ])
         .build(tauri::generate_context!())
         .expect("error while building Margin")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
-            if matches!(event, tauri::RunEvent::Reopen { .. }) {
-                let _ = show_main_window(app);
+            match event {
+                tauri::RunEvent::Reopen { .. } => {
+                    let _ = show_main_window(app);
+                }
+                tauri::RunEvent::Opened { urls } => {
+                    let paths = markdown_file_paths(
+                        urls.into_iter().filter_map(|url| url.to_file_path().ok()),
+                    );
+                    queue_opened_markdown_files(app, paths);
+                    let _ = show_main_window(app);
+                }
+                _ => {}
             }
             #[cfg(not(target_os = "macos"))]
             let _ = (app, event);
@@ -1090,10 +1187,10 @@ pub fn run() {
 mod tests {
     use super::{
         append_quick_note, body_with_title, create_folder, create_note, delete_note_permanently,
-        duplicate_note, import_daily_note, import_daily_note_to_new_note, library_folder,
-        load_folders, load_library, load_trash, move_folder_to_trash, move_note_to_folder,
-        move_note_to_trash, normalize_tags, read_note_file, rename_folder, rename_note,
-        restore_note_from_trash, safe_file_stem, save_note, split_front_matter,
+        duplicate_note, import_daily_note, import_daily_note_to_new_note, import_markdown_file,
+        library_folder, load_folders, load_library, load_trash, move_folder_to_trash,
+        move_note_to_folder, move_note_to_trash, normalize_tags, read_note_file, rename_folder,
+        rename_note, restore_note_from_trash, safe_file_stem, save_note, split_front_matter,
     };
     use std::{
         fs,
@@ -1550,5 +1647,39 @@ mod tests {
             .contains("changed outside margin"));
 
         fs::remove_dir_all(&library).ok();
+    }
+
+    #[test]
+    fn importing_an_opened_markdown_file_preserves_the_source() {
+        let library = temporary_library();
+        let outside = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let source = outside.join("Outside.markdown");
+        fs::write(&source, "# Imported source\n\nKeep the original untouched.").unwrap();
+
+        let imported = import_markdown_file(
+            source.to_string_lossy().to_string(),
+            library.to_string_lossy().to_string(),
+            Some("Inbox".into()),
+        )
+        .unwrap();
+        assert!(Path::new(&imported.path).ends_with(Path::new("Inbox").join("Imported source.md")));
+        assert_eq!(
+            fs::read_to_string(&source).unwrap(),
+            "# Imported source\n\nKeep the original untouched."
+        );
+        assert!(import_markdown_file(
+            outside
+                .join("not-markdown.txt")
+                .to_string_lossy()
+                .to_string(),
+            library.to_string_lossy().to_string(),
+            None,
+        )
+        .is_err());
+
+        fs::remove_dir_all(&library).ok();
+        fs::remove_dir_all(&outside).ok();
     }
 }

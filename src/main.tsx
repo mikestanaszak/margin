@@ -16,6 +16,7 @@ import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { all as highlightLanguages } from "lowlight";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import MarkdownEditor, { type MarkdownEditorHandle } from "./MarkdownEditor";
 import {
   NoteListItem,
@@ -138,6 +139,7 @@ const outlinePaneWidthKey = "markdown-notes.outline-pane-width";
 const updateLastCheckedKey = "margin.update-last-checked";
 const updateSkippedVersionKey = "margin.update-skipped-version";
 const legacySidebarShortcut = isMac ? "meta+\\" : "ctrl+\\";
+const legacySidebarAltShortcut = isMac ? "meta+alt+b" : "ctrl+alt+b";
 
 const defaultShortcuts: Shortcuts = {
   newNote: isMac ? "meta+n" : "ctrl+n",
@@ -145,7 +147,7 @@ const defaultShortcuts: Shortcuts = {
   switcher: isMac ? "meta+p" : "ctrl+p",
   save: isMac ? "meta+s" : "ctrl+s",
   view: isMac ? "meta+e" : "ctrl+e",
-  sidebar: isMac ? "meta+alt+b" : "ctrl+alt+b",
+  sidebar: isMac ? "meta+shift+b" : "ctrl+shift+b",
   outline: isMac ? "meta+shift+o" : "ctrl+shift+o",
   quickCapture: isMac ? "meta+alt+shift+space" : "ctrl+alt+shift+space",
 };
@@ -174,13 +176,22 @@ function loadShortcuts(): Shortcuts {
       ...defaultShortcuts,
       ...saved,
       sidebar:
-        saved.sidebar === legacySidebarShortcut
+        saved.sidebar === legacySidebarShortcut ||
+        saved.sidebar === legacySidebarAltShortcut
           ? defaultShortcuts.sidebar
           : saved.sidebar || defaultShortcuts.sidebar,
     };
   } catch {
     return defaultShortcuts;
   }
+}
+function normalizedFilePath(path: string) {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+function pathIsInLibrary(path: string, library: string) {
+  const file = normalizedFilePath(path);
+  const root = normalizedFilePath(library);
+  return file === root || file.startsWith(`${root}/`);
 }
 
 function App() {
@@ -222,7 +233,7 @@ function App() {
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [quickCaptureStatus, setQuickCaptureStatus] = useState(
-    "Registering global shortcut…",
+    "Registering global shortcutΓÇª",
   );
   const [noteContextMenu, setNoteContextMenu] = useState<{
     note: NoteSummary;
@@ -232,6 +243,9 @@ function App() {
     isDaily: boolean;
   } | null>(null);
   const [collapsedFolders, setCollapsedFolders] = useState<string[]>([]);
+  const [openedMarkdownPath, setOpenedMarkdownPath] = useState<string | null>(
+    null,
+  );
   const [availableUpdate, setAvailableUpdate] = useState<AppUpdate | null>(
     null,
   );
@@ -417,6 +431,36 @@ function App() {
       })
       .catch(() => undefined);
   }, []);
+  const receiveOpenedMarkdown = useCallback(
+    (path: string) => {
+      if (!path) return;
+      if (library && pathIsInLibrary(path, library)) {
+        setActivePath(path);
+        setStatus("Opened Markdown file");
+      } else {
+        setOpenedMarkdownPath(path);
+      }
+    },
+    [library],
+  );
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      unlisten = await listen<string[]>(
+        "margin://open-markdown-files",
+        (event) => event.payload.forEach(receiveOpenedMarkdown),
+      );
+      if (!disposed) {
+        const pending = await invoke<string[]>("take_opened_markdown_files");
+        pending.forEach(receiveOpenedMarkdown);
+      }
+    })();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [receiveOpenedMarkdown]);
   // This is a desktop application, not a browser tab. The webview's built-in
   // menu exposes browser actions (reload, inspect, and similar) that do not
   // belong in the product surface. Keyboard cut/copy/paste remains native.
@@ -582,6 +626,22 @@ function App() {
       setFilter({ type: "all" });
     }
   };
+  const importOpenedMarkdown = async (folder: string) => {
+    if (!openedMarkdownPath || !library) return;
+    try {
+      const imported = await invoke<NoteDocument>("import_markdown_file", {
+        sourcePath: openedMarkdownPath,
+        libraryPath: library,
+        folder: folder || null,
+      });
+      await refresh();
+      setActivePath(imported.path);
+      setOpenedMarkdownPath(null);
+      setStatus("Imported a copy into your library");
+    } catch (error) {
+      setStatus(`Could not import Markdown file: ${String(error)}`);
+    }
+  };
   const createNote = async (targetFolder?: string | null, body?: string) => {
     if (!library) return void (await selectLibrary());
     const folder =
@@ -673,7 +733,7 @@ function App() {
       const noteToSave =
         previousPath === draft.path ? draft : { ...draft, path: previousPath };
       if (!hasUnsavedChanges(noteToSave, baseline.current)) return;
-      setStatus("Saving…");
+      setStatus("SavingΓÇª");
       const saved = await invoke<NoteDocument>("save_note", {
         note: noteToSave,
       });
@@ -751,7 +811,10 @@ function App() {
     }
   };
   const trashNote = async (source: NoteSummary) => {
-    if (!library || !confirm(`Move “${source.title}” to this library’s trash?`))
+    if (
+      !library ||
+      !confirm(`Move ΓÇ£${source.title}ΓÇ¥ to this libraryΓÇÖs trash?`)
+    )
       return;
     try {
       await invoke("move_note_to_trash", {
@@ -772,7 +835,7 @@ function App() {
     );
     if (
       !confirm(
-        `Move “${folder}” and its ${contained.length} ${contained.length === 1 ? "note" : "notes"} to Trash? You can restore its notes later.`,
+        `Move ΓÇ£${folder}ΓÇ¥ and its ${contained.length} ${contained.length === 1 ? "note" : "notes"} to Trash? You can restore its notes later.`,
       )
     )
       return;
@@ -817,7 +880,9 @@ function App() {
   const deleteNotePermanently = async (source: NoteSummary) => {
     if (
       !library ||
-      !confirm(`Permanently delete “${source.title}”? This cannot be undone.`)
+      !confirm(
+        `Permanently delete ΓÇ£${source.title}ΓÇ¥? This cannot be undone.`,
+      )
     )
       return;
     try {
@@ -1094,11 +1159,11 @@ function App() {
     >
       <header className="app-topbar">
         <div className="top-brand">
-          <span className="brand-mark">✦</span>
+          <span className="brand-mark">Γ£ª</span>
           <span>Margin</span>
         </div>
         <label className="top-search">
-          <span>⌕</span>
+          <span>Γîò</span>
           <input
             id="note-search"
             value={query}
@@ -1122,13 +1187,13 @@ function App() {
             title="Settings"
             onClick={() => setSettingsOpen(true)}
           >
-            ⚙
+            ΓÜÖ
           </button>
         </div>
       </header>
       <aside className="sidebar" aria-label="Library navigation">
         <button className="new-note" onClick={() => void createNote()}>
-          ＋ New note <kbd>{formatShortcut(shortcuts.newNote)}</kbd>
+          ∩╝ï New note <kbd>{formatShortcut(shortcuts.newNote)}</kbd>
         </button>
         <nav>
           <button
@@ -1145,7 +1210,7 @@ function App() {
             onClick={() => void openToday()}
           >
             <span>Today</span>
-            <small>↗</small>
+            <small>Γåù</small>
           </button>
           <button
             className={
@@ -1182,7 +1247,7 @@ function App() {
                 setFolderDialogOpen(true);
               }}
             >
-              ＋
+              ∩╝ï
             </button>
           </div>
           <FolderTree
@@ -1334,7 +1399,7 @@ function App() {
           </>
         ) : (
           <div className="welcome">
-            <div className="welcome-icon">✦</div>
+            <div className="welcome-icon">Γ£ª</div>
             <h1>
               {library
                 ? "Choose a note or create one"
@@ -1369,6 +1434,21 @@ function App() {
           shortcut={formatShortcut(shortcuts.quickCapture)}
           onClose={() => setQuickCaptureOpen(false)}
           onSave={saveQuickCapture}
+        />
+      )}
+      {openedMarkdownPath && (
+        <OpenedMarkdownDialog
+          path={openedMarkdownPath}
+          library={library}
+          folders={folders}
+          onClose={() => setOpenedMarkdownPath(null)}
+          onOpenOriginal={() => {
+            setActivePath(openedMarkdownPath);
+            setOpenedMarkdownPath(null);
+            setStatus("Opened the original file outside your library");
+          }}
+          onImport={(folder) => void importOpenedMarkdown(folder)}
+          onChooseLibrary={() => void selectLibrary()}
         />
       )}
       {tableDialogOpen && (
@@ -1432,7 +1512,7 @@ function App() {
           onClose={() => setFolderRenameTarget(null)}
           onCreate={(name) => void renameFolder(folderRenameTarget, name)}
           title="Rename folder"
-          description="This keeps the folder’s notes and subfolders together."
+          description="This keeps the folderΓÇÖs notes and subfolders together."
           placeholder="Folder name"
           submitLabel="Rename folder"
           initialValue={folderRenameTarget.split("/").pop() || ""}
@@ -1624,7 +1704,7 @@ function NoteContextMenu({
               }}
             >
               <option value="" disabled>
-                Choose folder…
+                Choose folderΓÇª
               </option>
               <option value="__top_level__">Top level</option>
               <CascadingFolderOptions folders={folders} />
@@ -1765,7 +1845,7 @@ function FolderTree({
                 aria-expanded={!isCollapsed}
                 onClick={() => onToggle(folder)}
               >
-                <span>▾</span>
+                <span>Γû╛</span>
               </button>
             ) : (
               <span className="folder-spacer" />
@@ -1788,7 +1868,7 @@ function FolderTree({
               aria-label={`Add subfolder to ${name}`}
               onClick={() => onAddSubfolder(folder)}
             >
-              ＋
+              ∩╝ï
             </button>
             <button
               type="button"
@@ -1797,7 +1877,7 @@ function FolderTree({
               aria-label={`Delete ${name}`}
               onClick={() => onDelete(folder)}
             >
-              ×
+              ├ù
             </button>
           </div>
           {nested.length > 0 && !isCollapsed && render(folder, depth + 1)}
@@ -2080,7 +2160,7 @@ function Outline({
           title="Close outline (Esc)"
           onClick={onClose}
         >
-          ×
+          ├ù
         </button>
       </header>
       {items.length ? (
@@ -2249,7 +2329,8 @@ function TableEditorDialog({
           <div>
             <h2>Edit table</h2>
             <p>
-              Drag ⠿ to reorder. Use ＋ beside a row or column to add after it.
+              Drag Γá┐ to reorder. Use ∩╝ï beside a row or column to add after
+              it.
             </p>
           </div>
           <button
@@ -2257,7 +2338,7 @@ function TableEditorDialog({
             aria-label="Close table editor"
             onClick={onClose}
           >
-            ×
+            ├ù
           </button>
         </header>
         <div className="table-grid-wrap">
@@ -2281,7 +2362,7 @@ function TableEditorDialog({
                         )
                       }
                     >
-                      ⠿
+                      Γá┐
                     </button>
                     <input
                       aria-label={`Header ${column + 1}`}
@@ -2297,7 +2378,7 @@ function TableEditorDialog({
                         aria-label={`Add column after ${column + 1}`}
                         onClick={() => addColumn(column + 1)}
                       >
-                        ＋
+                        ∩╝ï
                       </button>
                       <button
                         type="button"
@@ -2306,7 +2387,7 @@ function TableEditorDialog({
                         disabled={headers.length <= 1}
                         onClick={() => removeColumn(column)}
                       >
-                        ×
+                        ├ù
                       </button>
                     </span>
                   </th>
@@ -2332,7 +2413,7 @@ function TableEditorDialog({
                         )
                       }
                     >
-                      ⠿
+                      Γá┐
                     </button>
                   </td>
                   {headers.map((_, column) => (
@@ -2354,7 +2435,7 @@ function TableEditorDialog({
                       aria-label={`Add row after ${rowIndex + 1}`}
                       onClick={() => addRow(rowIndex + 1)}
                     >
-                      ＋
+                      ∩╝ï
                     </button>
                     <button
                       type="button"
@@ -2367,7 +2448,7 @@ function TableEditorDialog({
                         )
                       }
                     >
-                      ×
+                      ├ù
                     </button>
                   </td>
                 </tr>
@@ -2419,17 +2500,19 @@ function UpdateDialog({
             <h2>Margin {update.version}</h2>
           </div>
           <button aria-label="Close update" onClick={onClose}>
-            ×
+            ├ù
           </button>
         </header>
         <p>{update.body || "A newer version of Margin is ready to install."}</p>
         {error && <p className="update-status">{error}</p>}
         {busy && (
-          <p className="update-status">Downloading and verifying the update…</p>
+          <p className="update-status">
+            Downloading and verifying the updateΓÇª
+          </p>
         )}
         {ready && (
           <p className="update-status">
-            Update installed. Restart Margin when you’re ready.
+            Update installed. Restart Margin when youΓÇÖre ready.
           </p>
         )}
         <div>
@@ -2444,7 +2527,7 @@ function UpdateDialog({
                 onClick={onInstall}
                 disabled={busy}
               >
-                {busy ? "Updating…" : "Update now"}
+                {busy ? "UpdatingΓÇª" : "Update now"}
               </button>
             </>
           )}
@@ -2530,19 +2613,19 @@ function QuickCaptureDialog({
         <header>
           <div>
             <p className="eyebrow">Quick capture</p>
-            <h2>What’s on your mind?</h2>
+            <h2>WhatΓÇÖs on your mind?</h2>
           </div>
           <button
             type="button"
             aria-label="Close quick capture"
             onClick={onClose}
           >
-            ×
+            ├ù
           </button>
         </header>
         <textarea
           autoFocus
-          placeholder="Start typing…"
+          placeholder="Start typingΓÇª"
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
@@ -2557,9 +2640,9 @@ function QuickCaptureDialog({
           }}
         />
         <footer>
-          <span>Saved to today’s Daily note</span>
+          <span>Saved to todayΓÇÖs Daily note</span>
           <span>
-            <kbd>{shortcut}</kbd> opens · <kbd>⌘↵</kbd> saves
+            <kbd>{shortcut}</kbd> opens ┬╖ <kbd>ΓîÿΓå╡</kbd> saves
           </span>
         </footer>
         <div>
@@ -2695,7 +2778,7 @@ function CaptureWindow() {
   const save = async () => {
     if (!text.trim()) return;
     if (!libraryReady) {
-      setStatus("Loading your notes folder…");
+      setStatus("Loading your notes folderΓÇª");
       return;
     }
     if (!library) {
@@ -2713,7 +2796,7 @@ function CaptureWindow() {
         ),
       });
       setText("");
-      setStatus("Saved to today’s Daily note");
+      setStatus("Saved to todayΓÇÖs Daily note");
       window.setTimeout(hide, 160);
     } catch (error) {
       setStatus(`Could not save: ${String(error)}`);
@@ -2739,13 +2822,13 @@ function CaptureWindow() {
             aria-label="Hide quick capture"
             onClick={hide}
           >
-            ×
+            ├ù
           </button>
         </header>
         <div className="capture-composer">
           <textarea
             ref={input}
-            placeholder="Start typing…"
+            placeholder="Start typingΓÇª"
             value={text}
             onChange={(event) => setText(event.target.value)}
             onKeyDown={(event) => {
@@ -2779,13 +2862,13 @@ function CaptureWindow() {
           <span className="capture-status">
             {status ||
               (libraryReady
-                ? "Adds to today’s Daily note"
-                : "Loading your notes folder…")}
+                ? "Adds to todayΓÇÖs Daily note"
+                : "Loading your notes folderΓÇª")}
           </span>
           <span className="capture-hint">
             <kbd>{shortcut}</kbd>
             <span>opens</span>
-            <kbd>{isMac ? "⌘↵" : "Ctrl+Enter"}</kbd>
+            <kbd>{isMac ? "ΓîÿΓå╡" : "Ctrl+Enter"}</kbd>
             <span>saves</span>
           </span>
         </footer>
@@ -2803,7 +2886,7 @@ function CaptureWindow() {
 }
 function folderOptionLabel(folder: string) {
   const parts = folder.split("/");
-  return `${" ".repeat(parts.length - 1)}▾ ${parts[parts.length - 1]}`;
+  return `${"ΓÇâ".repeat(parts.length - 1)}Γû╛ ${parts[parts.length - 1]}`;
 }
 function CascadingFolderOptions({ folders }: { folders: string[] }) {
   return (
@@ -2847,11 +2930,11 @@ function CascadingNoteOptions({
       const name = child.slice(child.lastIndexOf("/") + 1);
       return [
         <option key={`folder-${child}`} value={`folder-${child}`} disabled>
-          {" ".repeat(depth)}▾ {name}
+          {"ΓÇâ".repeat(depth)}Γû╛ {name}
         </option>,
         ...directNotes(child).map((note) => (
           <option key={note.path} value={note.path}>
-            {" ".repeat(depth + 1)}• {note.title}
+            {"ΓÇâ".repeat(depth + 1)}ΓÇó {note.title}
           </option>
         )),
         ...render(child, depth + 1),
@@ -2861,7 +2944,7 @@ function CascadingNoteOptions({
     <>
       {directNotes("").map((note) => (
         <option key={note.path} value={note.path}>
-          • {note.title}
+          ΓÇó {note.title}
         </option>
       ))}
       {render("", 0)}
@@ -3018,6 +3101,80 @@ function ShortcutRecorder({
     />
   );
 }
+function OpenedMarkdownDialog({
+  path,
+  library,
+  folders,
+  onClose,
+  onOpenOriginal,
+  onImport,
+  onChooseLibrary,
+}: {
+  path: string;
+  library: string | null;
+  folders: string[];
+  onClose: () => void;
+  onOpenOriginal: () => void;
+  onImport: (folder: string) => void;
+  onChooseLibrary: () => void;
+}) {
+  const [folder, setFolder] = useState("");
+  return (
+    <div className="modal-backdrop">
+      <section
+        className="modal import-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Opened Markdown file"
+      >
+        <h2>Open Markdown file</h2>
+        <p title={path}>
+          {fileStem(path)}.md is outside your current library. Margin will never
+          change it unless you choose to open and edit the original.
+        </p>
+        {library ? (
+          <label>
+            Import a copy to
+            <select
+              value={folder}
+              onChange={(event) => setFolder(event.target.value)}
+            >
+              <option value="">Top level</option>
+              <CascadingFolderOptions folders={folders} />
+            </select>
+          </label>
+        ) : (
+          <p>
+            Choose a notes folder to import a copy. You can still open the
+            original file without one.
+          </p>
+        )}
+        <div>
+          <button type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" onClick={onOpenOriginal}>
+            Open original
+          </button>
+          {library ? (
+            <button
+              className="primary"
+              type="button"
+              onClick={() => onImport(folder)}
+            >
+              Import copy
+            </button>
+          ) : (
+            <button className="primary" type="button" onClick={onChooseLibrary}>
+              Choose library
+            </button>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function TemplateEditorDialog({
   templates,
   onChange,
@@ -3088,7 +3245,7 @@ function TemplateEditorDialog({
             <h2>Templates</h2>
           </div>
           <button aria-label="Close templates" onClick={onClose}>
-            ×
+            ├ù
           </button>
         </header>
         <div className="template-editor-body">
@@ -3103,7 +3260,7 @@ function TemplateEditorDialog({
               </button>
             ))}
             <button className="template-add" onClick={add}>
-              ＋ New template
+              ∩╝ï New template
             </button>
           </nav>
           {selected && (
@@ -3154,7 +3311,7 @@ function TemplateEditorDialog({
               </div>
               <p className="template-help">
                 Variables: <code>{"{{date}}"}</code> and{" "}
-                <code>{"{{time}}"}</code>. The template named “Daily note”
+                <code>{"{{time}}"}</code>. The template named ΓÇ£Daily noteΓÇ¥
                 powers Today and Quick Capture.
               </p>
             </div>
@@ -3224,7 +3381,7 @@ function SettingsDialog({
         <header>
           <h2>Settings</h2>
           <button aria-label="Close settings" onClick={onClose}>
-            ×
+            ├ù
           </button>
         </header>
         <label className="setting-row">
@@ -3308,7 +3465,7 @@ function SettingsDialog({
             onClick={onCheckForUpdates}
             disabled={updateState === "checking"}
           >
-            {updateState === "checking" ? "Checking…" : "Check for updates"}
+            {updateState === "checking" ? "CheckingΓÇª" : "Check for updates"}
           </button>
           {updateMessage && (
             <p className="settings-update-status">{updateMessage}</p>

@@ -9,6 +9,15 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "mimeType": "text/markdown",
+        "name": "Markdown document",
+        "role": "Editor",
+        "rank": "Default"
+      }
+    ],
     "icon": ["icons/icon.ico", "icons/icon.icns", "icons/icon.png"],
     "windows": { "allowDowngrades": false, "nsis": { "installMode": "currentUser" } }
   },
