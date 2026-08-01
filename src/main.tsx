@@ -57,6 +57,15 @@ type NoteDocument = NoteSummary & {
   created?: string;
   updated_at?: string;
 };
+type LibrarySnapshot = {
+  notes: NoteSummary[];
+  folders: string[];
+  trash: NoteSummary[];
+};
+type SaveNoteResult =
+  | { status: "saved"; note: NoteDocument }
+  | { status: "conflict"; disk: NoteDocument }
+  | { status: "error"; message: string };
 type FolderRenameResult = {
   folder: string;
   paths: { from: string; to: string }[];
@@ -195,9 +204,7 @@ function pathIsInLibrary(path: string, library: string) {
 }
 
 function App() {
-  const [library, setLibrary] = useState<string | null>(
-    localStorage.getItem(libraryKey),
-  );
+  const [library, setLibrary] = useState<string | null>(null);
   const [libraryPaneWidth, setLibraryPaneWidth] = useState(() =>
     loadPaneWidth(libraryPaneWidthKey, 232),
   );
@@ -270,6 +277,13 @@ function App() {
   const baseline = useRef<NoteDocument | null>(null);
   const editor = useRef<MarkdownEditorHandle>(null);
   const activePathRef = useRef<string | null>(null);
+  const libraryRef = useRef<string | null>(null);
+  const noteRef = useRef<NoteDocument | null>(null);
+  const noteLoadGeneration = useRef(0);
+  const refreshGeneration = useRef(0);
+  const refreshInFlight = useRef<Promise<void> | null>(null);
+  const refreshQueued = useRef(false);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const internallyMovedPath = useRef<string | null>(null);
   const registeredCaptureShortcut = useRef(defaultShortcuts.quickCapture);
   const viewScrollRatios = useRef(new Map<string, number>());
@@ -317,22 +331,51 @@ function App() {
     setUpdateState("idle");
   };
 
-  const refresh = async (path = library) => {
+  const refresh = useCallback(async (path = libraryRef.current) => {
     if (!path) return;
-    try {
-      const [indexed, indexedFolders, deleted] = await Promise.all([
-        invoke<NoteSummary[]>("load_library", { libraryPath: path }),
-        invoke<string[]>("load_folders", { libraryPath: path }),
-        invoke<NoteSummary[]>("load_trash", { libraryPath: path }),
-      ]);
-      setNotes(indexed);
-      setFolders(indexedFolders);
-      setTrashNotes(deleted);
-      setStatus(`${indexed.length} ${indexed.length === 1 ? "note" : "notes"}`);
-    } catch (error) {
-      setStatus(`Could not read library: ${String(error)}`);
+    if (refreshInFlight.current) {
+      refreshQueued.current = true;
+      return refreshInFlight.current;
     }
-  };
+    const requestPath = path;
+    const generation = ++refreshGeneration.current;
+    const request = (async () => {
+      try {
+        const snapshot = await invoke<LibrarySnapshot>("load_library_snapshot", {
+          libraryPath: requestPath,
+        });
+        if (
+          generation !== refreshGeneration.current ||
+          libraryRef.current !== requestPath
+        )
+          return;
+        setNotes(snapshot.notes);
+        setFolders(snapshot.folders);
+        setTrashNotes(snapshot.trash);
+        setStatus(
+          `${snapshot.notes.length} ${snapshot.notes.length === 1 ? "note" : "notes"}`,
+        );
+      } catch (error) {
+        if (
+          generation === refreshGeneration.current &&
+          libraryRef.current === requestPath
+        )
+          setStatus(`Could not read library: ${String(error)}`);
+      }
+    })();
+    refreshInFlight.current = request;
+    try {
+      await request;
+    } finally {
+      if (refreshInFlight.current === request) {
+        refreshInFlight.current = null;
+        if (refreshQueued.current) {
+          refreshQueued.current = false;
+          void refresh(libraryRef.current);
+        }
+      }
+    }
+  }, []);
   const rememberWorkspaceScroll = () => {
     if (!note) return;
     const scroller =
@@ -349,8 +392,10 @@ function App() {
     setMode(next);
   };
   useEffect(() => {
-    void refresh();
-  }, [library]);
+    libraryRef.current = library;
+    refreshGeneration.current += 1;
+    if (library) void refresh(library);
+  }, [library, refresh]);
   useEffect(() => {
     if (
       Date.now() - Number(localStorage.getItem(updateLastCheckedKey) || 0) >=
@@ -361,6 +406,9 @@ function App() {
   useEffect(() => {
     activePathRef.current = activePath;
   }, [activePath]);
+  useEffect(() => {
+    noteRef.current = note;
+  }, [note]);
   useEffect(() => {
     localStorage.setItem(favoritesKey, JSON.stringify(favorites));
   }, [favorites]);
@@ -419,14 +467,17 @@ function App() {
   }, [shortcuts.quickCapture]);
   useEffect(() => {
     void invoke<string | null>("load_selected_library")
-      .then((selected) => {
+      .then(async (selected) => {
         if (selected) {
-          localStorage.setItem(libraryKey, selected);
           setLibrary(selected);
-        } else if (library) {
-          void invoke("save_selected_library", { libraryPath: library }).catch(
-            () => undefined,
-          );
+          return;
+        }
+        const legacyLibrary = localStorage.getItem(libraryKey);
+        if (legacyLibrary) {
+          await invoke("save_selected_library", {
+            libraryPath: legacyLibrary,
+          }).catch(() => undefined);
+          setLibrary(legacyLibrary);
         }
       })
       .catch(() => undefined);
@@ -483,6 +534,7 @@ function App() {
     };
   }, [noteContextMenu]);
   useEffect(() => {
+    const generation = ++noteLoadGeneration.current;
     if (!activePath) {
       setNote(null);
       return;
@@ -496,51 +548,68 @@ function App() {
         const loaded = await invoke<NoteDocument>("read_note", {
           path: activePath,
         });
+        if (
+          generation !== noteLoadGeneration.current ||
+          activePathRef.current !== activePath
+        )
+          return;
         baseline.current = loaded;
         setNote(loaded);
         setMode("preview");
       } catch (error) {
-        setStatus(`Could not open note: ${String(error)}`);
+        if (generation === noteLoadGeneration.current)
+          setStatus(`Could not open note: ${String(error)}`);
       }
     })();
   }, [activePath]);
   useEffect(() => {
     if (!note || !hasUnsavedChanges(note, baseline.current)) return;
-    const timer = window.setTimeout(() => void saveNote(note), 700);
+    const timer = window.setTimeout(() => void enqueueSave(note), 700);
     return () => window.clearTimeout(timer);
   }, [note?.body, note?.title, note?.tags.join("\0")]);
   useEffect(() => {
-    const interval = window.setInterval(async () => {
-      if (!library) return;
-      await refresh();
-      if (note && baseline.current) {
-        try {
-          const disk = await invoke<NoteDocument>("read_note", {
-            path: note.path,
-          });
-          if (
-            disk.revision !== baseline.current.revision &&
-            (note.title !== baseline.current.title ||
-              note.body !== baseline.current.body ||
-              note.tags.join("\0") !== baseline.current.tags.join("\0"))
-          )
-            setConflict({ disk, mine: note });
-          else if (disk.revision !== baseline.current.revision) {
-            baseline.current = disk;
-            setNote(disk);
-            setStatus("Updated from disk");
-          }
-        } catch {
-          /* it may have moved */
+    const checkForExternalChanges = async () => {
+      const currentNote = noteRef.current;
+      const currentBaseline = baseline.current;
+      if (!library || !currentNote || !currentBaseline) return;
+      await refresh(library);
+      if (
+        noteRef.current?.path !== currentNote.path ||
+        baseline.current?.revision !== currentBaseline.revision
+      )
+        return;
+      try {
+        const disk = await invoke<NoteDocument>("read_note", {
+          path: currentNote.path,
+        });
+        if (
+          noteRef.current?.path !== currentNote.path ||
+          baseline.current?.revision !== currentBaseline.revision
+        )
+          return;
+        if (
+          disk.revision !== currentBaseline.revision &&
+          hasUnsavedChanges(currentNote, currentBaseline)
+        )
+          setConflict({ disk, mine: currentNote });
+        else if (disk.revision !== currentBaseline.revision) {
+          baseline.current = disk;
+          setNote(disk);
+          setStatus("Updated from disk");
         }
+      } catch {
+        /* it may have moved */
       }
+    };
+    const interval = window.setInterval(() => {
+      void checkForExternalChanges();
     }, 2500);
     return () => clearInterval(interval);
-  }, [library, note?.path, note?.title, note?.body, note?.tags]);
+  }, [library, refresh]);
   useEffect(() => {
     if (!library) return;
     const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void refresh();
+      if (document.visibilityState === "visible") void refresh(library);
     };
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
@@ -548,7 +617,7 @@ function App() {
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [library]);
+  }, [library, refresh]);
   useEffect(() => {
     if (!note) return;
     const ratio = viewScrollRatios.current.get(note.path);
@@ -594,7 +663,7 @@ function App() {
         setQuickOpen(true);
       } else if (matchesShortcut(event, shortcuts.save) && note) {
         event.preventDefault();
-        void saveNote(note);
+        void enqueueSave(note);
       } else if (matchesShortcut(event, shortcuts.view) && note) {
         event.preventDefault();
         setViewMode(mode === "edit" ? "preview" : "edit");
@@ -617,7 +686,6 @@ function App() {
       title: "Choose your notes folder",
     });
     if (typeof selected === "string") {
-      localStorage.setItem(libraryKey, selected);
       await invoke("save_selected_library", { libraryPath: selected }).catch(
         () => undefined,
       );
@@ -655,11 +723,16 @@ function App() {
         libraryPath: library,
         folder,
       });
-      const saved = body
-        ? await invoke<NoteDocument>("save_note", {
-            note: { ...created, body },
-          })
-        : created;
+      let saved = created;
+      if (body) {
+        const result = await invoke<SaveNoteResult>("save_note", {
+          note: { ...created, body },
+        });
+        if (result.status === "saved") saved = result.note;
+        else if (result.status === "conflict")
+          throw new Error("The new note changed on disk before it could be saved");
+        else throw new Error(result.message);
+      }
       await refresh();
       setActivePath(saved.path);
       setStatus(folder ? `New note created in ${folder}` : "New note created");
@@ -730,13 +803,30 @@ function App() {
   const saveNote = async (draft: NoteDocument) => {
     try {
       const previousPath = activePathRef.current ?? draft.path;
-      const noteToSave =
-        previousPath === draft.path ? draft : { ...draft, path: previousPath };
+      const currentBaseline = baseline.current;
+      const noteToSave = {
+        ...draft,
+        path: previousPath,
+        revision:
+          currentBaseline?.path === previousPath
+            ? currentBaseline.revision
+            : draft.revision,
+      };
       if (!hasUnsavedChanges(noteToSave, baseline.current)) return;
       setStatus("SavingΓÇª");
-      const saved = await invoke<NoteDocument>("save_note", {
+      const result = await invoke<SaveNoteResult>("save_note", {
         note: noteToSave,
       });
+      if (result.status === "conflict") {
+        setConflict({ disk: result.disk, mine: noteToSave });
+        setStatus("Save conflict: the note changed on disk");
+        return;
+      }
+      if (result.status === "error") {
+        setStatus(`Save failed: ${result.message}`);
+        return;
+      }
+      const saved = result.note;
       const pathChanged = saved.path !== previousPath;
       if (activePathRef.current === previousPath) {
         activePathRef.current = saved.path;
@@ -761,11 +851,31 @@ function App() {
             }
           : current,
       );
-      await refresh();
+      const updateSummary = (item: NoteSummary) =>
+        item.path === previousPath
+          ? {
+              ...item,
+              path: saved.path,
+              title: saved.title,
+              tags: saved.tags,
+              updated: saved.updated,
+              searchable_text: `${saved.title} ${fileStem(saved.path)} ${saved.tags.join(" ")} ${saved.body}`.toLowerCase(),
+            }
+          : item;
+      setNotes((current) => current.map(updateSummary));
+      setTrashNotes((current) => current.map(updateSummary));
       setStatus("Saved");
     } catch (error) {
       setStatus(`Save failed: ${String(error)}`);
     }
+  };
+  const enqueueSave = (draft: NoteDocument) => {
+    const queuedDraft = { ...draft, tags: [...draft.tags] };
+    const queued = saveQueue.current
+      .catch(() => undefined)
+      .then(() => saveNote(queuedDraft));
+    saveQueue.current = queued;
+    return queued;
   };
   const duplicateNote = async (source: Pick<NoteSummary, "path">) => {
     try {
@@ -1044,7 +1154,7 @@ function App() {
             : current,
         )
       }
-      onBlur={() => void saveNote(note)}
+      onBlur={() => void enqueueSave(note)}
       autoFocus
       className="markdown-editor"
     />
@@ -1605,7 +1715,7 @@ function App() {
               setNote(conflict.disk);
             } else {
               baseline.current = conflict.disk;
-              void saveNote(conflict.mine);
+              void enqueueSave(conflict.mine);
             }
             setConflict(null);
           }}
