@@ -308,7 +308,7 @@ export const MarkdownEditor = forwardRef<
 
     const extensions: Extension[] = [
       markdown(),
-      history(),
+      history({ minDepth: 500, newGroupDelay: 300 }),
       closeBrackets(),
       EditorView.lineWrapping,
       editorTheme,
