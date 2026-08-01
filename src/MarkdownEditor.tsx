@@ -334,6 +334,7 @@ export const MarkdownEditor = forwardRef<
           return false;
         },
         keydown: (event, editorView) => {
+          if (readOnly) return false;
           if (!primaryShortcutPressed(event) || event.altKey) return false;
           const key = event.key.toLowerCase();
           if (key !== "b" && key !== "i" && key !== "k") return false;
