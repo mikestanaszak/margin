@@ -46,3 +46,4 @@
 - Native-window integration and staged-update installation coverage.
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
+- Optional AI-agent integrations for user-directed note drafting, summarizing, organizing, and appending work logs, with explicit per-action approval and no automatic access to a library.
