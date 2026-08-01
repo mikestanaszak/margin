@@ -1182,9 +1182,7 @@ fn is_rewritable_relative_markdown_target(target: &str) -> bool {
     {
         return false;
     }
-    Path::new(path)
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+    is_markdown_path(Path::new(path))
 }
 
 fn rewrite_markdown_links(body: &str, source: &Path, old_path: &Path, new_path: &Path) -> String {
@@ -2419,6 +2417,43 @@ mod tests {
             assert!(links.contains("[absolute](/Projects/Old title.md)"));
             assert!(links.contains("[missing](../Projects/Missing.md)"));
             assert!(links.contains("`[code](../Projects/Old title.md)`"));
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn filename_renames_repair_relative_markdown_extension_links() {
+        let library = temporary_library();
+        fs::create_dir_all(library.join("Projects")).unwrap();
+        fs::create_dir_all(library.join("Reference")).unwrap();
+        let library_path = library.to_string_lossy().to_string();
+        let old_path = library.join("Projects").join("Old title.markdown");
+        let links_path = library.join("Reference").join("Links.markdown");
+        let result = (|| -> Result<(), String> {
+            fs::write(&old_path, "# Old title\n\n[self](Old title.markdown)\n")
+                .map_err(|error| error.to_string())?;
+            fs::write(
+                &links_path,
+                "# Links\n\n[relative](../Projects/Old title.markdown)\n",
+            )
+            .map_err(|error| error.to_string())?;
+
+            let mut note = read_note_file(&old_path)?;
+            note.body = "# New title\n\n[self](Old title.markdown)\n".into();
+            let saved = match save_note(note, Some(library_path.clone())) {
+                SaveNoteResult::Saved { note } => note,
+                SaveNoteResult::Conflict { .. } => return Err("unexpected save conflict".into()),
+                SaveNoteResult::Error { message } => return Err(message),
+            };
+            assert!(saved.path.ends_with("New title.md"));
+            assert!(!old_path.exists());
+
+            let renamed = fs::read_to_string(&saved.path).map_err(|error| error.to_string())?;
+            assert!(renamed.contains("[self](New title.md)"));
+            let links = fs::read_to_string(&links_path).map_err(|error| error.to_string())?;
+            assert!(links.contains("[relative](../Projects/New title.md)"));
             Ok(())
         })();
         fs::remove_dir_all(&library).ok();
