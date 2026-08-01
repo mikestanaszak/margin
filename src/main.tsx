@@ -48,8 +48,10 @@ const shortcutsKey = "markdown-notes.shortcuts";
 const quickImportDefaultKey = "markdown-notes.quick-import-default";
 const libraryPaneWidthKey = "markdown-notes.library-pane-width";
 const notePaneWidthKey = "markdown-notes.note-pane-width";
+const outlinePaneWidthKey = "markdown-notes.outline-pane-width";
 const updateLastCheckedKey = "margin.update-last-checked";
 const updateSkippedVersionKey = "margin.update-skipped-version";
+const legacySidebarShortcut = isMac ? "meta+\\" : "ctrl+\\";
 
 const defaultShortcuts: Shortcuts = {
   newNote: isMac ? "meta+n" : "ctrl+n",
@@ -57,18 +59,18 @@ const defaultShortcuts: Shortcuts = {
   switcher: isMac ? "meta+p" : "ctrl+p",
   save: isMac ? "meta+s" : "ctrl+s",
   view: isMac ? "meta+e" : "ctrl+e",
-  sidebar: isMac ? "meta+\\" : "ctrl+\\",
+  sidebar: isMac ? "meta+alt+b" : "ctrl+alt+b",
   outline: isMac ? "meta+shift+o" : "ctrl+shift+o",
   quickCapture: isMac ? "meta+alt+shift+space" : "ctrl+alt+shift+space",
 };
-const shortcutLabels: Record<ShortcutId, string> = { newNote: "New note", search: "Search", switcher: "Quick switcher", save: "Save", view: "Edit / preview", sidebar: "Toggle sidebar", outline: "Toggle outline", quickCapture: "Quick capture (global)" };
+const shortcutLabels: Record<ShortcutId, string> = { newNote: "New note", search: "Search", switcher: "Quick switcher", save: "Save", view: "Edit / preview", sidebar: "Show / hide library", outline: "Toggle outline", quickCapture: "Quick capture (global)" };
 const codeBlockLanguages = Object.keys(highlightLanguages).sort();
 
 function loadPaneWidth(key: string, fallback: number) { const saved = Number(localStorage.getItem(key)); return Number.isFinite(saved) ? clamp(saved, 180, 520) : fallback; }
-function loadShortcuts(): Shortcuts { try { return { ...defaultShortcuts, ...JSON.parse(localStorage.getItem(shortcutsKey) || "{}") }; } catch { return defaultShortcuts; } }
+function loadShortcuts(): Shortcuts { try { const saved = JSON.parse(localStorage.getItem(shortcutsKey) || "{}") as Partial<Shortcuts>; return { ...defaultShortcuts, ...saved, sidebar: saved.sidebar === legacySidebarShortcut ? defaultShortcuts.sidebar : saved.sidebar || defaultShortcuts.sidebar }; } catch { return defaultShortcuts; } }
 
 function App() {
-  const [library, setLibrary] = useState<string | null>(localStorage.getItem(libraryKey)); const [libraryPaneWidth, setLibraryPaneWidth] = useState(() => loadPaneWidth(libraryPaneWidthKey, 232)); const [notePaneWidth, setNotePaneWidth] = useState(() => loadPaneWidth(notePaneWidthKey, 296));
+  const [library, setLibrary] = useState<string | null>(localStorage.getItem(libraryKey)); const [libraryPaneWidth, setLibraryPaneWidth] = useState(() => loadPaneWidth(libraryPaneWidthKey, 232)); const [notePaneWidth, setNotePaneWidth] = useState(() => loadPaneWidth(notePaneWidthKey, 296)); const [outlinePaneWidth, setOutlinePaneWidth] = useState(() => loadPaneWidth(outlinePaneWidthKey, 280));
   const [notes, setNotes] = useState<NoteSummary[]>([]); const [trashNotes, setTrashNotes] = useState<NoteSummary[]>([]); const [folders, setFolders] = useState<string[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null); const [note, setNote] = useState<NoteDocument | null>(null);
   const [filter, setFilter] = useState<Filter>({ type: "all" }); const [query, setQuery] = useState(""); const [mode, setMode] = useState<"edit" | "preview" | "split">("preview");
@@ -98,6 +100,7 @@ function App() {
   useEffect(() => { localStorage.setItem(quickImportDefaultKey, quickImportDefaultPath); }, [quickImportDefaultPath]);
   useEffect(() => { localStorage.setItem(libraryPaneWidthKey, String(libraryPaneWidth)); }, [libraryPaneWidth]);
   useEffect(() => { localStorage.setItem(notePaneWidthKey, String(notePaneWidth)); }, [notePaneWidth]);
+  useEffect(() => { localStorage.setItem(outlinePaneWidthKey, String(outlinePaneWidth)); }, [outlinePaneWidth]);
   const showQuickCapture = () => { void invoke("show_quick_capture").catch(() => setQuickCaptureOpen(true)); };
   useEffect(() => { let disposed = false; const requested = shortcuts.quickCapture; void invoke("configure_quick_capture_shortcut", { shortcut: nativeShortcut(requested) }).then(() => { if (!disposed) { registeredCaptureShortcut.current = requested; setQuickCaptureStatus(`Ready: ${formatShortcut(requested)}`); } }).catch(() => { if (!disposed) { setShortcuts(current => current.quickCapture === requested ? { ...current, quickCapture: registeredCaptureShortcut.current } : current); setQuickCaptureStatus(`Unavailable: ${formatShortcut(requested)} is already in use`); } }); return () => { disposed = true; }; }, [shortcuts.quickCapture]);
   useEffect(() => { void invoke<string | null>("load_selected_library").then(selected => { if (selected) { localStorage.setItem(libraryKey, selected); setLibrary(selected); } else if (library) { void invoke("save_selected_library", { libraryPath: library }).catch(() => undefined); } }).catch(() => undefined); }, []);
@@ -146,6 +149,7 @@ function App() {
   const isDailyNote = Boolean(note && /[\\/]Daily[\\/]/i.test(note.path));
   const resizeLibraryPane = (width: number) => setLibraryPaneWidth(clamp(width, 180, Math.max(180, Math.min(420, window.innerWidth - notePaneWidth - 420))));
   const resizeNotePane = (width: number) => setNotePaneWidth(clamp(width, 220, Math.max(220, Math.min(520, window.innerWidth - libraryPaneWidth - 420))));
+  const resizeOutlinePane = (width: number) => setOutlinePaneWidth(clamp(width, 220, Math.max(220, Math.min(520, window.innerWidth - libraryPaneWidth - notePaneWidth - 360))));
 
   return <main className={`app-shell ${sidebarHidden ? "sidebar-hidden" : ""}`} style={{ "--library-pane-width": `${libraryPaneWidth}px`, "--note-pane-width": `${notePaneWidth}px` } as React.CSSProperties}>
     <header className="app-topbar"><div className="top-brand"><span className="brand-mark">✦</span><span>Margin</span></div><label className="top-search"><span>⌕</span><input id="note-search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search notes" /><kbd>{formatShortcut(shortcuts.search)}</kbd></label><div className="topbar-actions">{availableUpdate && <button className="update-available" onClick={() => setUpdateDialogOpen(true)}>Update {availableUpdate.version}</button>}<button className="icon-button" aria-label="Settings" title="Settings" onClick={() => setSettingsOpen(true)}>⚙</button></div></header>
@@ -158,7 +162,7 @@ function App() {
           <div className="actions">{isDailyNote && !isTrashedNote && <button type="button" onClick={() => setImportDialogOpen(true)}>Import</button>}<ViewModeControl mode={mode} onChange={setViewMode} hotkeyHint={formatShortcut(shortcuts.view)} /></div>
         </header>
         {mode !== "preview" && <div className="editor-tools"><button className="insert-table" type="button" onClick={() => setTableDialogOpen(true)}>Table</button></div>}
-        <div className="workspace-main"><div className={`note-content ${mode}`}>{mode === "edit" ? noteEditor : mode === "preview" ? notePreview : <ResizableSplit left={noteEditor} right={notePreview} minLeftWidth={280} minRightWidth={320} persistenceKey="markdown-notes.split-ratio" />}</div>{outlineOpen && <Outline items={outlineItems} dirty={hasUnsavedChanges(note, baseline.current)} onClose={() => setOutlineOpen(false)} />}</div>
+        <div className="workspace-main"><div className={`note-content ${mode}`}>{mode === "edit" ? noteEditor : mode === "preview" ? notePreview : <ResizableSplit left={noteEditor} right={notePreview} minLeftWidth={280} minRightWidth={320} persistenceKey="markdown-notes.split-ratio" />}</div>{outlineOpen && <><ColumnResizeHandle className="outline-pane-resizer" value={outlinePaneWidth} onChange={resizeOutlinePane} label="Resize outline" direction={-1} /><Outline items={outlineItems} dirty={hasUnsavedChanges(note, baseline.current)} width={outlinePaneWidth} onClose={() => setOutlineOpen(false)} /></>}</div>
         {backlinks.length > 0 && <aside className="backlinks"><strong>Linked from</strong>{backlinks.map(item => <button key={item.path} onClick={() => setActivePath(item.path)}>{item.title}</button>)}</aside>}
       </> : <div className="welcome"><div className="welcome-icon">✦</div><h1>{library ? "Choose a note or create one" : "Your notes, in plain Markdown"}</h1><p>{library ? "Select a note from the list, or make a fresh one." : "Choose a folder. Your notes stay as files you can use anywhere."}</p><button className="primary" onClick={() => void (library ? createNote() : selectLibrary())}>{library ? "New note" : "Choose notes folder"}</button></div>}
     </section>
@@ -177,7 +181,7 @@ function App() {
 }
 
 function NoteContextMenu({ note, x, y, isTrashed, isDaily, folders, onClose, onDuplicate, onMove, onReveal, onTrash, onRestore, onDeletePermanently, onImport }: { note: NoteSummary; x: number; y: number; isTrashed: boolean; isDaily: boolean; folders: string[]; onClose: () => void; onDuplicate: (note: NoteSummary) => Promise<void>; onMove: (note: NoteSummary, folder: string) => Promise<void>; onReveal: (note: NoteSummary) => Promise<void>; onTrash: (note: NoteSummary) => Promise<void>; onRestore: (note: NoteSummary) => Promise<void>; onDeletePermanently: (note: NoteSummary) => Promise<void>; onImport: (note: NoteSummary) => void }) { return <div className="note-context-menu" role="menu" aria-label={`Actions for ${note.title}`} style={{ left: x, top: y }} onPointerDown={event => event.stopPropagation()}><p>{note.title}</p>{isTrashed ? <><button type="button" role="menuitem" onClick={() => { onClose(); void onRestore(note); }}>Restore</button><button type="button" role="menuitem" className="danger" onClick={() => { onClose(); void onDeletePermanently(note); }}>Delete permanently</button></> : <><button type="button" role="menuitem" onClick={() => { onClose(); void onDuplicate(note); }}>Duplicate</button><label className="note-context-move">Move to folder<select aria-label="Move note to folder" defaultValue="" onChange={event => { const folder = event.target.value; if (!folder) return; onClose(); void onMove(note, folder === "__top_level__" ? "" : folder); }}><option value="" disabled>Choose folder…</option><option value="__top_level__">Top level</option><CascadingFolderOptions folders={folders} /></select></label><button type="button" role="menuitem" onClick={() => { onClose(); void onReveal(note); }}>Show in {isMac ? "Finder" : "File Explorer"}</button>{isDaily && <button type="button" role="menuitem" onClick={() => { onClose(); onImport(note); }}>Import captures</button>}<button type="button" role="menuitem" className="danger" onClick={() => { onClose(); void onTrash(note); }}>Move to Trash</button></>}</div>; }
-function ColumnResizeHandle({ className, value, onChange, label }: { className: string; value: number; onChange: (value: number) => void; label: string }) { const startResize = (event: React.PointerEvent<HTMLDivElement>) => { event.preventDefault(); const startX = event.clientX; const startWidth = value; const resize = (move: PointerEvent) => onChange(startWidth + move.clientX - startX); const stop = () => { window.removeEventListener("pointermove", resize); window.removeEventListener("pointerup", stop); }; window.addEventListener("pointermove", resize); window.addEventListener("pointerup", stop, { once: true }); }; return <div className={`sidebar-resizer ${className}`} role="separator" aria-orientation="vertical" aria-label={label} aria-valuemin={180} aria-valuemax={520} aria-valuenow={value} tabIndex={0} onPointerDown={startResize} onKeyDown={event => { if (event.key === "ArrowLeft") { event.preventDefault(); onChange(value - 16); } if (event.key === "ArrowRight") { event.preventDefault(); onChange(value + 16); } }} />; }
+function ColumnResizeHandle({ className, value, onChange, label, direction = 1 }: { className: string; value: number; onChange: (value: number) => void; label: string; direction?: 1 | -1 }) { const startResize = (event: React.PointerEvent<HTMLDivElement>) => { event.preventDefault(); const startX = event.clientX; const startWidth = value; const resize = (move: PointerEvent) => onChange(startWidth + (move.clientX - startX) * direction); const stop = () => { window.removeEventListener("pointermove", resize); window.removeEventListener("pointerup", stop); }; window.addEventListener("pointermove", resize); window.addEventListener("pointerup", stop, { once: true }); }; return <div className={`sidebar-resizer ${className}`} role="separator" aria-orientation="vertical" aria-label={label} aria-valuemin={220} aria-valuemax={520} aria-valuenow={value} tabIndex={0} onPointerDown={startResize} onKeyDown={event => { if (event.key === "ArrowLeft") { event.preventDefault(); onChange(value - 16 * direction); } if (event.key === "ArrowRight") { event.preventDefault(); onChange(value + 16 * direction); } }} />; }
 function FolderTree({ folders, counts, selected, collapsed, onSelect, onToggle, onAddSubfolder, onRename, onDelete }: { folders: string[]; counts: Record<string, number>; selected?: string; collapsed: string[]; onSelect: (folder: string) => void; onToggle: (folder: string) => void; onAddSubfolder: (folder: string) => void; onRename: (folder: string) => void; onDelete: (folder: string) => void }) {
   const children = (parent: string) => folders.filter(folder => (folder.includes("/") ? folder.slice(0, folder.lastIndexOf("/")) : "") === parent);
   const render = (parent: string, depth: number): React.ReactNode => children(parent).map(folder => {
@@ -195,7 +199,71 @@ function FolderNoteTree({ root, folders, notes, renderNote }: { root: string; fo
 function FolderIcon() { return <svg className="folder-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5.75c0-.97.78-1.75 1.75-1.75h3.84l1.72 2.05h6.44c.97 0 1.75.78 1.75 1.75v6.45c0 1.1-.9 2-2 2H4.5c-1.1 0-2-.9-2-2V5.75Z" /></svg>; }
 function outlineTree(items: OutlineItem[]) { const roots: OutlineNode[] = []; const stack: OutlineNode[] = []; for (const item of items) { const node: OutlineNode = { ...item, children: [] }; while (stack.length && stack[stack.length - 1].level >= node.level) stack.pop(); const parent = stack[stack.length - 1]; if (parent) parent.children.push(node); else roots.push(node); stack.push(node); } return roots; }
 function activeOutlineAncestors(items: OutlineItem[], activeIndex: number | null) { const ancestors = new Set<number>(); const position = items.findIndex(item => item.index === activeIndex); if (position < 0) return ancestors; let level = items[position].level; for (let index = position - 1; index >= 0; index -= 1) { if (items[index].level < level) { ancestors.add(items[index].index); level = items[index].level; } } return ancestors; }
-function Outline({ items, dirty, onClose }: { items: OutlineItem[]; dirty: boolean; onClose: () => void }) { const [activeIndex, setActiveIndex] = useState<number | null>(() => items[0]?.index ?? null); const tree = useMemo(() => outlineTree(items), [items]); const activeAncestors = useMemo(() => activeOutlineAncestors(items, activeIndex), [items, activeIndex]); useEffect(() => { setActiveIndex(items[0]?.index ?? null); }, [items]); useEffect(() => { const preview = document.querySelector<HTMLElement>(".note-content .preview"); if (!preview) return; const headings = () => [...preview.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")]; const syncActive = () => { const top = preview.getBoundingClientRect().top + 76; const visible = headings().filter(heading => heading.getBoundingClientRect().top <= top); setActiveIndex(items[visible.length - 1]?.index ?? items[0]?.index ?? null); }; syncActive(); preview.addEventListener("scroll", syncActive, { passive: true }); return () => preview.removeEventListener("scroll", syncActive); }, [items]); const open = (item: OutlineItem) => { setActiveIndex(item.index); document.querySelectorAll<HTMLElement>(".note-content .preview h1, .note-content .preview h2, .note-content .preview h3, .note-content .preview h4, .note-content .preview h5, .note-content .preview h6")[item.index]?.scrollIntoView({ behavior: "smooth", block: "start" }); }; const renderNode = (node: OutlineNode) => <div key={`${node.index}-${node.title}`} className={`outline-node level-${node.level}${node.children.length ? " has-children" : ""}${activeAncestors.has(node.index) ? " active-ancestor" : ""}`} style={{ "--outline-indent": `${(node.level - 1) * 13}px` } as React.CSSProperties}><button type="button" className={activeIndex === node.index ? "active" : ""} aria-current={activeIndex === node.index ? "location" : undefined} onClick={() => open(node)}><span className="outline-node-marker" aria-hidden="true"><span className="outline-node-dot" /></span><span className="outline-node-label">{node.title}</span>{activeIndex === node.index && dirty && <span className="outline-unsaved" aria-label="Unsaved changes" />}</button>{node.children.length > 0 && <div className="outline-children">{node.children.map(renderNode)}</div>}</div>; return <aside className="outline" aria-label="Note outline"><header><strong>Outline</strong><button type="button" aria-label="Close outline" title="Close outline (Esc)" onClick={onClose}>×</button></header>{items.length ? <nav className="outline-tree">{tree.map(renderNode)}</nav> : <p>Add headings to create an outline.</p>}</aside>; }
+function scrollProgress(scrollTop: number, scrollHeight: number, clientHeight: number) { const maximum = Math.max(0, scrollHeight - clientHeight); return maximum ? clamp(scrollTop / maximum, 0, 1) : 0; }
+function scrollTopForProgress(progress: number, scrollHeight: number, clientHeight: number) { return clamp(progress, 0, 1) * Math.max(0, scrollHeight - clientHeight); }
+type ScrollablePane = Pick<HTMLElement, "clientHeight" | "scrollHeight" | "scrollTop">;
+function syncScrollPosition(source: ScrollablePane, target: ScrollablePane) { const next = scrollTopForProgress(scrollProgress(source.scrollTop, source.scrollHeight, source.clientHeight), target.scrollHeight, target.clientHeight); if (Math.abs(target.scrollTop - next) > 1) target.scrollTop = next; return next; }
+function activeOutlineIndexAtScroll(items: OutlineItem[], headingOffsets: number[], scrollTop: number, offset = 76) { let activeItem = 0; for (let index = 0; index < headingOffsets.length; index += 1) { if (headingOffsets[index] > scrollTop + offset) break; activeItem = index; } return items[activeItem]?.index ?? items[0]?.index ?? null; }
+
+function Outline({ items, dirty, width = 280, onClose }: { items: OutlineItem[]; dirty: boolean; width?: number; onClose: () => void }) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(() => items[0]?.index ?? null);
+  const outline = useRef<HTMLElement>(null);
+  const tree = useMemo(() => outlineTree(items), [items]);
+  const activeAncestors = useMemo(() => activeOutlineAncestors(items, activeIndex), [items, activeIndex]);
+
+  useEffect(() => { setActiveIndex(items[0]?.index ?? null); }, [items]);
+  useEffect(() => {
+    const preview = document.querySelector<HTMLElement>(".note-content .preview");
+    const outlineScroller = outline.current;
+    if (!preview || !outlineScroller) return;
+    const headings = () => [...preview.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")];
+    const syncActive = () => {
+      const previewTop = preview.getBoundingClientRect().top;
+      const headingOffsets = headings().map(heading => heading.getBoundingClientRect().top - previewTop + preview.scrollTop);
+      setActiveIndex(activeOutlineIndexAtScroll(items, headingOffsets, preview.scrollTop));
+    };
+    const syncOutline = () => { syncScrollPosition(preview, outlineScroller); };
+    const syncPreview = () => { syncScrollPosition(outlineScroller, preview); };
+    let lastPreviewScrollTop = preview.scrollTop;
+    let lastOutlineScrollTop = outlineScroller.scrollTop;
+    const onPreviewScroll = () => {
+      syncActive();
+      syncOutline();
+      lastPreviewScrollTop = preview.scrollTop;
+      lastOutlineScrollTop = outlineScroller.scrollTop;
+    };
+    const onOutlineScroll = () => {
+      syncPreview();
+      syncActive();
+      syncOutline();
+      lastPreviewScrollTop = preview.scrollTop;
+      lastOutlineScrollTop = outlineScroller.scrollTop;
+    };
+    let frame = 0;
+    const reconcileScrollPositions = () => {
+      if (Math.abs(preview.scrollTop - lastPreviewScrollTop) > 1) onPreviewScroll();
+      else if (Math.abs(outlineScroller.scrollTop - lastOutlineScrollTop) > 1) onOutlineScroll();
+      frame = window.requestAnimationFrame(reconcileScrollPositions);
+    };
+    syncActive();
+    syncOutline();
+    preview.addEventListener("scroll", onPreviewScroll, { passive: true });
+    outlineScroller.addEventListener("scroll", onOutlineScroll, { passive: true });
+    frame = window.requestAnimationFrame(reconcileScrollPositions);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      preview.removeEventListener("scroll", onPreviewScroll);
+      outlineScroller.removeEventListener("scroll", onOutlineScroll);
+    };
+  }, [items]);
+
+  const open = (item: OutlineItem) => {
+    setActiveIndex(item.index);
+    document.querySelectorAll<HTMLElement>(".note-content .preview h1, .note-content .preview h2, .note-content .preview h3, .note-content .preview h4, .note-content .preview h5, .note-content .preview h6")[item.index]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const renderNode = (node: OutlineNode) => <div key={`${node.index}-${node.title}`} className={`outline-node level-${node.level}${node.children.length ? " has-children" : ""}${activeAncestors.has(node.index) ? " active-ancestor" : ""}`} style={{ "--outline-indent": `${(node.level - 1) * 13}px` } as React.CSSProperties}><button type="button" data-outline-index={node.index} className={activeIndex === node.index ? "active" : ""} aria-current={activeIndex === node.index ? "location" : undefined} onClick={() => open(node)}><span className="outline-node-marker" aria-hidden="true"><span className="outline-node-dot" /></span><span className="outline-node-label">{node.title}</span>{activeIndex === node.index && dirty && <span className="outline-unsaved" aria-label="Unsaved changes" />}</button>{node.children.length > 0 && <div className="outline-children">{node.children.map(renderNode)}</div>}</div>;
+  return <aside ref={outline} className="outline" style={{ "--outline-pane-width": `${width}px` } as React.CSSProperties} aria-label="Note outline"><header><strong>Outline</strong><button type="button" aria-label="Close outline" title="Close outline (Esc)" onClick={onClose}>×</button></header>{items.length ? <nav className="outline-tree">{tree.map(renderNode)}</nav> : <p>Add headings to create an outline.</p>}</aside>;
+}
 function TableDialog({ onClose, onInsert }: { onClose: () => void; onInsert: (rows: number, columns: number) => void }) { const [rows, setRows] = useState(3); const [columns, setColumns] = useState(3); return <div className="modal-backdrop"><form className="modal table-dialog" onSubmit={event => { event.preventDefault(); onInsert(rows, columns); }}><h2>Insert table</h2><p>Create the Markdown structure, then type directly into the cells.</p><label>Columns<input type="number" min="1" max="8" value={columns} onChange={event => setColumns(Number(event.target.value))} /></label><label>Rows<input type="number" min="1" max="12" value={rows} onChange={event => setRows(Number(event.target.value))} /></label><div><button type="button" onClick={onClose}>Cancel</button><button className="primary">Insert table</button></div></form></div>; }
 function TableEditorDialog({ table, onClose, onApply }: { table: MarkdownTable; onClose: () => void; onApply: (headers: string[], rows: string[][]) => void }) { const [headers, setHeaders] = useState(table.headers); const [rows, setRows] = useState(table.rows); const move = <T,>(items: T[], from: number, to: number) => { const next = [...items]; const [item] = next.splice(from, 1); next.splice(to, 0, item); return next; }; const changeHeader = (index: number, value: string) => setHeaders(current => current.map((cell, cellIndex) => cellIndex === index ? value : cell)); const changeCell = (row: number, column: number, value: string) => setRows(current => current.map((cells, rowIndex) => rowIndex === row ? cells.map((cell, columnIndex) => columnIndex === column ? value : cell) : cells)); const addColumn = (at = headers.length) => { if (headers.length >= 12) return; setHeaders(current => [...current.slice(0, at), `Column ${current.length + 1}`, ...current.slice(at)]); setRows(current => current.map(row => [...row.slice(0, at), "", ...row.slice(at)])); }; const removeColumn = (column: number) => { if (headers.length <= 1) return; setHeaders(current => current.filter((_, index) => index !== column)); setRows(current => current.map(row => row.filter((_, index) => index !== column))); }; const moveColumn = (from: number, to: number) => { if (from === to) return; setHeaders(current => move(current, from, to)); setRows(current => current.map(row => move(row, from, to))); }; const addRow = (at = rows.length) => { if (rows.length >= 50) return; setRows(current => [...current.slice(0, at), headers.map(() => ""), ...current.slice(at)]); }; const moveRow = (from: number, to: number) => { if (from === to) return; setRows(current => move(current, from, to)); }; const pointerReorder = (event: React.PointerEvent<HTMLButtonElement>, from: number, selector: string, reorder: (from: number, to: number) => void) => { event.preventDefault(); let current = from; const onMove = (moveEvent: PointerEvent) => { const target = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)?.closest<HTMLElement>(selector); const targetIndex = Number(target?.dataset.index); if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex === current) return; reorder(current, targetIndex); current = targetIndex; }; const onStop = () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onStop); }; window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onStop, { once: true }); }; return <div className="modal-backdrop"><form className="modal table-editor-dialog" onSubmit={event => { event.preventDefault(); onApply(headers, rows); }}><header><div><h2>Edit table</h2><p>Drag ⠿ to reorder. Use ＋ beside a row or column to add after it.</p></div><button type="button" aria-label="Close table editor" onClick={onClose}>×</button></header><div className="table-grid-wrap"><table className="table-editor-grid"><thead><tr><th className="table-drag-column" />{headers.map((header, column) => <th key={column} data-table-column data-index={column}><button type="button" className="table-drag-handle" aria-label={`Drag column ${column + 1}`} title="Drag to reorder column" onPointerDown={event => pointerReorder(event, column, "[data-table-column]", moveColumn)}>⠿</button><input aria-label={`Header ${column + 1}`} value={header} onChange={event => changeHeader(column, event.target.value)} /><span className="table-column-actions"><button type="button" title={`Add column after ${column + 1}`} aria-label={`Add column after ${column + 1}`} onClick={() => addColumn(column + 1)}>＋</button><button type="button" title={`Delete column ${column + 1}`} aria-label={`Delete column ${column + 1}`} disabled={headers.length <= 1} onClick={() => removeColumn(column)}>×</button></span></th>)}<th className="table-row-action" /></tr></thead><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex} data-table-row data-index={rowIndex}><td className="table-drag-column"><button type="button" className="table-drag-handle" aria-label={`Drag row ${rowIndex + 1}`} title="Drag to reorder row" onPointerDown={event => pointerReorder(event, rowIndex, "[data-table-row]", moveRow)}>⠿</button></td>{headers.map((_, column) => <td key={column}><input aria-label={`Row ${rowIndex + 1}, column ${column + 1}`} value={row[column] || ""} onChange={event => changeCell(rowIndex, column, event.target.value)} /></td>)}<td className="table-row-action"><button type="button" className="table-add-after" title={`Add row after ${rowIndex + 1}`} aria-label={`Add row after ${rowIndex + 1}`} onClick={() => addRow(rowIndex + 1)}>＋</button><button type="button" className="table-remove" title={`Delete row ${rowIndex + 1}`} aria-label={`Delete row ${rowIndex + 1}`} onClick={() => setRows(current => current.filter((_, index) => index !== rowIndex))}>×</button></td></tr>)}</tbody></table></div><div className="table-editor-actions"><span /><button type="button" onClick={onClose}>Cancel</button><button className="primary">Apply changes</button></div></form></div>; }
 function UpdateDialog({ update, state, error, onClose, onInstall, onRestart, onSkip }: { update: AppUpdate; state: UpdateState; error: string; onClose: () => void; onInstall: () => void; onRestart: () => void; onSkip: () => void }) { const busy = state === "downloading"; const ready = state === "ready"; return <div className="modal-backdrop"><section className="modal update-dialog" role="dialog" aria-modal="true" aria-label="Margin update"><header><div><p className="eyebrow">Update available</p><h2>Margin {update.version}</h2></div><button aria-label="Close update" onClick={onClose}>×</button></header><p>{update.body || "A newer version of Margin is ready to install."}</p>{error && <p className="update-status">{error}</p>}{busy && <p className="update-status">Downloading and verifying the update…</p>}{ready && <p className="update-status">Update installed. Restart Margin when you’re ready.</p>}<div>{!ready && <><button type="button" onClick={onSkip} disabled={busy}>Skip this version</button><button className="primary" type="button" onClick={onInstall} disabled={busy}>{busy ? "Updating…" : "Update now"}</button></>}{ready && <button className="primary" type="button" onClick={onRestart}>Restart Margin</button>}</div></section></div>; }
@@ -225,9 +293,13 @@ export {
   SettingsDialog,
   TableEditorDialog,
   activeOutlineAncestors,
+  activeOutlineIndexAtScroll,
   annotateTaskIndexes,
   normalizeCodeLanguages,
   outlineTree,
+  scrollProgress,
+  scrollTopForProgress,
+  syncScrollPosition,
 };
 const isCaptureWindow = (() => { try { return getCurrentWindow().label === "capture"; } catch { return false; } })();
 createRoot(document.getElementById("root")!).render(<React.StrictMode>{isCaptureWindow ? <CaptureWindow /> : <App />}</React.StrictMode>);

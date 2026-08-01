@@ -1,5 +1,6 @@
-import { EditorSelection, EditorState } from "@codemirror/state";
+import { EditorSelection, EditorState, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { history, undo, undoDepth } from "@codemirror/commands";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   applyHeading,
@@ -21,6 +22,25 @@ function editor(doc: string, anchor = 0, head = anchor) {
   });
   views.push(view);
   return view;
+}
+
+function editorWithHistory(doc: string) {
+  const view = new EditorView({
+    state: EditorState.create({
+      doc,
+      extensions: [history({ minDepth: 500, newGroupDelay: 300 })],
+    }),
+  });
+  views.push(view);
+  return view;
+}
+
+function appendText(view: EditorView, text: string, time: number) {
+  const position = view.state.doc.length;
+  view.dispatch({
+    changes: { from: position, insert: text },
+    annotations: [Transaction.userEvent.of("input.type"), Transaction.time.of(time)],
+  });
 }
 
 afterEach(() => {
@@ -71,5 +91,22 @@ describe("editor view-state restoration", () => {
     expect(restored.main.anchor).toBe(4);
     expect(restored.main.head).toBe(4);
     expect(saved.scrollTop).toBe(120);
+  });
+});
+
+describe("editor undo history", () => {
+  it("keeps many distinct typing operations available to undo", () => {
+    const view = editorWithHistory("");
+    appendText(view, "first", 1_000);
+    appendText(view, " second", 1_400);
+    appendText(view, " third", 1_800);
+
+    expect(undoDepth(view.state)).toBe(3);
+    expect(undo(view)).toBe(true);
+    expect(view.state.doc.toString()).toBe("first second");
+    expect(undo(view)).toBe(true);
+    expect(view.state.doc.toString()).toBe("first");
+    expect(undo(view)).toBe(true);
+    expect(view.state.doc.toString()).toBe("");
   });
 });

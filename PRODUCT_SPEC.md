@@ -20,7 +20,8 @@
 - Internal Markdown and wiki links open the matching note; web links open in the system browser.
 - Inline code can be selected with a double-click.
 - Autosave preserves editor selection and scroll position.
-- Heading outline with hierarchy, active-section tracking, and a configurable shortcut.
+- Preview uses the same comfortable, left-aligned reading margin as the editor.
+- Resizable heading outline with hierarchy, active-section tracking, synchronized scrolling, and a configurable shortcut.
 
 ### Capture, import, and customization
 
