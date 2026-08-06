@@ -46,4 +46,9 @@
 - Native-window integration and staged-update installation coverage.
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
+- Theme palettes for Margin, including future app-icon variants.
+- Edit-mode-only spell check.
+- Code-fence language autocomplete.
+- Copy controls for fenced code blocks.
+- Mermaid diagram rendering in Markdown preview.
 - Optional AI-agent integrations for user-directed note drafting, summarizing, organizing, and appending work logs, with explicit per-action approval and no automatic access to a library.

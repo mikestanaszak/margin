@@ -2353,6 +2353,7 @@ type ScrollablePane = Pick<
   HTMLElement,
   "clientHeight" | "scrollHeight" | "scrollTop"
 >;
+type PreviewScrollablePane = ScrollablePane & Pick<HTMLElement, "getBoundingClientRect">;
 function syncScrollPosition(source: ScrollablePane, target: ScrollablePane) {
   const next = scrollTopForProgress(
     scrollProgress(source.scrollTop, source.scrollHeight, source.clientHeight),
@@ -2360,6 +2361,15 @@ function syncScrollPosition(source: ScrollablePane, target: ScrollablePane) {
     target.clientHeight,
   );
   if (Math.abs(target.scrollTop - next) > 1) target.scrollTop = next;
+  return next;
+}
+function scrollOutlineTargetIntoPreview(preview: PreviewScrollablePane, heading: HTMLElement) {
+  const next = clamp(
+    preview.scrollTop + heading.getBoundingClientRect().top - preview.getBoundingClientRect().top - 76,
+    0,
+    Math.max(0, preview.scrollHeight - preview.clientHeight),
+  );
+  preview.scrollTop = next;
   return next;
 }
 function activeOutlineIndexAtScroll(
@@ -2464,11 +2474,16 @@ function Outline({
 
   const open = (item: OutlineItem) => {
     setActiveIndex(item.index);
-    document
-      .querySelectorAll<HTMLElement>(
-        ".note-content .preview h1, .note-content .preview h2, .note-content .preview h3, .note-content .preview h4, .note-content .preview h5, .note-content .preview h6",
-      )
-      [item.index]?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const preview = document.querySelector<HTMLElement>(".note-content .preview");
+    const heading = document.querySelectorAll<HTMLElement>(
+      ".note-content .preview h1, .note-content .preview h2, .note-content .preview h3, .note-content .preview h4, .note-content .preview h5, .note-content .preview h6",
+    )[item.index];
+    if (preview && heading) {
+      scrollOutlineTargetIntoPreview(preview, heading);
+      preview.dispatchEvent(new Event("scroll"));
+      return;
+    }
+    heading?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   const renderNode = (node: OutlineNode) => (
     <div
@@ -4130,6 +4145,7 @@ export {
   noteListVirtualizationThreshold,
   outlineTree,
   scrollProgress,
+  scrollOutlineTargetIntoPreview,
   scrollTopForProgress,
   shouldVirtualizeNoteList,
   syncScrollPosition,

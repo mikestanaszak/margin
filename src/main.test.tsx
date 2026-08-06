@@ -106,7 +106,11 @@ describe("Markdown preview", () => {
     fireEvent.click(tasks[0]);
     expect(onToggleTask).toHaveBeenCalledWith(0, true);
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit table 1" }));
+    const tableEditButton = screen.getByRole("button", { name: "Edit table 1" });
+    expect(
+      tableEditButton.closest(".preview-table-shell")?.querySelector(".preview-table-toolbar"),
+    ).not.toBeNull();
+    fireEvent.click(tableEditButton);
     expect(onEditTable).toHaveBeenCalledWith(0);
     expect(document.querySelector("code.language-typescript")).toBeInTheDocument();
   });
