@@ -2,6 +2,13 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## 0.3.2 — 2026-08-06
+
+### Fixed
+
+- The preview table editor control now stays readable and clickable on macOS.
+- Clicking an outline heading in a long note now scrolls the note and synchronized outline to the selected section.
+
 ## 0.3.1 — 2026-08-01
 
 ### Fixed

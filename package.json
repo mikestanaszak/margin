@@ -1,7 +1,7 @@
 {
   "name": "margin",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A calm, local-first Markdown workspace.",
   "homepage": "https://github.com/mikestanaszak/margin#readme",
   "repository": {
