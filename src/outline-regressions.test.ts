@@ -16,6 +16,7 @@ import {
   activeOutlineIndexAtScroll,
   outlineTree,
   scrollProgress,
+  scrollOutlineTargetIntoPreview,
   scrollTopForProgress,
   syncScrollPosition,
 } from "./main";
@@ -66,5 +67,33 @@ describe("outline active-section hierarchy", () => {
     outline.scrollTop = 280;
     expect(syncScrollPosition(outline, preview)).toBe(400);
     expect(preview.scrollTop).toBe(400);
+  });
+
+  it("moves a long preview to the selected late heading", () => {
+    const preview = {
+      scrollTop: 0,
+      scrollHeight: 4_000,
+      clientHeight: 400,
+      getBoundingClientRect: () => ({ top: 0 }),
+    } as HTMLElement;
+    const heading = { getBoundingClientRect: () => ({ top: 3_800 }) } as HTMLElement;
+
+    expect(scrollOutlineTargetIntoPreview(preview, heading)).toBe(3_600);
+    expect(preview.scrollTop).toBe(3_600);
+  });
+
+  it("calculates the target from the preview's scrollable coordinate space", () => {
+    const preview = {
+      scrollTop: 100,
+      scrollHeight: 4_000,
+      clientHeight: 400,
+      getBoundingClientRect: () => ({ top: 120 }),
+    } as HTMLElement;
+    const heading = {
+      getBoundingClientRect: () => ({ top: 2_000 }),
+    } as HTMLElement;
+
+    expect(scrollOutlineTargetIntoPreview(preview, heading)).toBe(1_904);
+    expect(preview.scrollTop).toBe(1_904);
   });
 });
