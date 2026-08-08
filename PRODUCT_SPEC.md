@@ -19,6 +19,7 @@
 - Tables can be edited in place, with row/column insertion, deletion, and reordering.
 - Internal Markdown and wiki links open the matching note; web links open in the system browser.
 - Inline code can be selected with a double-click.
+- Typing after an opening triple-backtick suggests supported Highlight.js language names and common aliases without restricting custom identifiers.
 - Autosave preserves editor selection and scroll position.
 - Preview uses the same comfortable, left-aligned reading margin as the editor.
 - Resizable heading outline with hierarchy, active-section tracking, synchronized scrolling, and a configurable shortcut.
@@ -48,7 +49,6 @@
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
 - Theme palettes for Margin, including future app-icon variants.
-- Code-fence language autocomplete.
 - Copy controls for fenced code blocks.
 - Mermaid diagram rendering in Markdown preview.
 - Optional AI-agent integrations for user-directed note drafting, summarizing, organizing, and appending work logs, with explicit per-action approval and no automatic access to a library.

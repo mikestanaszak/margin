@@ -6,7 +6,13 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+import {
+  autocompletion,
+  closeBrackets,
+  closeBracketsKeymap,
+  completionKeymap,
+  type CompletionSource,
+} from "@codemirror/autocomplete";
 import {
   defaultKeymap,
   history,
@@ -25,6 +31,7 @@ import {
   keymap,
   placeholder as placeholderExtension,
 } from "@codemirror/view";
+import { all as highlightLanguages } from "lowlight";
 import { primaryShortcutPressed } from "./platform";
 
 export type MarkdownEditorProps = {
@@ -57,6 +64,72 @@ type SavedViewState = {
 // This is intentionally module-scoped. A parent may use `key={note.path}`, which
 // remounts the component; the new instance can still restore the note's view.
 const savedViewStates = new Map<string, SavedViewState>();
+
+const commonHighlightAliases = [
+  "bash",
+  "bat",
+  "cjs",
+  "cmd",
+  "cpp",
+  "cs",
+  "csharp",
+  "cxx",
+  "docker",
+  "fs",
+  "h",
+  "hpp",
+  "html",
+  "ini",
+  "js",
+  "jsonc",
+  "jsx",
+  "kt",
+  "kts",
+  "make",
+  "md",
+  "mjs",
+  "objc",
+  "patch",
+  "plaintext",
+  "pm",
+  "ps",
+  "py",
+  "rb",
+  "rs",
+  "scss",
+  "sh",
+  "shell",
+  "svg",
+  "text",
+  "toml",
+  "ts",
+  "tsx",
+  "txt",
+  "vb",
+  "xml",
+  "yaml",
+  "yml",
+  "zsh",
+];
+
+const codeFenceLanguageOptions = [...new Set([
+  ...Object.keys(highlightLanguages),
+  ...commonHighlightAliases,
+])]
+  .sort()
+  .map((label) => ({ label, type: "keyword" }));
+
+export const codeFenceLanguageCompletions: CompletionSource = (context) => {
+  const line = context.state.doc.lineAt(context.pos);
+  const beforeCursor = line.text.slice(0, context.pos - line.from);
+  const match = /^(?: {0,3})```([^\s`]*)$/.exec(beforeCursor);
+  if (!match) return null;
+
+  return {
+    from: context.pos - match[1].length,
+    options: codeFenceLanguageOptions,
+  };
+};
 
 const editorTheme = EditorView.theme({
   "&": {
@@ -310,6 +383,7 @@ export const MarkdownEditor = forwardRef<
 
     const extensions: Extension[] = [
       markdown(),
+      autocompletion({ override: [codeFenceLanguageCompletions] }),
       history({ minDepth: 500, newGroupDelay: 300 }),
       closeBrackets(),
       EditorView.lineWrapping,
@@ -349,6 +423,7 @@ export const MarkdownEditor = forwardRef<
       }),
       keymap.of([
         indentWithTab,
+        ...completionKeymap,
         ...closeBracketsKeymap,
         ...historyKeymap,
         ...defaultKeymap,
