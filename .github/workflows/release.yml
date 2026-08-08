@@ -53,3 +53,21 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
           updaterJsonPreferNsis: true
+
+  verify-release:
+    needs: publish
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read draft release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" > release.json
+      - name: Download updater manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${GITHUB_REF_NAME}" --pattern latest.json --dir release-assets
+      - name: Verify published artifact contract
+        run: node scripts/verify-release-assets.mjs --tag "${GITHUB_REF_NAME}" --release release.json --latest release-assets/latest.json
