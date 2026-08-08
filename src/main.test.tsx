@@ -84,7 +84,7 @@ describe("update restart", () => {
     );
 
     expect(states).toEqual(["restarting", "ready"]);
-    expect(errors.at(-1)).toContain("Could not restart Margin");
+    expect(errors[errors.length - 1]).toContain("Could not restart Margin");
   });
 
   it("shows a disabled restarting control while a relaunch is in progress", () => {
