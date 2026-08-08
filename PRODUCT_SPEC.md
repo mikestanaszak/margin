@@ -22,6 +22,7 @@
 - Autosave preserves editor selection and scroll position.
 - Preview uses the same comfortable, left-aligned reading margin as the editor.
 - Resizable heading outline with hierarchy, active-section tracking, synchronized scrolling, and a configurable shortcut.
+- Edit mode provides operating-system spell check; Preview and read-only notes remain non-editable.
 
 ### Capture, import, and customization
 
@@ -39,7 +40,7 @@
 - Margin registers as an editor for `.md` and `.markdown` files. Files already
   inside the selected library open directly; files outside it can be opened as
   their original or imported as a copy into a chosen folder.
-- Signed in-app updates, with daily checks and an available-update prompt.
+- Signed in-app updates, with daily checks and an available-update prompt. Choosing Update now downloads and installs the update; Restart Margin appears only after that operation finishes.
 
 ## Planned
 
@@ -47,7 +48,6 @@
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
 - Theme palettes for Margin, including future app-icon variants.
-- Edit-mode-only spell check.
 - Code-fence language autocomplete.
 - Copy controls for fenced code blocks.
 - Mermaid diagram rendering in Markdown preview.
