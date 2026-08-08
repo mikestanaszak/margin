@@ -102,6 +102,28 @@ describe("Markdown editor formatting", () => {
     expect(content).toHaveTextContent("Read-only external note");
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it("enables native spell check only for editable notes", () => {
+    const editable = render(
+      createElement(MarkdownEditor, {
+        notePath: "editable.md",
+        value: "A misspelled note",
+        onChange: vi.fn(),
+      }),
+    );
+    expect(editable.container.querySelector(".cm-content")).toHaveAttribute("spellcheck", "true");
+    editable.unmount();
+
+    const readOnly = render(
+      createElement(MarkdownEditor, {
+        notePath: "outside.md",
+        value: "Read-only note",
+        onChange: vi.fn(),
+        readOnly: true,
+      }),
+    );
+    expect(readOnly.container.querySelector(".cm-content")).toHaveAttribute("spellcheck", "false");
+  });
 });
 
 describe("editor view-state restoration", () => {

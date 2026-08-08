@@ -320,7 +320,7 @@ export const MarkdownEditor = forwardRef<
       EditorView.contentAttributes.of({
         "aria-label": ariaLabel,
         "aria-readonly": readOnly ? "true" : "false",
-        spellcheck: spellCheck ? "true" : "false",
+        spellcheck: !readOnly && spellCheck ? "true" : "false",
       }),
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !applyingControlledValueRef.current) {
