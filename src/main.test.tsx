@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("react-dom/client", () => ({
@@ -109,6 +109,65 @@ describe("update restart", () => {
 });
 
 describe("Markdown preview", () => {
+  it("copies fenced code without adding a control to inline code", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(
+      <MarkdownPreview
+        markdown={[
+          "Use `inline code` in prose.",
+          "",
+          "```TypeScript",
+          "const ready = true;",
+          "```",
+        ].join("\n")}
+        notePath={notes[0].path}
+        notes={notes}
+        onOpen={vi.fn()}
+        onEditTable={vi.fn()}
+        onToggleTask={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByRole("button", { name: "Copy code" })).toHaveLength(1);
+    expect(screen.getByText("inline code", { selector: "code" }).parentElement).not.toHaveClass(
+      "preview-code-block",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy code" }));
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("const ready = true;\n"),
+    );
+    expect(screen.getByRole("button", { name: "Code copied" })).toBeInTheDocument();
+  });
+
+  it("reports a failed fenced-code copy", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
+    render(
+      <MarkdownPreview
+        markdown={"```text\nprivate value\n```"}
+        notePath={notes[0].path}
+        notes={notes}
+        onOpen={vi.fn()}
+        onEditTable={vi.fn()}
+        onToggleTask={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy code" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Could not copy code" }),
+    ).toBeInTheDocument();
+  });
+
   it("renders GFM and routes wiki and relative Markdown links inside the library", () => {
     const onOpen = vi.fn();
     const onEditTable = vi.fn();

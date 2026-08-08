@@ -4039,6 +4039,9 @@ function MarkdownPreview({
             );
           },
           img: ({ src, alt }) => <img src={localAsset(src)} alt={alt || ""} />,
+          pre: ({ children, node: _node, ...props }) => (
+            <PreviewCodeBlock {...props}>{children}</PreviewCodeBlock>
+          ),
           table: ({ children, node, ...props }) => {
             const sourceLine = (
               node as { position?: { start?: { line?: number } } }
@@ -4090,6 +4093,52 @@ function MarkdownPreview({
   );
 }
 const MemoizedMarkdownPreview = React.memo(MarkdownPreview);
+
+function PreviewCodeBlock({
+  children,
+  ...props
+}: React.ComponentPropsWithoutRef<"pre">) {
+  const preRef = useRef<HTMLPreElement>(null);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">(
+    "idle",
+  );
+  const copyCode = async () => {
+    const code = preRef.current?.querySelector("code")?.textContent;
+    if (code === null || code === undefined) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  };
+  const buttonLabel =
+    copyStatus === "copied"
+      ? "Code copied"
+      : copyStatus === "failed"
+        ? "Could not copy code"
+        : "Copy code";
+  const buttonText =
+    copyStatus === "copied"
+      ? "Copied"
+      : copyStatus === "failed"
+        ? "Copy failed"
+        : "Copy";
+
+  return (
+    <div className="preview-code-block">
+      <pre ref={preRef} {...props}>{children}</pre>
+      <button
+        type="button"
+        className="preview-code-copy"
+        aria-label={buttonLabel}
+        onClick={() => void copyCode()}
+      >
+        {buttonText}
+      </button>
+    </div>
+  );
+}
 
 function normalizeCodeLanguages() {
   return (tree: MarkdownNode) => {

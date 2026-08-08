@@ -15,6 +15,7 @@
 
 - Preview is the default; Cmd/Ctrl+E switches between Preview and Edit, with Split view available.
 - GitHub-flavored Markdown preview: headings, links, images, tasks, tables, blockquotes, and highlighted code blocks.
+- Fenced code blocks have a keyboard-accessible Copy control with success and failure feedback.
 - Preview tasks are clickable and save their completion state.
 - Tables can be edited in place, with row/column insertion, deletion, and reordering.
 - Internal Markdown and wiki links open the matching note; web links open in the system browser.
@@ -49,6 +50,5 @@
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
 - Theme palettes for Margin, including future app-icon variants.
-- Copy controls for fenced code blocks.
 - Mermaid diagram rendering in Markdown preview.
 - Optional AI-agent integrations for user-directed note drafting, summarizing, organizing, and appending work logs, with explicit per-action approval and no automatic access to a library.
