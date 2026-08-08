@@ -12,6 +12,9 @@ vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (path: string) => `asset://${path}`,
   invoke,
 }));
+vi.mock("@tauri-apps/plugin-process", () => ({
+  relaunch: vi.fn(),
+}));
 
 import {
   CascadingNoteOptions,
@@ -24,8 +27,11 @@ import {
   QuickCaptureDialog,
   SettingsDialog,
   TableEditorDialog,
+  UpdateDialog,
   activeOutlineAncestors,
   outlineTree,
+  restartInstalledUpdate,
+  type UpdateState,
 } from "./main";
 
 const notes = [
@@ -48,6 +54,59 @@ const notes = [
     folder: "Personal",
   },
 ];
+
+describe("update restart", () => {
+  it("marks an installed update as restarting only after the user chooses restart", async () => {
+    const states: UpdateState[] = [];
+    const errors: string[] = [];
+    const relaunchApp = vi.fn().mockResolvedValue(undefined);
+
+    await restartInstalledUpdate(
+      relaunchApp,
+      (state) => states.push(state),
+      (error) => errors.push(error),
+    );
+
+    expect(relaunchApp).toHaveBeenCalledOnce();
+    expect(states).toEqual(["restarting"]);
+    expect(errors).toEqual([""]);
+  });
+
+  it("returns to ready and reports a restart failure", async () => {
+    const states: UpdateState[] = [];
+    const errors: string[] = [];
+    const relaunchApp = vi.fn().mockRejectedValue(new Error("permission denied"));
+
+    await restartInstalledUpdate(
+      relaunchApp,
+      (state) => states.push(state),
+      (error) => errors.push(error),
+    );
+
+    expect(states).toEqual(["restarting", "ready"]);
+    expect(errors.at(-1)).toContain("Could not restart Margin");
+  });
+
+  it("shows a disabled restarting control while a relaunch is in progress", () => {
+    const props = {
+      update: { version: "0.4.0", body: "Restart improvements" } as never,
+      error: "",
+      onClose: () => undefined,
+      onInstall: () => undefined,
+      onRestart: () => undefined,
+      onSkip: () => undefined,
+    };
+    const { rerender } = render(<UpdateDialog {...props} state="ready" />);
+
+    expect(screen.getByRole("button", { name: "Restart Margin" })).toBeEnabled();
+
+    rerender(<UpdateDialog {...props} state="restarting" />);
+
+    expect(
+      screen.getByRole("button", { name: "Restarting Margin…" }),
+    ).toBeDisabled();
+  });
+});
 
 describe("Markdown preview", () => {
   it("renders GFM and routes wiki and relative Markdown links inside the library", () => {

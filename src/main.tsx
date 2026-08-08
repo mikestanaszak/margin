@@ -88,13 +88,29 @@ type MarkdownNode = {
 type OutlineItem = { index: number; level: number; title: string };
 type OutlineNode = OutlineItem & { children: OutlineNode[] };
 type AppUpdate = NonNullable<Awaited<ReturnType<typeof check>>>;
-type UpdateState =
+export type UpdateState =
   | "idle"
   | "checking"
   | "available"
   | "downloading"
   | "ready"
+  | "restarting"
   | "error";
+
+export async function restartInstalledUpdate(
+  relaunchApp: () => Promise<void>,
+  setState: (state: UpdateState) => void,
+  setError: (message: string) => void,
+): Promise<void> {
+  setState("restarting");
+  setError("");
+  try {
+    await relaunchApp();
+  } catch (error) {
+    setState("ready");
+    setError(`Could not restart Margin: ${String(error)}`);
+  }
+}
 type ShortcutId =
   | "newNote"
   | "search"
@@ -1839,7 +1855,9 @@ function App() {
           error={updateError}
           onClose={() => setUpdateDialogOpen(false)}
           onInstall={() => void installUpdate()}
-          onRestart={() => void relaunch()}
+          onRestart={() =>
+            void restartInstalledUpdate(relaunch, setUpdateState, setUpdateError)
+          }
           onSkip={skipUpdate}
         />
       )}
@@ -2837,7 +2855,7 @@ function TableEditorDialog({
     </div>
   );
 }
-function UpdateDialog({
+export function UpdateDialog({
   update,
   state,
   error,
@@ -2856,6 +2874,7 @@ function UpdateDialog({
 }) {
   const busy = state === "downloading";
   const ready = state === "ready";
+  const restarting = state === "restarting";
   return (
     <div className="modal-backdrop">
       <section
@@ -2885,8 +2904,11 @@ function UpdateDialog({
             Update installed. Restart Margin when you’re ready.
           </p>
         )}
+        {restarting && (
+          <p className="update-status">Restarting Margin…</p>
+        )}
         <div>
-          {!ready && (
+          {!ready && !restarting && (
             <>
               <button type="button" onClick={onSkip} disabled={busy}>
                 Skip this version
@@ -2901,9 +2923,14 @@ function UpdateDialog({
               </button>
             </>
           )}
-          {ready && (
-            <button className="primary" type="button" onClick={onRestart}>
-              Restart Margin
+          {(ready || restarting) && (
+            <button
+              className="primary"
+              type="button"
+              onClick={onRestart}
+              disabled={restarting}
+            >
+              {restarting ? "Restarting Margin…" : "Restart Margin"}
             </button>
           )}
         </div>
