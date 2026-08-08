@@ -19,6 +19,7 @@ import { all as highlightLanguages } from "lowlight";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import MarkdownEditor, { type MarkdownEditorHandle } from "./MarkdownEditor";
+import MermaidDiagram from "./MermaidDiagram";
 import {
   NoteListItem,
   QuickSwitcher,
@@ -3995,6 +3996,22 @@ function MarkdownPreview({
         remarkPlugins={[remarkGfm, annotateTaskIndexes, normalizeCodeLanguages]}
         rehypePlugins={[[rehypeHighlight, { languages: highlightLanguages }]]}
         components={{
+          pre: ({ children, node: _node, ...props }) => {
+            const child = React.Children.toArray(children)[0];
+            if (
+              React.isValidElement<{
+                className?: string;
+                children?: React.ReactNode;
+              }>(child) &&
+              child.props.className?.split(/\s+/).includes("language-mermaid")
+            )
+              return (
+                <MermaidDiagram
+                  source={String(child.props.children || "").replace(/\n$/, "")}
+                />
+              );
+            return <PreviewCodeBlock {...props}>{children}</PreviewCodeBlock>;
+          },
           a: ({ href, children }) => {
             if (href?.startsWith("note:")) {
               const title = decodeURIComponent(href.slice(5));
@@ -4039,9 +4056,6 @@ function MarkdownPreview({
             );
           },
           img: ({ src, alt }) => <img src={localAsset(src)} alt={alt || ""} />,
-          pre: ({ children, node: _node, ...props }) => (
-            <PreviewCodeBlock {...props}>{children}</PreviewCodeBlock>
-          ),
           table: ({ children, node, ...props }) => {
             const sourceLine = (
               node as { position?: { start?: { line?: number } } }

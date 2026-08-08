@@ -832,6 +832,27 @@ select:focus-visible {
   background: transparent;
   border: 0;
 }
+.preview .mermaid-diagram {
+  display: flex;
+  justify-content: center;
+  margin: 1.5em 0;
+  padding: 18px;
+  overflow: auto;
+  color: var(--text);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.preview .mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+.preview .mermaid-fallback > p {
+  margin: 1.5em 0 -0.9em;
+  color: var(--danger);
+  font-size: 0.82em;
+  font-weight: 700;
+}
 .preview .hljs-comment,
 .preview .hljs-quote {
   color: #8b9b90;
