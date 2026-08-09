@@ -2,6 +2,21 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## 0.4.4 — 2026-08-09
+
+### Improved
+
+- Rewrote the README into a practical feature guide, including image storage and cleanup, navigation, linked-from behavior, capture, and customization.
+- Duplicated notes now receive their own image companion folder with repaired image paths.
+
+### Fixed
+
+- Reveal in File Explorer now uses the native file-reveal integration so Windows selects the requested note.
+- Image previews now build native Windows asset paths instead of mixed slash paths that WebView could not load.
+- Removing an image from a note now removes its unreferenced companion file on save and removes the empty companion folder.
+- Renaming a note repairs its image paths after moving the companion folder.
+- Rebuilt every packaged application icon with a Paper-toned Margin mark, including the Windows shortcut icon.
+
 ## 0.4.3 — 2026-08-09
 
 ### Fixed

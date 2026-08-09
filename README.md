@@ -1,61 +1,66 @@
 # Margin
 
-**A native, local-first home for Markdown notes.** Margin turns an ordinary folder of `.md` files into a focused workspace—without locking your writing into an account, database, or proprietary format.
+Margin is a calm, local-first desktop workspace for ordinary Markdown notes. Pick a folder, write in `.md` files, and keep using that same folder in Explorer, Finder, Git, or another editor—there is no account, database, or proprietary note format.
 
-[Get Margin](https://github.com/mikestanaszak/margin/releases/latest) · [Feature list](PRODUCT_SPEC.md)
+[Download Margin](https://github.com/mikestanaszak/margin/releases/latest) · [Release notes](CHANGELOG.md) · [Complete product spec](PRODUCT_SPEC.md)
 
 <p align="center">
-  <img src="docs/images/workspace-current.png" alt="Margin showing a nested folder workspace and a project note in Preview" width="760" />
+  <img src="docs/images/workspace-current.png" alt="Margin showing a project note in a nested Markdown folder workspace" width="760" />
 </p>
 
-## Made for everyday notes
+## What is in Margin
 
-- **Keep your files.** A Margin library is just a folder of UTF-8 Markdown files. Open the same notes in Finder, Explorer, or another editor whenever you want.
-- **Stay oriented.** Browse All notes, Favorites, Trash, and a real nested folder tree. Choosing a parent folder keeps its notes visibly grouped by subfolder.
-- **Write without the Markdown tax.** Work in Preview, Edit, or Split view; use the outline to jump between headings; and use a selection toolbar for common formatting.
-- **Keep images with their note.** Pick, drag, or paste an image and Margin copies it into the note's adjacent `.assets` folder before inserting a relative Markdown reference.
-- **Make Preview useful.** Check off tasks directly in Preview, follow Markdown and wiki links, open web links in your default browser, and view highlighted code, images, and tables.
-- **Edit tables like a person.** Hover a Preview table to open its editor, then add, remove, reorder, and fill rows or columns without hand-editing pipes.
-- **Keep filenames understandable.** The first top-level heading becomes the note title and filename, so the folder still makes sense outside Margin.
-- **Start with today.** Open Today for a dated Daily note, or create reusable Markdown templates with `{{date}}` and `{{time}}` variables.
+| Area | What it does |
+| --- | --- |
+| Write | Preview, Edit, and Split views; Markdown formatting tools; spell check in Edit; autosave; and a heading outline. |
+| Preview | GitHub-flavored Markdown, syntax-highlighted code, Mermaid diagrams, interactive tasks, image rendering, and editable tables. |
+| Organize | Real nested folders, All notes, Favorites, Trash, search, Quick Open, and per-folder note counts. |
+| Navigate | Markdown links and `[[wiki links]]` open notes in the library. **Linked from** appears when another saved note contains a matching wiki link. |
+| Capture | Global Quick Capture, dated Daily notes, and reusable Markdown templates with `{{date}}` and `{{time}}`. |
+| Customize | System, light, and dark appearance; Ink, Mint, Linen, and Paper palettes; configurable shortcuts; update checks; and a library picker. |
 
-## A calmer way to manage a library
+## Images stay beside their note
 
-Margin is designed around the little things that make a note app pleasant to live in:
+Use the **Image** button in the top Edit bar beside **Table**, drag an image into the editor, or paste one from the clipboard. Margin copies the image next to its note and inserts a portable relative Markdown reference.
 
-- Create, rename, nest, delete, and resize folders; move notes with a right-click menu.
-- Favorite notes, send them to Trash, restore them, or permanently delete them when you are sure.
-- Search the whole library from the top bar, and use internal Markdown links to open a note in its deepest folder.
-- See linked-from references and an optional heading-only outline without cluttering the editor.
-- Open a note’s location directly in Finder or File Explorer.
-- Use light or dark appearance, following the system by default, and review or change shortcuts in Settings.
-- Keep editing position stable while autosave writes safely in the background.
+For example:
 
-## Feature tour
+```text
+Notes/
+  Projects/
+    Launch plan.md
+    Launch plan.assets/
+      whiteboard.png
+```
 
-### Write, format, and preview
+The `.assets` folder is hidden from Margin’s sidebar because it belongs to the adjacent note, not to your folder organization. If you rename or move a note, Margin moves its companion folder and repairs its image references. When an image reference is removed from the Markdown, the unreferenced image file is removed on the next save; an empty companion folder disappears too. Margin only removes direct files it created in that note’s own `.assets` folder.
 
-Use **Edit** for Markdown writing and **Preview** or **Split** to see the rendered note. Select text in Edit to reveal the formatting toolbar: headings, bold, italic, links, tables, and **Image**. Image opens a picker; you can also drop an image into the editor or paste one from the clipboard. Margin stores a copy beside the note in `<note>.assets` and inserts a portable relative image reference. These companion folders are intentionally hidden from the sidebar and folder menus.
+## Everyday workflow
 
-Fenced code blocks support language suggestions as you type after the opening backticks. The Preview includes syntax highlighting, a Copy control for code blocks, interactive task checkboxes, table editing, and Mermaid diagrams.
+1. Choose a folder as your library.
+2. Create notes and folders normally—your first H1 becomes the note title and filename.
+3. Use Preview for reading, **Cmd/Ctrl+E** for editing, or Split for both.
+4. Search with **Cmd/Ctrl+K**, use Quick Open, or browse folders and Favorites.
+5. Right-click a note to move it, send it to Trash, duplicate it, or reveal the exact file in Finder or File Explorer.
 
-### Connect notes and navigate the library
+Notes can also be opened from their file manager. A Markdown file already in the selected library opens directly; an external Markdown file can be opened as-is or safely imported as a copy.
 
-Use `[[Note title]]` to link to another note. **Linked from** appears beneath an open note only when another indexed note contains a wiki link matching that note title (case-insensitively); it updates after the linking note is saved. Search, Quick Open, folders, favorites, and the optional heading outline help you move around a library without adding proprietary metadata to your files.
+## Feature details
 
-### Capture, organize, and personalize
+### Editing and preview
 
-Quick Capture collects thoughts from anywhere, then lets you append, import, or turn them into notes. Daily notes and reusable templates reduce repetitive setup. Settings contains shortcut controls, update checks, and appearance choices: follow the system, light, or dark appearance with Mint, Ink, Linen, or Paper palettes.
+- The top Edit bar inserts headings, emphasis, links, tables, and images. Select text for the smaller contextual formatting controls.
+- Type after an opening `` ``` `` fence to choose a code language. The list includes Highlight.js languages and common aliases, but custom identifiers still work.
+- Preview code blocks have a Copy button. Tables open an editor for adding, removing, filling, and reordering rows and columns.
+- Checkboxes can be toggled from Preview and save back to Markdown. Mermaid diagrams render locally and retain a visible source fallback if a diagram is invalid.
 
-## Catch thoughts before they disappear
+### Links, backlinks, and navigation
 
-Press **Ctrl+Alt+Shift+Space** on Windows or **Command+Option+Shift+Space** on macOS to open Quick Capture from anywhere. It remembers your library, uses your Daily note template on the first capture of the day, understands basic list continuation while you type, and saves with **Ctrl/Command+Enter**.
+Use `[label](Relative note.md)` or `[[Note title]]` to connect notes. Margin only treats links that resolve to a note in the library as in-app navigation; web, email, and phone links open through the operating system. **Linked from** is added beneath the active note after another note containing a matching saved wiki link is indexed. It updates after that other note saves or the library refreshes.
 
-Later, import captures into today’s daily note, append them to any existing note, create a separate note, or choose a folder. This is handy for a daily work log that eventually becomes part of a weekly or yearly record.
+### Capture and templates
 
-## Bring your existing Markdown
-
-On Windows and macOS, Margin can register as a Markdown editor. Open a `.md` file from your file manager and Margin will open it directly when it belongs to your library. For a file outside the library, it offers a safe choice: open the original, or import a copy into the folder you choose. Your source file is never modified.
+Press **Ctrl+Alt+Shift+Space** on Windows or **Command+Option+Shift+Space** on macOS to open Quick Capture. The first capture of a day can create a Daily note from the Daily note template. Later, captures can be appended, imported into another note, or turned into a separate note. Manage templates, capture defaults, shortcuts, appearance, and updates in Settings.
 
 <p align="center">
   <img src="docs/images/quick-capture-current.png" alt="Margin Quick Capture window" width="520" />
@@ -63,40 +68,29 @@ On Windows and macOS, Margin can register as a Markdown editor. Open a `.md` fil
 
 ## Install
 
-### macOS (Apple Silicon)
-
-Install the latest signed release with one command. An existing Margin app is replaced; your notes remain in the library you chose.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/mikestanaszak/margin/main/install.sh | bash
-```
-
 ### Windows
 
-Run this in PowerShell. It replaces an existing Margin installation and leaves your notes alone.
+Run this in PowerShell to install or update Margin. Your note library is not changed.
 
 ```powershell
 irm https://raw.githubusercontent.com/mikestanaszak/margin/main/install.ps1 | iex
 ```
 
-### Linux
+### macOS (Apple Silicon)
 
-Margin publishes signed x64 Linux downloads on every release. Install the latest AppImage with one command:
+```bash
+curl -fsSL https://raw.githubusercontent.com/mikestanaszak/margin/main/install.sh | bash
+```
+
+### Linux
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mikestanaszak/margin/main/install-linux.sh | bash
 ```
 
-Or install manually:
-
-- **Debian / Ubuntu:** download the `.deb` from the [latest release](https://github.com/mikestanaszak/margin/releases/latest), then install it with `sudo apt install ./Margin_*.deb`.
-- **Other distributions:** download the `.AppImage`, make it executable with `chmod +x Margin_*.AppImage`, then run it directly.
-
-You can also download an installer for any platform from the [latest release](https://github.com/mikestanaszak/margin/releases/latest).
+Manual installers for Windows, macOS, Debian/Ubuntu, and AppImage Linux are available from the [latest release](https://github.com/mikestanaszak/margin/releases/latest).
 
 ## Shortcuts
-
-Margin uses **Command** on macOS and **Control** on Windows for usual in-app shortcuts.
 
 | Action | Shortcut |
 | --- | --- |
@@ -105,26 +99,22 @@ Margin uses **Command** on macOS and **Control** on Windows for usual in-app sho
 | Search notes | Cmd/Ctrl + K |
 | Open Quick Capture | Cmd/Ctrl + Alt + Shift + Space |
 | Save Quick Capture | Cmd/Ctrl + Enter |
-| Show / hide library | Cmd/Ctrl + Shift + B |
+| Show or hide library | Cmd/Ctrl + Shift + B |
 | Close a panel or capture | Escape |
 
-Settings includes the full configurable shortcut list, the quick-capture destination, theme controls, and supported code-block languages.
+The shortcut list is configurable in Settings.
 
-## Updates and privacy
+## Privacy and safety
 
-Margin checks for signed updates daily and shows an unobtrusive notice in Settings when one is ready. Downloads are verified before installation. See [CHANGELOG.md](CHANGELOG.md) for release notes.
-
-Your writing stays in the folder you chose. Margin does not require an account and does not put notes in a proprietary database.
-
-For safety, Margin does not follow symlinks inside a notes library. Choose the real folder as the library (a symlink used to select that top-level folder is resolved once), and keep linked files outside the library as normal external files.
+Margin stores your writing in the library you choose and does not require an account. It checks for signed updates and verifies downloads before installation. For safety, Margin does not follow symlinks inside a library; select the real notes folder and keep linked files as normal external files.
 
 ## Build from source
 
-Margin is built with Tauri, React, TypeScript, and Rust. With Node.js, pnpm, Rust, and the platform build tools installed:
+Margin uses Tauri, React, TypeScript, and Rust. With Node.js, pnpm, Rust, and the platform build tools installed:
 
 ```cmd
 pnpm install
 pnpm tauri dev
 ```
 
-For more development and testing details, see [TESTING.md](TESTING.md).
+Run `pnpm test`, `pnpm build`, and `cargo test --manifest-path src-tauri/Cargo.toml` before contributing. More development detail is in [TESTING.md](TESTING.md).

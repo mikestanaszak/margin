@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Margin",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "identifier": "com.local.margin",
   "build": { "frontendDist": "../dist", "devUrl": "http://localhost:1420", "beforeDevCommand": "pnpm dev", "beforeBuildCommand": "pnpm build" },
   "app": {
@@ -29,7 +29,7 @@
         "rank": "Default"
       }
     ],
-    "icon": ["icons/icon.ico", "icons/icon.icns", "icons/runtime/mint.png"],
+    "icon": ["icons/icon.ico", "icons/icon.icns", "icons/icon.png"],
     "windows": { "allowDowngrades": false, "nsis": { "installMode": "currentUser" } }
   },
   "plugins": {
