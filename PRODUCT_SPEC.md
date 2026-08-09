@@ -34,7 +34,8 @@
 - Today opens or creates the current date’s note in the Daily folder.
 - Template editor: create, rename, duplicate, delete, preview, and create a note from reusable Markdown templates. `{{date}}` and `{{time}}` variables are supported.
 - Daily captures can be imported into a configured default note, another existing note, or a new note in any folder.
-- Light, dark, and system appearance; system is the default.
+- Light, dark, and system appearance; system is the default. Ink, Mint, and Linen palettes are available independently of appearance, with Mint as the default.
+- On Windows and macOS, Margin updates its running icon to match the selected palette; Linux keeps the packaged icon.
 - Settings for library location, hotkeys, Quick Capture destination, supported code-block languages, and manual update checks.
 
 ### Desktop and updates
@@ -50,5 +51,4 @@
 - Native-window integration and staged-update installation coverage.
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
-- Theme palettes for Margin, including future app-icon variants.
 - Optional AI-agent integrations for user-directed note drafting, summarizing, organizing, and appending work logs, with explicit per-action approval and no automatic access to a library.
