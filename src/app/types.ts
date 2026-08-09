@@ -1,4 +1,5 @@
 export type NoteSummary = {
+  id: string;
   path: string;
   title: string;
   tags: string[];
@@ -8,6 +9,7 @@ export type NoteSummary = {
 };
 
 export type NoteDocument = {
+  id?: string;
   path: string;
   title: string;
   tags: string[];

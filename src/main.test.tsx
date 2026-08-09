@@ -61,6 +61,7 @@ import {
 
 const notes = [
   {
+    id: "project-alpha",
     path: "C:/Notes/Work/Project Alpha.md",
     title: "Project Alpha",
     tags: ["work"],
@@ -70,6 +71,7 @@ const notes = [
     folder: "Work",
   },
   {
+    id: "cafe-ideas",
     path: "C:/Notes/Personal/Café ideas.md",
     title: "Café ideas",
     tags: ["personal"],

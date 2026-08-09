@@ -63,7 +63,13 @@ export const native = {
     libraryPath: string,
     text: string,
     dailyTemplate?: string,
-  ) => invoke<NoteDocument>("append_quick_note", { libraryPath, text, dailyTemplate }),
+  ) =>
+    invoke<NoteDocument>(
+      "append_quick_note",
+      dailyTemplate === undefined
+        ? { libraryPath, text }
+        : { libraryPath, text, dailyTemplate },
+    ),
   importDailyNote: (sourcePath: string, targetPath: string, libraryPath: string) =>
     invoke<NoteDocument>("import_daily_note", { sourcePath, targetPath, libraryPath }),
   importDailyNoteToNewNote: (
