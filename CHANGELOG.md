@@ -2,6 +2,13 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## 0.4.6 — 2026-08-09
+
+### Fixed
+
+- Markdown image previews now decode relative paths exactly once, so companion images with spaces or Unicode characters display correctly on Windows.
+- Margin now keeps the same green application icon across every theme and palette.
+
 ## 0.4.5 — 2026-08-09
 
 ### Fixed
