@@ -2354,18 +2354,14 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            load_library,
             load_library_snapshot,
             search_library,
             find_backlinks,
-            load_trash,
             read_note,
             create_note,
             create_folder,
             rename_folder,
-            load_folders,
             save_note,
-            rename_note,
             duplicate_note,
             import_markdown_file,
             import_note_image_from_path,
