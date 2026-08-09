@@ -13,7 +13,8 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@tauri-apps/plugin-updater", () => ({
   check: vi.fn(() => Promise.resolve(null)),
 }));
-const { invoke } = vi.hoisted(() => ({
+const { convertFileSrc, invoke } = vi.hoisted(() => ({
+  convertFileSrc: vi.fn((path: string) => `asset://${path}`),
   invoke: vi.fn((command: string) =>
     Promise.resolve(
       command === "take_opened_markdown_files"
@@ -25,7 +26,7 @@ const { invoke } = vi.hoisted(() => ({
   ),
 }));
 vi.mock("@tauri-apps/api/core", () => ({
-  convertFileSrc: (path: string) => `asset://${path}`,
+  convertFileSrc,
   invoke,
 }));
 vi.mock("@tauri-apps/plugin-process", () => ({
@@ -208,6 +209,25 @@ describe("Markdown preview", () => {
     expect(screen.getByRole("img", { name: "Mermaid diagram" })).toHaveAttribute(
       "data-source",
       source,
+    );
+  });
+
+  it("uses a native Windows path for a note image", () => {
+    convertFileSrc.mockClear();
+    render(
+      <MarkdownPreview
+        markdown="![Diagram](Plan.assets/diagram.png)"
+        notePath={"C:\\Notes\\Work\\Plan.md"}
+        notes={[]}
+        onOpen={() => undefined}
+        onEditTable={() => undefined}
+        onToggleTask={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "Diagram" })).toBeInTheDocument();
+    expect(convertFileSrc).toHaveBeenCalledWith(
+      "C:\\Notes\\Work\\Plan.assets\\diagram.png",
     );
   });
 

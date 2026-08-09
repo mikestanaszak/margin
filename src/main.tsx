@@ -1316,30 +1316,42 @@ function App() {
     }
     insertImage(view, { markdownPath: image.markdown_path, alt: image.alt });
   }, []);
+  const waitForPendingNoteSave = useCallback(async (notePath: string) => {
+    const queueKey = saveQueueKeys.current.get(notePath) ?? notePath;
+    await (saveQueues.current.get(queueKey) ?? Promise.resolve()).catch(() => undefined);
+  }, []);
   const importImageFile = useCallback(async (file: File) => {
-    const activeNote = noteRef.current;
-    const activeLibrary = libraryRef.current;
+    let activeNote = noteRef.current;
+    let activeLibrary = libraryRef.current;
     if (!activeNote || !activeLibrary || !pathIsInLibrary(activeNote.path, activeLibrary)) return;
     if (file.size > 25 * 1024 * 1024) return setStatus("Images must be 25 MB or smaller.");
     try {
+      await waitForPendingNoteSave(activeNote.path);
+      activeNote = noteRef.current;
+      activeLibrary = libraryRef.current;
+      if (!activeNote || !activeLibrary || !pathIsInLibrary(activeNote.path, activeLibrary)) return;
       const image = await invoke<ImportedImageResponse>("import_note_image_from_bytes", {
         notePath: activeNote.path, filename: file.name || "pasted-image.png",
         bytes: Array.from(new Uint8Array(await file.arrayBuffer())), libraryPath: activeLibrary,
       });
       insertImportedImage(activeNote.path, image);
     } catch (error) { setStatus(`Could not import image: ${String(error)}`); }
-  }, [insertImportedImage]);
+  }, [insertImportedImage, waitForPendingNoteSave]);
   const chooseImage = useCallback(async () => {
-    const activeNote = noteRef.current;
-    const activeLibrary = libraryRef.current;
+    let activeNote = noteRef.current;
+    let activeLibrary = libraryRef.current;
     if (!activeNote || !activeLibrary || !pathIsInLibrary(activeNote.path, activeLibrary)) return;
     const selected = await open({ multiple: false, title: "Choose an image", filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp"] }] });
     if (typeof selected !== "string") return;
     try {
+      await waitForPendingNoteSave(activeNote.path);
+      activeNote = noteRef.current;
+      activeLibrary = libraryRef.current;
+      if (!activeNote || !activeLibrary || !pathIsInLibrary(activeNote.path, activeLibrary)) return;
       const image = await invoke<ImportedImageResponse>("import_note_image_from_path", { notePath: activeNote.path, sourcePath: selected, libraryPath: activeLibrary });
       insertImportedImage(activeNote.path, image);
     } catch (error) { setStatus(`Could not import image: ${String(error)}`); }
-  }, [insertImportedImage]);
+  }, [insertImportedImage, waitForPendingNoteSave]);
   const noteEditor = note ? (
     <MarkdownEditor
       key={`${note.path}-${isManagedNote ? "managed" : "external"}`}
@@ -3996,10 +4008,13 @@ function MarkdownPreview({
     [markdown],
   );
   const directory = notePath.replace(/[\\/][^\\/]+$/, "");
-  const localAsset = (src?: string) =>
-    !src || /^(https?:|data:|asset:)/i.test(src)
-      ? src
-      : convertFileSrc(`${directory}/${src}`);
+  const localAsset = (src?: string) => {
+    if (!src || /^(https?:|data:|asset:)/i.test(src)) return src;
+    const separator = directory.includes("\\") ? "\\" : "/";
+    const parent = directory.replace(/[\\/]+$/, "");
+    const relative = src.replace(/^[\\/]+/, "").replace(/[\\/]/g, separator);
+    return convertFileSrc(`${parent}${separator}${relative}`);
+  };
   const markdownTables = useMemo(() => parseMarkdownTables(markdown), [markdown]);
   const normalizePath = (path: string) => {
     const parts: string[] = [];

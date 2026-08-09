@@ -5,7 +5,6 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
@@ -735,6 +734,74 @@ fn asset_directory_for_note(note: &Path) -> Result<PathBuf, String> {
     Ok(parent.join(format!("{}.assets", stem)))
 }
 
+fn rewrite_note_asset_references(body: &str, source: &Path, destination: &Path) -> String {
+    let source_folder = asset_directory_for_note(source)
+        .ok()
+        .and_then(|path| path.file_name()?.to_str().map(str::to_owned));
+    let destination_folder = asset_directory_for_note(destination)
+        .ok()
+        .and_then(|path| path.file_name()?.to_str().map(str::to_owned));
+    let (Some(source_folder), Some(destination_folder)) = (source_folder, destination_folder)
+    else {
+        return body.to_string();
+    };
+    if source_folder == destination_folder {
+        return body.to_string();
+    }
+    body.replace(
+        &format!("{source_folder}/"),
+        &format!("{destination_folder}/"),
+    )
+    .replace(
+        &format!("{source_folder}\\"),
+        &format!("{destination_folder}\\"),
+    )
+}
+
+fn cleanup_unreferenced_note_assets(
+    library: &Path,
+    note: &Path,
+    markdown: &str,
+) -> Result<(), String> {
+    let directory = asset_directory_for_note(note)?;
+    if !directory.exists() {
+        return Ok(());
+    }
+    reject_symlink_components(library, &directory)?;
+    if !directory.is_dir() {
+        return Err("The note's asset path is not a folder".into());
+    }
+    let folder_name = directory
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Image folder name is invalid")?;
+    for entry in fs::read_dir(&directory).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if !file_type.is_file() {
+            continue;
+        }
+        let file_name = entry
+            .file_name()
+            .to_str()
+            .ok_or("Image filename is invalid")?
+            .to_string();
+        let is_referenced = markdown.contains(&format!("{folder_name}/{file_name}"))
+            || markdown.contains(&format!("{folder_name}\\{file_name}"));
+        if !is_referenced {
+            fs::remove_file(entry.path()).map_err(|error| error.to_string())?;
+        }
+    }
+    if fs::read_dir(&directory)
+        .map_err(|error| error.to_string())?
+        .next()
+        .is_none()
+    {
+        fs::remove_dir(&directory).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 fn move_note_assets(
     library: &Path,
     source_note: &Path,
@@ -754,6 +821,45 @@ fn move_note_assets(
         return Err("The destination already has an asset folder".into());
     }
     fs::rename(source_assets, destination_assets).map_err(|error| error.to_string())
+}
+
+fn copy_asset_directory(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir(destination).map_err(|error| error.to_string())?;
+    for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let target = destination.join(entry.file_name());
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if file_type.is_symlink() {
+            return Err("Symlinks inside a Margin library are not supported".into());
+        }
+        if file_type.is_dir() {
+            copy_asset_directory(&entry.path(), &target)?;
+        } else if file_type.is_file() {
+            fs::copy(entry.path(), target).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_note_assets(
+    library: &Path,
+    source_note: &Path,
+    destination_note: &Path,
+) -> Result<(), String> {
+    let source_assets = asset_directory_for_note(source_note)?;
+    if !source_assets.exists() {
+        return Ok(());
+    }
+    reject_symlink_components(library, &source_assets)?;
+    if !source_assets.is_dir() {
+        return Err("The note's asset path is not a folder".into());
+    }
+    let destination_assets = asset_directory_for_note(destination_note)?;
+    reject_symlink_components(library, &destination_assets)?;
+    if destination_assets.exists() {
+        return Err("The destination already has an asset folder".into());
+    }
+    copy_asset_directory(&source_assets, &destination_assets)
 }
 
 fn move_note_and_assets(library: &Path, source: &Path, destination: &Path) -> Result<(), String> {
@@ -1724,10 +1830,15 @@ fn save_note_checked(
         created,
         updated: Some(now_rfc3339()),
     };
+    let destination = path_for_title(&path, &title).map_err(SaveNoteFailure::Error)?;
+    let body = if destination != path {
+        rewrite_note_asset_references(&note.body, &path, &destination)
+    } else {
+        note.body.clone()
+    };
     let yaml =
         serde_yaml::to_string(&front).map_err(|error| SaveNoteFailure::Error(error.to_string()))?;
-    let content = format!("---\n{}---\n\n{}", yaml, note.body);
-    let destination = path_for_title(&path, &title).map_err(SaveNoteFailure::Error)?;
+    let content = format!("---\n{}---\n\n{}", yaml, body);
     if destination == path {
         let temporary = unique_temporary_path(&path);
         fs::write(&temporary, content)
@@ -1792,7 +1903,12 @@ fn save_note_checked(
         }
         discard_staged_file_updates(&staged);
     }
-    read_note_file(&destination).map_err(SaveNoteFailure::Error)
+    let saved = read_note_file(&destination).map_err(SaveNoteFailure::Error)?;
+    if let Some(library) = library {
+        cleanup_unreferenced_note_assets(library, &destination, &saved.body)
+            .map_err(SaveNoteFailure::Error)?;
+    }
+    Ok(saved)
 }
 
 fn save_note_document(note: NoteDocument) -> Result<NoteDocument, String> {
@@ -1958,10 +2074,33 @@ fn duplicate_note(path: String, library_path: String) -> Result<NoteDocument, St
     let original = read_library_note_file(&library, &source)?;
     let copy_title = format!("{} copy", original.title);
     let destination = unique_path(parent, &copy_title);
-    fs::copy(source, &destination).map_err(|e| e.to_string())?;
+    fs::copy(&source, &destination).map_err(|e| e.to_string())?;
+    if let Err(error) = copy_note_assets(&library, &source, &destination) {
+        let _ = fs::remove_file(&destination);
+        return Err(error);
+    }
     let mut copy = read_library_note_file(&library, &destination)?;
-    copy.body = body_with_title(&copy.body, &copy_title);
-    managed_note(&library, save_note_document(copy)?)
+    copy.body = rewrite_note_asset_references(
+        &body_with_title(&copy.body, &copy_title),
+        &source,
+        &destination,
+    );
+    let saved = match save_note_checked(copy, Some(&library)) {
+        Ok(note) => note,
+        Err(error) => {
+            let _ = fs::remove_file(&destination);
+            if let Ok(assets) = asset_directory_for_note(&destination) {
+                let _ = fs::remove_dir_all(assets);
+            }
+            return match error {
+                SaveNoteFailure::Conflict(_) => {
+                    Err("The note changed on disk before it could be saved".into())
+                }
+                SaveNoteFailure::Error(message) => Err(message),
+            };
+        }
+    };
+    managed_note(&library, saved)
 }
 
 /// Imports a standalone Markdown file as a new note without changing the
@@ -2021,23 +2160,19 @@ fn move_note_to_folder(
 }
 
 #[tauri::command]
-fn reveal_note_in_file_manager(path: String, library_path: String) -> Result<(), String> {
+fn reveal_note_in_file_manager(
+    app: AppHandle,
+    path: String,
+    library_path: String,
+) -> Result<(), String> {
     let library = canonical_library_root(library_path)?;
     let note = existing_library_path(&library, path)?;
     if !note.is_file() || !is_markdown_path(&note) {
         return Err("Note is outside the selected library".into());
     }
-    #[cfg(target_os = "macos")]
-    let command = Command::new("open").arg("-R").arg(&note).spawn();
-    #[cfg(target_os = "windows")]
-    let command = Command::new("explorer.exe")
-        .arg(format!("/select,{}", note.to_string_lossy()))
-        .spawn();
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-    let command = Command::new("xdg-open")
-        .arg(note.parent().ok_or("Note has no parent folder")?)
-        .spawn();
-    command.map(|_| ()).map_err(|error| error.to_string())
+    app.opener()
+        .reveal_item_in_dir(&note)
+        .map_err(|error| format!("Could not reveal note: {error}"))
 }
 
 #[tauri::command]
@@ -2338,6 +2473,117 @@ mod tests {
         assert_eq!(markdown_asset_directory(&missing), None);
 
         fs::remove_dir_all(&library).ok();
+    }
+
+    #[test]
+    fn saving_a_note_removes_only_unreferenced_direct_image_assets() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let library_path = library.to_string_lossy().to_string();
+        let note_path = library.join("Images.md");
+        let assets = library.join("Images.assets");
+        let result = (|| -> Result<(), String> {
+            fs::write(&note_path, "# Images\n\n![Keep](Images.assets/keep.png)\n")
+                .map_err(|error| error.to_string())?;
+            fs::create_dir_all(&assets).map_err(|error| error.to_string())?;
+            fs::write(assets.join("keep.png"), b"keep").map_err(|error| error.to_string())?;
+            fs::write(assets.join("removed.png"), b"remove").map_err(|error| error.to_string())?;
+
+            let note =
+                read_note_file(&fs::canonicalize(&note_path).map_err(|error| error.to_string())?)?;
+            let saved = match save_note(note, library_path.clone()) {
+                SaveNoteResult::Saved { note } => note,
+                SaveNoteResult::Conflict { .. } => return Err("unexpected save conflict".into()),
+                SaveNoteResult::Error { message } => return Err(message),
+            };
+            assert!(assets.join("keep.png").exists());
+            assert!(!assets.join("removed.png").exists());
+
+            let mut without_image = saved;
+            without_image.body = "# Images\n".into();
+            match save_note(without_image, library_path) {
+                SaveNoteResult::Saved { .. } => {}
+                SaveNoteResult::Conflict { .. } => return Err("unexpected save conflict".into()),
+                SaveNoteResult::Error { message } => return Err(message),
+            }
+            assert!(!assets.exists());
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn saving_a_renamed_note_updates_its_image_asset_references() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let library_path = library.to_string_lossy().to_string();
+        let old_path = library.join("Old title.md");
+        let old_assets = library.join("Old title.assets");
+        let result = (|| -> Result<(), String> {
+            fs::write(
+                &old_path,
+                "# Old title\n\n![Photo](Old title.assets/photo.png)\n",
+            )
+            .map_err(|error| error.to_string())?;
+            fs::create_dir_all(&old_assets).map_err(|error| error.to_string())?;
+            fs::write(old_assets.join("photo.png"), b"photo").map_err(|error| error.to_string())?;
+
+            let mut note =
+                read_note_file(&fs::canonicalize(&old_path).map_err(|error| error.to_string())?)?;
+            note.body = "# New title\n\n![Photo](Old title.assets/photo.png)\n".into();
+            let saved = match save_note(note, library_path) {
+                SaveNoteResult::Saved { note } => note,
+                SaveNoteResult::Conflict { .. } => return Err("unexpected save conflict".into()),
+                SaveNoteResult::Error { message } => return Err(message),
+            };
+
+            assert!(saved.path.ends_with("New title.md"));
+            assert!(saved.body.contains("New title.assets/photo.png"));
+            assert!(!old_assets.exists());
+            assert!(library.join("New title.assets").join("photo.png").exists());
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn duplicating_a_note_copies_its_images_with_rewritten_paths() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let library_path = library.to_string_lossy().to_string();
+        let source = library.join("Original.md");
+        let source_assets = library.join("Original.assets");
+        let result = (|| -> Result<(), String> {
+            fs::write(
+                &source,
+                "# Original\n\n![Photo](Original.assets/photo.png)\n",
+            )
+            .map_err(|error| error.to_string())?;
+            fs::create_dir_all(&source_assets).map_err(|error| error.to_string())?;
+            fs::write(source_assets.join("photo.png"), b"photo")
+                .map_err(|error| error.to_string())?;
+
+            let duplicate = duplicate_note(
+                fs::canonicalize(&source)
+                    .map_err(|error| error.to_string())?
+                    .to_string_lossy()
+                    .to_string(),
+                library_path,
+            )?;
+
+            assert!(duplicate.path.ends_with("Original copy.md"));
+            assert!(duplicate.body.contains("Original copy.assets/photo.png"));
+            assert!(library
+                .join("Original copy.assets")
+                .join("photo.png")
+                .exists());
+            assert!(source_assets.join("photo.png").exists());
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
     }
 
     #[test]
