@@ -199,7 +199,7 @@ describe("Markdown editor formatting", () => {
         onImageFile,
       }),
     );
-    const image = new File(["image"], "clipboard.png", { type: "image/png" });
+    const image = new File(["image"], "", { type: "" });
     const content = container.querySelector<HTMLElement>(".cm-content");
 
     fireEvent.paste(content!, {
@@ -218,7 +218,36 @@ describe("Markdown editor formatting", () => {
     expect(onImageFile).toHaveBeenCalledWith(image, "paste");
   });
 
-  it("places Image directly after Table in the selection toolbar", async () => {
+  it("imports a clipboard image when the item MIME type is unavailable", () => {
+    const onImageFile = vi.fn();
+    const { container } = render(
+      createElement(MarkdownEditor, {
+        notePath: "editable.md",
+        value: "",
+        onChange: vi.fn(),
+        onImageFile,
+      }),
+    );
+    const image = new File(["image"], "clipboard.png", { type: "image/png" });
+    const content = container.querySelector<HTMLElement>(".cm-content");
+
+    fireEvent.paste(content!, {
+      clipboardData: {
+        files: [],
+        items: [
+          {
+            kind: "file",
+            type: "",
+            getAsFile: () => image,
+          },
+        ],
+      },
+    });
+
+    expect(onImageFile).toHaveBeenCalledWith(image, "paste");
+  });
+
+  it("keeps Image out of the selection toolbar", async () => {
     const editorRef = createRef<MarkdownEditorHandle>();
     const { container } = render(
       createElement(MarkdownEditor, {
@@ -226,7 +255,6 @@ describe("Markdown editor formatting", () => {
         notePath: "editable.md",
         value: "Select this text",
         onChange: vi.fn(),
-        onInsertImage: vi.fn(),
       }),
     );
 
@@ -254,10 +282,7 @@ describe("Markdown editor formatting", () => {
     const buttons = Array.from(
       container.querySelectorAll<HTMLButtonElement>(".markdown-editor-toolbar button"),
     );
-    const tableIndex = buttons.findIndex(
-      (button) => button.title === "Insert 3 by 3 table",
-    );
-    expect(buttons[tableIndex + 1]).toHaveAttribute("aria-label", "Insert image");
+    expect(buttons.some((button) => button.textContent === "Image")).toBe(false);
   });
 });
 

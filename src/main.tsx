@@ -1355,7 +1355,6 @@ function App() {
         )
       }
       onBlur={() => isManagedNote && void enqueueSave(note)}
-      onInsertImage={isManagedNote ? () => void chooseImage() : undefined}
       onImageFile={isManagedNote ? (file) => void importImageFile(file) : undefined}
       autoFocus
       readOnly={!isManagedNote}
@@ -1677,7 +1676,7 @@ function App() {
               </div>
             </header>
             {mode !== "preview" && (
-              <div className="editor-tools">
+              <div className="editor-tools" role="toolbar" aria-label="Editor tools">
                 <button
                   className="insert-table"
                   type="button"
@@ -1685,6 +1684,15 @@ function App() {
                 >
                   Table
                 </button>
+                {isManagedNote && (
+                  <button
+                    className="insert-image"
+                    type="button"
+                    onClick={() => void chooseImage()}
+                  >
+                    Image
+                  </button>
+                )}
               </div>
             )}
             <div className="workspace-main">

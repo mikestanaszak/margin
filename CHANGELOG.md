@@ -2,6 +2,13 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## 0.4.3 — 2026-08-09
+
+### Fixed
+
+- Image now appears in the persistent top editor bar directly beside Table, not in the floating selection toolbar.
+- Pasting copied images now works when the desktop clipboard omits its MIME type and filename. Image drag detection uses the same resilient handling.
+
 ## 0.4.2 — 2026-08-09
 
 ### Added
