@@ -71,6 +71,11 @@ type LibrarySnapshot = {
   notes: NoteSummary[];
   folders: string[];
   trash: NoteSummary[];
+  warnings: IndexWarning[];
+};
+type IndexWarning = {
+  path: string;
+  kind: "walk" | "unreadable_markdown" | "invalid_metadata";
 };
 type SaveNoteResult =
   | { status: "saved"; note: NoteDocument }
@@ -303,6 +308,7 @@ function App() {
   const [backlinks, setBacklinks] = useState<NoteSummary[]>([]);
   const [mode, setMode] = useState<"edit" | "preview" | "split">("preview");
   const [status, setStatus] = useState("Choose a notes folder to begin");
+  const [indexWarningCount, setIndexWarningCount] = useState(0);
   const [quickOpen, setQuickOpen] = useState(false);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [conflict, setConflict] = useState<Conflict | null>(null);
@@ -436,6 +442,7 @@ function App() {
           setNotes(snapshot.notes);
           setFolders(snapshot.folders);
           setTrashNotes(snapshot.trash);
+          setIndexWarningCount(snapshot.warnings?.length ?? 0);
           setStatus(
             `${snapshot.notes.length} ${snapshot.notes.length === 1 ? "note" : "notes"}`,
           );
@@ -1611,6 +1618,13 @@ function App() {
           <p title={library ?? undefined}>
             {library ? library.split(/[\\/]/).pop() : "No library selected"}
           </p>
+          {indexWarningCount > 0 && (
+            <p className="index-warning" role="status">
+              {indexWarningCount}{" "}
+              {indexWarningCount === 1 ? "file could" : "files could"} not be
+              {" "}indexed
+            </p>
+          )}
         </div>
       </aside>
       <ColumnResizeHandle

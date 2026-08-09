@@ -365,6 +365,46 @@ describe("table editor", () => {
   });
 });
 
+describe("library index warnings", () => {
+  it("shows library index warnings", async () => {
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "load_selected_library"
+          ? "C:/Notes"
+          : command === "load_library_snapshot"
+            ? {
+                notes: [],
+                folders: [],
+                trash: [],
+                warnings: [
+                  { path: "C:/Notes/Unreadable.md", kind: "unreadable_markdown" },
+                ],
+              }
+            : command === "take_opened_markdown_files"
+              ? []
+              : undefined,
+      ) as never,
+    );
+    try {
+      render(<App />);
+
+      expect(
+        await screen.findByText("1 file could not be indexed"),
+      ).toBeInTheDocument();
+    } finally {
+      invoke.mockImplementation((command: string) =>
+        Promise.resolve(
+          command === "take_opened_markdown_files"
+            ? []
+            : command === "load_selected_library"
+              ? null
+              : undefined,
+        ),
+      );
+    }
+  });
+});
+
 describe("navigation structures and safety dialogs", () => {
   it("builds a heading hierarchy and identifies the active ancestors", () => {
     const items = [

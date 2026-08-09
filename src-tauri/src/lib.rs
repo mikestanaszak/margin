@@ -353,11 +353,26 @@ struct NoteSummary {
     folder: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum IndexWarningKind {
+    Walk,
+    UnreadableMarkdown,
+    InvalidMetadata,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct IndexWarning {
+    path: String,
+    kind: IndexWarningKind,
+}
+
 #[derive(Clone, Serialize)]
 struct LibrarySnapshot {
     notes: Vec<NoteSummary>,
     folders: Vec<String>,
     trash: Vec<NoteSummary>,
+    warnings: Vec<IndexWarning>,
 }
 
 /// A process-owned snapshot keeps note contents and search data out of the
@@ -408,13 +423,15 @@ fn build_library_snapshot(library: &Path) -> LibrarySnapshot {
             notes: Vec::new(),
             folders: Vec::new(),
             trash: Vec::new(),
+            warnings: Vec::new(),
         };
     };
-    let (notes, folders) = load_library_contents(&library);
+    let (notes, folders, mut warnings) = load_library_contents(&library);
     LibrarySnapshot {
         notes,
         folders,
-        trash: load_trash_contents(&library),
+        trash: load_trash_contents(&library, &mut warnings),
+        warnings,
     }
 }
 
@@ -559,20 +576,32 @@ fn normalize_tags(tags: Vec<String>) -> Vec<String> {
     result
 }
 
-fn split_front_matter(raw: &str) -> (FrontMatter, String) {
+fn front_matter_body(raw: &str) -> String {
     let normalized = raw.replace("\r\n", "\n");
     if let Some(rest) = normalized.strip_prefix("---\n") {
-        if let Some((yaml, body)) = rest.split_once("\n---\n") {
+        if let Some((_, body)) = rest.split_once("\n---\n") {
+            return body.strip_prefix('\n').unwrap_or(body).to_string();
+        }
+    }
+    normalized
+}
+
+fn split_front_matter_result(raw: &str) -> Result<(FrontMatter, String), serde_yaml::Error> {
+    let normalized = raw.replace("\r\n", "\n");
+    if let Some(rest) = normalized.strip_prefix("---\n") {
+        if let Some((yaml, _)) = rest.split_once("\n---\n") {
             // The blank line after front matter is a file-format separator, not
             // part of the note body. Consuming it prevents autosave from
             // accumulating one more leading blank line on every write.
-            return (
-                serde_yaml::from_str(yaml).unwrap_or_default(),
-                body.strip_prefix('\n').unwrap_or(body).to_string(),
-            );
+            return Ok((serde_yaml::from_str(yaml)?, front_matter_body(raw)));
         }
     }
-    (FrontMatter::default(), normalized)
+    Ok((FrontMatter::default(), normalized))
+}
+
+fn split_front_matter(raw: &str) -> (FrontMatter, String) {
+    split_front_matter_result(raw)
+        .unwrap_or_else(|_| (FrontMatter::default(), front_matter_body(raw)))
 }
 
 fn title_from_body(body: &str, fallback: &str) -> String {
@@ -612,14 +641,17 @@ fn note_excerpt(body: &str) -> String {
         .collect()
 }
 
-fn read_note_file(path: &Path) -> Result<NoteDocument, String> {
-    let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let (front, body) = split_front_matter(&raw);
+fn note_document_from_parts(
+    path: &Path,
+    raw: &str,
+    front: FrontMatter,
+    body: String,
+) -> NoteDocument {
     let fallback = path
         .file_stem()
         .and_then(|v| v.to_str())
         .unwrap_or("Untitled");
-    Ok(NoteDocument {
+    NoteDocument {
         id: None,
         path: path.to_string_lossy().to_string(),
         // The visible first heading is the canonical note title. Front matter
@@ -631,7 +663,13 @@ fn read_note_file(path: &Path) -> Result<NoteDocument, String> {
         revision: file_revision(path, &raw),
         created: front.created,
         updated_at: front.updated,
-    })
+    }
+}
+
+fn read_note_file(path: &Path) -> Result<NoteDocument, String> {
+    let raw = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let (front, body) = split_front_matter(&raw);
+    Ok(note_document_from_parts(path, &raw, front, body))
 }
 
 fn read_library_note_file(library: &Path, path: &Path) -> Result<NoteDocument, String> {
@@ -639,6 +677,26 @@ fn read_library_note_file(library: &Path, path: &Path) -> Result<NoteDocument, S
     let mut note = read_note_file(&path)?;
     note.id = Some(relative_note_id(library, &path)?);
     Ok(note)
+}
+
+fn read_library_note_file_for_index(
+    library: &Path,
+    path: &Path,
+) -> Result<(NoteDocument, Option<IndexWarningKind>), IndexWarningKind> {
+    let path =
+        existing_library_path(library, path).map_err(|_| IndexWarningKind::UnreadableMarkdown)?;
+    let raw = fs::read_to_string(&path).map_err(|_| IndexWarningKind::UnreadableMarkdown)?;
+    let (front, body, warning) = match split_front_matter_result(&raw) {
+        Ok((front, body)) => (front, body, None),
+        Err(_) => {
+            let (front, body) = split_front_matter(&raw);
+            (front, body, Some(IndexWarningKind::InvalidMetadata))
+        }
+    };
+    let mut note = note_document_from_parts(&path, &raw, front, body);
+    note.id =
+        Some(relative_note_id(library, &path).map_err(|_| IndexWarningKind::UnreadableMarkdown)?);
+    Ok((note, warning))
 }
 
 fn managed_note(library: &Path, note: NoteDocument) -> Result<NoteDocument, String> {
@@ -950,9 +1008,58 @@ fn is_managed_note_asset_directory(path: &Path) -> bool {
         })
 }
 
-fn load_library_contents(library: &Path) -> (Vec<NoteSummary>, Vec<String>) {
+fn push_index_warning(warnings: &mut Vec<IndexWarning>, path: &Path, kind: IndexWarningKind) {
+    warnings.push(IndexWarning {
+        path: path.to_string_lossy().to_string(),
+        kind,
+    });
+}
+
+fn collect_library_entry(
+    library: &Path,
+    entry: Result<walkdir::DirEntry, walkdir::Error>,
+    notes: &mut Vec<NoteSummary>,
+    folders: &mut Vec<String>,
+    warnings: &mut Vec<IndexWarning>,
+) {
+    let entry = match entry {
+        Ok(entry) => entry,
+        Err(error) => {
+            push_index_warning(
+                warnings,
+                error.path().unwrap_or(library),
+                IndexWarningKind::Walk,
+            );
+            return;
+        }
+    };
+    if entry.file_type().is_symlink() {
+        return;
+    }
+    if entry.file_type().is_dir() {
+        if let Ok(relative) = entry.path().strip_prefix(library) {
+            let folder = relative.to_string_lossy().replace('\\', "/");
+            if !folder.is_empty() {
+                folders.push(folder);
+            }
+        }
+    } else if entry.file_type().is_file() && is_markdown_path(entry.path()) {
+        match read_library_note_file_for_index(library, entry.path()) {
+            Ok((note, warning)) => {
+                notes.push(note_summary(note, library));
+                if let Some(kind) = warning {
+                    push_index_warning(warnings, entry.path(), kind);
+                }
+            }
+            Err(kind) => push_index_warning(warnings, entry.path(), kind),
+        }
+    }
+}
+
+fn load_library_contents(library: &Path) -> (Vec<NoteSummary>, Vec<String>, Vec<IndexWarning>) {
     let mut notes = Vec::new();
     let mut folders = Vec::new();
+    let mut warnings = Vec::new();
     for entry in WalkDir::new(library)
         .min_depth(1)
         .follow_links(false)
@@ -960,27 +1067,12 @@ fn load_library_contents(library: &Path) -> (Vec<NoteSummary>, Vec<String>) {
         .filter_entry(|entry| {
             entry.file_name() != ".markdown-notes" && !is_managed_note_asset_directory(entry.path())
         })
-        .filter_map(Result::ok)
     {
-        if entry.file_type().is_symlink() {
-            continue;
-        }
-        if entry.file_type().is_dir() {
-            if let Ok(relative) = entry.path().strip_prefix(library) {
-                let folder = relative.to_string_lossy().replace('\\', "/");
-                if !folder.is_empty() {
-                    folders.push(folder);
-                }
-            }
-        } else if entry.file_type().is_file() && is_markdown_path(entry.path()) {
-            if let Ok(note) = read_library_note_file(library, entry.path()) {
-                notes.push(note_summary(note, library));
-            }
-        }
+        collect_library_entry(library, entry, &mut notes, &mut folders, &mut warnings);
     }
     notes.sort_by_key(|note| std::cmp::Reverse(note.updated));
     folders.sort_by_key(|folder| folder.to_lowercase());
-    (notes, folders)
+    (notes, folders, warnings)
 }
 
 #[tauri::command]
@@ -1187,26 +1279,43 @@ fn load_folders(library_path: String) -> Result<Vec<String>, String> {
     Ok(load_library_contents(&library).1)
 }
 
-fn load_trash_contents(library: &Path) -> Vec<NoteSummary> {
+fn load_trash_contents(library: &Path, warnings: &mut Vec<IndexWarning>) -> Vec<NoteSummary> {
     let trash = library.join(".markdown-notes").join("trash");
     if !trash.exists() {
         return Vec::new();
     }
-    let mut notes = WalkDir::new(&trash)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            !entry.file_type().is_symlink()
-                && entry.file_type().is_file()
-                && is_markdown_path(entry.path())
-        })
-        .filter_map(|entry| read_library_note_file(library, entry.path()).ok())
-        .map(|note| NoteSummary {
-            folder: "Trash".into(),
-            ..note_summary(note, library)
-        })
-        .collect::<Vec<_>>();
+    let mut notes = Vec::new();
+    for entry in WalkDir::new(&trash).follow_links(false) {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                push_index_warning(
+                    warnings,
+                    error.path().unwrap_or(&trash),
+                    IndexWarningKind::Walk,
+                );
+                continue;
+            }
+        };
+        if entry.file_type().is_symlink()
+            || !entry.file_type().is_file()
+            || !is_markdown_path(entry.path())
+        {
+            continue;
+        }
+        match read_library_note_file_for_index(library, entry.path()) {
+            Ok((note, warning)) => {
+                notes.push(NoteSummary {
+                    folder: "Trash".into(),
+                    ..note_summary(note, library)
+                });
+                if let Some(kind) = warning {
+                    push_index_warning(warnings, entry.path(), kind);
+                }
+            }
+            Err(kind) => push_index_warning(warnings, entry.path(), kind),
+        }
+    }
     notes.sort_by_key(|note| std::cmp::Reverse(note.updated));
     notes
 }
@@ -1214,7 +1323,7 @@ fn load_trash_contents(library: &Path) -> Vec<NoteSummary> {
 #[tauri::command]
 fn load_trash(library_path: String) -> Result<Vec<NoteSummary>, String> {
     let library = canonical_library_root(library_path)?;
-    Ok(load_trash_contents(&library))
+    Ok(load_trash_contents(&library, &mut Vec::new()))
 }
 
 #[tauri::command]
@@ -2304,14 +2413,15 @@ pub fn run() {
 mod tests {
     use super::{
         append_quick_note, apply_staged_file_updates, backlinks_for_snapshot, body_with_title,
-        build_library_snapshot, create_folder, create_note, delete_note_permanently,
-        duplicate_note, existing_library_path, import_daily_note, import_daily_note_to_new_note,
-        import_markdown_file, library_folder, load_folders, load_library, load_trash,
-        markdown_asset_directory, move_folder_to_trash, move_note_to_folder, move_note_to_trash,
-        normalize_tags, path_for_title, read_library_note_file, read_note_file, relative_note_id,
-        rename_file_safely, rename_folder, rename_note, restore_note_from_trash, safe_file_stem,
-        save_note, save_note_document, search_snapshot, split_front_matter, stage_file_updates,
-        LibraryIndex, LinkRewrite, SaveNoteResult,
+        build_library_snapshot, collect_library_entry, create_folder, create_note,
+        delete_note_permanently, duplicate_note, existing_library_path, import_daily_note,
+        import_daily_note_to_new_note, import_markdown_file, library_folder, load_folders,
+        load_library, load_trash, markdown_asset_directory, move_folder_to_trash,
+        move_note_to_folder, move_note_to_trash, normalize_tags, path_for_title,
+        read_library_note_file, read_note_file, relative_note_id, rename_file_safely,
+        rename_folder, rename_note, restore_note_from_trash, safe_file_stem, save_note,
+        save_note_document, search_snapshot, split_front_matter, stage_file_updates,
+        IndexWarningKind, LibraryIndex, LinkRewrite, SaveNoteResult,
     };
     use std::{
         fs,
@@ -2323,6 +2433,7 @@ mod tests {
         thread,
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
+    use walkdir::WalkDir;
 
     static TEMP_LIBRARY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -2650,6 +2761,56 @@ mod tests {
         })();
         fs::remove_dir_all(&library).ok();
         result.unwrap();
+    }
+
+    #[test]
+    fn library_snapshot_reports_index_warnings() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        fs::write(library.join("Unreadable.md"), [0xff, 0xfe, 0xfd]).unwrap();
+
+        let snapshot = build_library_snapshot(&library);
+        assert_eq!(snapshot.notes.len(), 0);
+        assert_eq!(snapshot.warnings.len(), 1);
+        assert_eq!(
+            snapshot.warnings[0].kind,
+            IndexWarningKind::UnreadableMarkdown
+        );
+        assert!(snapshot.warnings[0].path.ends_with("Unreadable.md"));
+
+        let removed = library.join("Removed");
+        let entry = WalkDir::new(&removed)
+            .into_iter()
+            .next()
+            .expect("missing directory must produce a walk result");
+        let mut notes = Vec::new();
+        let mut folders = Vec::new();
+        let mut warnings = Vec::new();
+        collect_library_entry(&library, entry, &mut notes, &mut folders, &mut warnings);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].kind, IndexWarningKind::Walk);
+        assert!(warnings[0].path.ends_with("Removed"));
+
+        fs::remove_dir_all(&library).ok();
+    }
+
+    #[test]
+    fn library_snapshot_keeps_notes_with_invalid_metadata_indexable() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        fs::write(
+            library.join("Broken.md"),
+            "---\ntags: [unclosed\n---\n\n# Fallback title\n\nBody text",
+        )
+        .unwrap();
+
+        let snapshot = build_library_snapshot(&library);
+        assert_eq!(snapshot.notes.len(), 1);
+        assert_eq!(snapshot.notes[0].title, "Fallback title");
+        assert_eq!(snapshot.warnings.len(), 1);
+        assert_eq!(snapshot.warnings[0].kind, IndexWarningKind::InvalidMetadata);
+
+        fs::remove_dir_all(&library).ok();
     }
 
     #[test]
