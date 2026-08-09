@@ -38,7 +38,7 @@ The example notes include:
 | Create, save, filename alignment, collisions, rename, duplicate, and move | Rust workflow tests | Confirm Explorer shows ordinary `.md` files |
 | Note/folder trash, restore, permanent delete, and path containment | Rust workflow and rejection tests | Confirm destructive-action prompts and context menus |
 | Preview GFM, tasks, tables, links, local images, and code languages | React and transformation tests | Visually inspect highlighting and local image layout |
-| CodeMirror formatting, tables, controlled updates, and view-state bounds | Editor command tests | Confirm selection and scroll remain stable through autosave and mode changes |
+| CodeMirror formatting, code-fence language autocomplete, image insertion, controlled updates, and view-state bounds | Editor command tests | Confirm selection and scroll remain stable through autosave and mode changes |
 | Tags, note cards, favorites control, quick switcher, and relative dates | React interaction tests | Confirm favorite persistence after relaunch |
 | Edit/Split/Preview and keyboard-resizable split layout | React interaction tests | Drag dividers and verify saved widths after relaunch |
 | Quick-capture append and import destinations | Rust workflow tests | Exercise the registered global shortcut and separate capture window |
@@ -55,7 +55,7 @@ Use `pnpm tauri dev` after automated checks pass:
 2. Open each navigation filter and a nested folder; search for `crème`, `planning`, and `release checklist`.
 3. Open `Project Alpha`, toggle both task states in Preview, edit its table, and switch among Edit, Split, and Preview with the toolbar and shortcut.
 4. Follow its wiki link and relative Markdown link, then verify Backlinks and Outline navigation.
-5. Create, rename, duplicate, move, favorite, trash, restore, and permanently delete a temporary note. Repeat trash with a temporary folder.
+5. Create a temporary note, insert an image through the picker, drag/drop, and paste; verify the image preview and adjacent `.assets` folder. Rename, move, trash, restore, and permanently delete the note to verify its asset folder follows it. Repeat trash with a temporary folder.
 6. Make an unsaved edit, modify the same file externally, and verify that the conflict dialog preserves both choices.
 7. Open quick capture with the global shortcut, cancel with Escape, save with Ctrl/Cmd+Enter, and import the Daily capture to both an existing note and a new nested note.
 8. Change theme, pane sizes, default capture import target, and shortcuts; relaunch and verify persistence.

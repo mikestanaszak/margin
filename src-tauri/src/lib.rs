@@ -550,6 +550,12 @@ struct NoteDocument {
 }
 
 #[derive(Serialize)]
+struct ImportedImage {
+    markdown_path: String,
+    alt: String,
+}
+
+#[derive(Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 enum SaveNoteResult {
     Saved { note: NoteDocument },
@@ -696,6 +702,151 @@ fn read_library_note_file(library: &Path, path: &Path) -> Result<NoteDocument, S
 
 fn managed_note(library: &Path, note: NoteDocument) -> Result<NoteDocument, String> {
     read_library_note_file(library, Path::new(&note.path))
+}
+
+const MAX_IMAGE_BYTES: usize = 25 * 1024 * 1024;
+
+fn image_extension(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        Some("png")
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("jpg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("gif")
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
+    }
+}
+
+fn asset_directory_for_note(note: &Path) -> Result<PathBuf, String> {
+    let parent = note.parent().ok_or("Note has no parent folder")?;
+    let stem = note
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or("Note filename is invalid")?;
+    Ok(parent.join(format!("{}.assets", stem)))
+}
+
+fn move_note_assets(
+    library: &Path,
+    source_note: &Path,
+    destination_note: &Path,
+) -> Result<(), String> {
+    let source_assets = asset_directory_for_note(source_note)?;
+    if !source_assets.exists() {
+        return Ok(());
+    }
+    reject_symlink_components(library, &source_assets)?;
+    if !source_assets.is_dir() {
+        return Err("The note's asset path is not a folder".into());
+    }
+    let destination_assets = asset_directory_for_note(destination_note)?;
+    reject_symlink_components(library, &destination_assets)?;
+    if destination_assets.exists() {
+        return Err("The destination already has an asset folder".into());
+    }
+    fs::rename(source_assets, destination_assets).map_err(|error| error.to_string())
+}
+
+fn move_note_and_assets(library: &Path, source: &Path, destination: &Path) -> Result<(), String> {
+    move_note_assets(library, source, destination)?;
+    if let Err(error) = fs::rename(source, destination) {
+        let _ = move_note_assets(library, destination, source);
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+fn unique_asset_path(directory: &Path, stem: &str, extension: &str) -> PathBuf {
+    let base = safe_file_stem(stem);
+    let base = if base.is_empty() { "image" } else { &base };
+    let mut number = 0;
+    loop {
+        let suffix = if number == 0 {
+            String::new()
+        } else {
+            format!("-{}", number)
+        };
+        let candidate = directory.join(format!("{}{}.{}", base, suffix, extension));
+        if !candidate.exists() {
+            return candidate;
+        }
+        number += 1;
+    }
+}
+
+fn store_note_image(
+    library: &Path,
+    note: &Path,
+    source_name: &str,
+    bytes: Vec<u8>,
+) -> Result<ImportedImage, String> {
+    let note = existing_library_path(library, note)?;
+    if !is_markdown_path(&note) {
+        return Err("Choose a Markdown note inside the selected library".into());
+    }
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err("Images must be 25 MB or smaller".into());
+    }
+    let extension = image_extension(&bytes).ok_or("Choose a PNG, JPEG, GIF, or WebP image")?;
+    let directory = asset_directory_for_note(&note)?;
+    reject_symlink_components(library, &directory)?;
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let stem = Path::new(source_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("image");
+    let target = unique_asset_path(&directory, stem, extension);
+    fs::write(&target, bytes).map_err(|error| error.to_string())?;
+    let file_name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or("Image filename is invalid")?;
+    let folder_name = directory
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or("Image folder name is invalid")?;
+    Ok(ImportedImage {
+        markdown_path: format!("{}/{}", folder_name, file_name),
+        alt: stem.to_string(),
+    })
+}
+
+#[tauri::command]
+fn import_note_image_from_path(
+    note_path: String,
+    source_path: String,
+    library_path: String,
+) -> Result<ImportedImage, String> {
+    let library = canonical_library_root(library_path)?;
+    let source = fs::canonicalize(source_path).map_err(|_| "Choose an existing image file")?;
+    if !source.is_file() {
+        return Err("Choose an existing image file".into());
+    }
+    let name = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("image")
+        .to_string();
+    store_note_image(
+        &library,
+        Path::new(&note_path),
+        &name,
+        fs::read(source).map_err(|error| error.to_string())?,
+    )
+}
+
+#[tauri::command]
+fn import_note_image_from_bytes(
+    note_path: String,
+    filename: String,
+    bytes: Vec<u8>,
+    library_path: String,
+) -> Result<ImportedImage, String> {
+    let library = canonical_library_root(library_path)?;
+    store_note_image(&library, Path::new(&note_path), &filename, bytes)
 }
 
 fn note_summary(note: NoteDocument, library: &Path) -> NoteSummary {
@@ -1015,7 +1166,7 @@ fn restore_note_from_trash(path: String, library_path: String) -> Result<NoteDoc
     } else {
         requested
     };
-    fs::rename(source, &destination).map_err(|e| e.to_string())?;
+    move_note_and_assets(&library, &source, &destination)?;
     read_library_note_file(&library, &destination)
 }
 
@@ -1031,7 +1182,12 @@ fn delete_note_permanently(path: String, library_path: String) -> Result<(), Str
     if !is_markdown_path(&source) {
         return Err("Only Markdown notes can be permanently deleted".into());
     }
-    fs::remove_file(source).map_err(|e| e.to_string())
+    let assets = asset_directory_for_note(&source)?;
+    fs::remove_file(&source).map_err(|e| e.to_string())?;
+    if assets.exists() {
+        fs::remove_dir_all(assets).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1571,7 +1727,27 @@ fn save_note_checked(
         if let Err(error) = apply_staged_file_updates(&mut staged, None, None) {
             return Err(SaveNoteFailure::Error(error));
         }
+        let managed_library =
+            library.filter(|root| path.starts_with(root) && destination.starts_with(root));
+        let assets_moved = managed_library.is_some_and(|_| {
+            asset_directory_for_note(&path).is_ok_and(|directory| directory.exists())
+        });
+        if assets_moved {
+            if let Err(error) = move_note_assets(managed_library.unwrap(), &path, &destination) {
+                let rollback = rollback_staged_file_updates(&mut staged, None);
+                let message = match rollback {
+                    Ok(()) => error,
+                    Err(rollback_error) => {
+                        format!("{}; rollback failed: {}", error, rollback_error)
+                    }
+                };
+                return Err(SaveNoteFailure::Error(message));
+            }
+        }
         if let Err(error) = rename_file_safely(&path, &destination) {
+            if assets_moved {
+                let _ = move_note_assets(managed_library.unwrap(), &destination, &path);
+            }
             let rollback = rollback_staged_file_updates(&mut staged, None);
             let message = match rollback {
                 Ok(()) => error,
@@ -1804,7 +1980,7 @@ fn move_note_to_folder(
         requested
     };
     if destination != source {
-        fs::rename(&source, &destination).map_err(|error| error.to_string())?;
+        move_note_and_assets(&library, &source, &destination)?;
     }
     read_library_note_file(&library, &destination)
 }
@@ -1852,7 +2028,7 @@ fn move_note_to_trash(path: String, library_path: String) -> Result<(), String> 
     } else {
         requested
     };
-    fs::rename(source, destination).map_err(|e| e.to_string())
+    move_note_and_assets(&library, &source, &destination)
 }
 
 fn unique_directory_path(requested: &Path) -> Result<PathBuf, String> {
@@ -1977,6 +2153,8 @@ pub fn run() {
             rename_note,
             duplicate_note,
             import_markdown_file,
+            import_note_image_from_path,
+            import_note_image_from_bytes,
             move_note_to_folder,
             reveal_note_in_file_manager,
             move_note_to_trash,

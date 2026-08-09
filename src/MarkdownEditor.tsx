@@ -40,6 +40,8 @@ export type MarkdownEditorProps = {
   value: string;
   onChange: (value: string) => void;
   onBlur?: () => void;
+  onInsertImage?: () => void;
+  onImageFile?: (file: File, source: "drop" | "paste") => void;
   className?: string;
   style?: CSSProperties;
   placeholder?: string;
@@ -54,6 +56,8 @@ export type MarkdownEditorHandle = {
   getView: () => EditorView | null;
   insertTable: (rows?: number, columns?: number) => void;
 };
+
+export type ImportedImage = { markdownPath: string; alt: string };
 
 type SavedViewState = {
   ranges: Array<{ anchor: number; head: number }>;
@@ -276,6 +280,20 @@ export function insertLink(view: EditorView): boolean {
   return true;
 }
 
+export function insertImage(view: EditorView, image: ImportedImage): boolean {
+  const { state } = view;
+  const transaction = state.changeByRange((range) => {
+    const alt = image.alt.replace(/[\[\]\r\n]/g, " ").trim() || "image";
+    const insert = `![${alt}](<${image.markdownPath}>)`;
+    return {
+      changes: { from: range.from, to: range.to, insert },
+      range: EditorSelection.cursor(range.from + insert.length),
+    };
+  });
+  view.dispatch({ changes: transaction.changes, selection: transaction.selection, scrollIntoView: true, userEvent: "input" });
+  return true;
+}
+
 export function applyHeading(view: EditorView, level: number): boolean {
   const range = view.state.selection.main;
   const start = view.state.doc.lineAt(range.from);
@@ -331,6 +349,8 @@ export const MarkdownEditor = forwardRef<
     value,
     onChange,
     onBlur,
+    onInsertImage,
+    onImageFile,
     className,
     style,
     placeholder = "# Start writing",
@@ -347,12 +367,14 @@ export const MarkdownEditor = forwardRef<
   const extensionsRef = useRef<Extension[]>([]);
   const onChangeRef = useRef(onChange);
   const onBlurRef = useRef(onBlur);
+  const onImageFileRef = useRef(onImageFile);
   const applyingControlledValueRef = useRef(false);
   const restoreFrameRef = useRef<number | null>(null);
   const [toolbarPosition, setToolbarPosition] = useState<{ left: number; top: number } | null>(null);
 
   onChangeRef.current = onChange;
   onBlurRef.current = onBlur;
+  onImageFileRef.current = onImageFile;
 
   useImperativeHandle(
     ref,
@@ -419,6 +441,25 @@ export const MarkdownEditor = forwardRef<
           if (key === "b") return wrapSelection(editorView, "**");
           if (key === "i") return wrapSelection(editorView, "_");
           return insertLink(editorView);
+        },
+        paste: (event) => {
+          const image = Array.from(event.clipboardData?.files ?? []).find((file) => file.type.startsWith("image/"));
+          if (!image || !onImageFileRef.current) return false;
+          event.preventDefault();
+          onImageFileRef.current(image, "paste");
+          return true;
+        },
+        dragover: (event) => {
+          if (!onImageFileRef.current || !Array.from(event.dataTransfer?.files ?? []).some((file) => file.type.startsWith("image/"))) return false;
+          event.preventDefault();
+          return true;
+        },
+        drop: (event) => {
+          const image = Array.from(event.dataTransfer?.files ?? []).find((file) => file.type.startsWith("image/"));
+          if (!image || !onImageFileRef.current) return false;
+          event.preventDefault();
+          onImageFileRef.current(image, "drop");
+          return true;
         },
       }),
       keymap.of([
@@ -515,6 +556,7 @@ export const MarkdownEditor = forwardRef<
       style={{ minHeight: 0, ...style }}
       data-note-path={notePath}
     >
+      {!readOnly && onInsertImage && <button type="button" className="markdown-editor-image-button" title="Insert image" aria-label="Insert image" onClick={onInsertImage}>Image</button>}
       {!readOnly && toolbarPosition && <div className="markdown-editor-toolbar" style={toolbarPosition} role="toolbar" aria-label="Format selected text" onMouseDown={event => event.preventDefault()}>
         <button type="button" title="Heading 2" onClick={() => viewRef.current && applyHeading(viewRef.current, 2)}>H2</button>
         <button type="button" title="Heading 3" onClick={() => viewRef.current && applyHeading(viewRef.current, 3)}>H3</button>
