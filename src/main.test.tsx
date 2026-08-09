@@ -42,21 +42,25 @@ vi.mock("./MermaidDiagram", () => ({
 
 import {
   App,
-  CascadingNoteOptions,
   ConflictDialog,
   createRefreshCoordinator,
-  FolderNoteTree,
-  FolderTree,
-  MarkdownPreview,
   QuickCaptureDialog,
-  SettingsDialog,
-  TableEditorDialog,
   UpdateDialog,
-  activeOutlineAncestors,
-  outlineTree,
   restartInstalledUpdate,
   type UpdateState,
-} from "./main";
+} from "./app/App";
+import {
+  CascadingNoteOptions,
+  FolderNoteTree,
+  FolderTree,
+} from "./features/library/LibraryNavigation";
+import { MarkdownPreview } from "./features/preview/MarkdownPreview";
+import {
+  activeOutlineAncestors,
+  outlineTree,
+} from "./features/preview/Outline";
+import { TableEditorDialog } from "./features/preview/TableDialogs";
+import { SettingsDialog } from "./features/settings/SettingsDialog";
 
 const notes = [
   {
