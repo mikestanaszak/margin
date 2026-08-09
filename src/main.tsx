@@ -28,6 +28,11 @@ import {
 } from "./components";
 import { isMac } from "./platform";
 import {
+  loadPalette,
+  paletteStorageKey,
+  type Palette,
+} from "./theme-palettes";
+import {
   clamp,
   fileStem,
   formatShortcut,
@@ -341,6 +346,9 @@ function App() {
       ? saved
       : "system";
   });
+  const [palette] = useState<Palette>(() =>
+    loadPalette(localStorage.getItem(paletteStorageKey)),
+  );
   const [shortcuts, setShortcuts] = useState<Shortcuts>(loadShortcuts);
   const [quickImportDefaultPath, setQuickImportDefaultPath] = useState(
     () => localStorage.getItem(quickImportDefaultKey) || "",
@@ -530,6 +538,10 @@ function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem(themeKey, theme);
   }, [theme]);
+  useEffect(() => {
+    document.documentElement.dataset.palette = palette;
+    localStorage.setItem(paletteStorageKey, palette);
+  }, [palette]);
   useEffect(() => {
     localStorage.setItem(shortcutsKey, JSON.stringify(shortcuts));
   }, [shortcuts]);
