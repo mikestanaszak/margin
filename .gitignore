@@ -15,3 +15,4 @@ target-stale-*/
 *.mobileprovision
 .DS_Store
 Thumbs.db
+.superpowers/
