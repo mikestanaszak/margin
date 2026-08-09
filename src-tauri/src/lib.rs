@@ -1,6 +1,7 @@
 use chrono::Local;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -522,14 +523,15 @@ fn modified_seconds(path: &Path) -> u64 {
         .as_secs()
 }
 
-fn file_revision(path: &Path) -> String {
-    fs::metadata(path)
+fn file_revision(path: &Path, contents: &str) -> String {
+    let modified = fs::metadata(path)
         .and_then(|meta| meta.modified())
         .unwrap_or(SystemTime::UNIX_EPOCH)
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_nanos()
-        .to_string()
+        .as_nanos();
+    let digest = Sha256::digest(contents.as_bytes());
+    format!("{modified}:{}:{digest:x}", contents.len())
 }
 
 fn now_rfc3339() -> String {
@@ -621,7 +623,7 @@ fn read_note_file(path: &Path) -> Result<NoteDocument, String> {
         tags: normalize_tags(front.tags.unwrap_or_default()),
         body,
         updated: modified_seconds(path),
-        revision: file_revision(path),
+        revision: file_revision(path, &raw),
         created: front.created,
         updated_at: front.updated,
     })
@@ -2132,8 +2134,16 @@ mod tests {
             let saved = save_note_document(note)?;
             let mut stale = saved.clone();
             stale.body = "# Mine\n\nUnsaved local change\n".into();
+            let saved_modified = fs::metadata(&saved.path)
+                .and_then(|metadata| metadata.modified())
+                .map_err(|error| error.to_string())?;
 
             fs::write(&saved.path, "# On disk\n\nExternal change\n")
+                .map_err(|error| error.to_string())?;
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&saved.path)
+                .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(saved_modified)))
                 .map_err(|error| error.to_string())?;
 
             match save_note(stale, library_path) {
