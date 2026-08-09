@@ -541,9 +541,6 @@ function App() {
     document.documentElement.dataset.palette = palette;
     localStorage.setItem(themeKey, theme);
     localStorage.setItem(paletteStorageKey, palette);
-    void invoke<void>("set_runtime_palette_icon", { palette }).catch(
-      () => undefined,
-    );
   }, [palette, theme]);
   useEffect(() => {
     localStorage.setItem(shortcutsKey, JSON.stringify(shortcuts));
@@ -4012,7 +4009,15 @@ function MarkdownPreview({
     if (!src || /^(https?:|data:|asset:)/i.test(src)) return src;
     const separator = directory.includes("\\") ? "\\" : "/";
     const parent = directory.replace(/[\\/]+$/, "");
-    const relative = src.replace(/^[\\/]+/, "").replace(/[\\/]/g, separator);
+    let decoded = src;
+    try {
+      decoded = decodeURIComponent(src);
+    } catch {
+      // Keep malformed escapes literal so a bad Markdown URL cannot break preview.
+    }
+    const relative = decoded
+      .replace(/^[\\/]+/, "")
+      .replace(/[\\/]/g, separator);
     return convertFileSrc(`${parent}${separator}${relative}`);
   };
   const markdownTables = useMemo(() => parseMarkdownTables(markdown), [markdown]);

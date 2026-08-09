@@ -231,6 +231,25 @@ describe("Markdown preview", () => {
     );
   });
 
+  it("decodes spaces and Unicode before resolving a Windows image path", () => {
+    convertFileSrc.mockClear();
+    render(
+      <MarkdownPreview
+        markdown="![image](<Meeting Notes — Kickoff.assets/image.png>)"
+        notePath={"C:\\Notes\\Work\\Meeting Notes — Kickoff.md"}
+        notes={[]}
+        onOpen={() => undefined}
+        onEditTable={() => undefined}
+        onToggleTask={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "image" })).toBeInTheDocument();
+    expect(convertFileSrc).toHaveBeenCalledWith(
+      "C:\\Notes\\Work\\Meeting Notes — Kickoff.assets\\image.png",
+    );
+  });
+
   it("renders GFM and routes wiki and relative Markdown links inside the library", () => {
     const onOpen = vi.fn();
     const onEditTable = vi.fn();
@@ -508,7 +527,7 @@ describe("navigation structures and safety dialogs", () => {
     }
   });
 
-  it("updates the runtime icon when the appearance changes", () => {
+  it("keeps the static application icon when the appearance changes", () => {
     const previousPalette = localStorage.getItem("margin.palette");
     const previousTheme = localStorage.getItem("margin.theme");
     localStorage.setItem("margin.palette", "paper");
@@ -521,9 +540,10 @@ describe("navigation structures and safety dialogs", () => {
         target: { value: "dark" },
       });
 
-      expect(invoke).toHaveBeenCalledWith("set_runtime_palette_icon", {
-        palette: "paper",
-      });
+      expect(invoke).not.toHaveBeenCalledWith(
+        "set_runtime_palette_icon",
+        expect.anything(),
+      );
     } finally {
       if (previousPalette === null) localStorage.removeItem("margin.palette");
       else localStorage.setItem("margin.palette", previousPalette);

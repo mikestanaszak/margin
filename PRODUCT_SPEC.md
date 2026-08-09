@@ -35,7 +35,7 @@
 - Template editor: create, rename, duplicate, delete, preview, and create a note from reusable Markdown templates. `{{date}}` and `{{time}}` variables are supported.
 - Daily captures can be imported into a configured default note, another existing note, or a new note in any folder.
 - Light, dark, and system appearance; system is the default. Ink, Mint, and Linen palettes are available independently of appearance, with Mint as the default.
-- On Windows and macOS, Margin updates its running icon to match the selected palette; the installed app and shortcut use the packaged Paper-toned Margin icon, while Linux keeps the packaged icon.
+- Margin uses one packaged green application icon on every platform; theme and palette changes do not change it.
 - Images can be picked, dragged into the editor, or pasted. Margin copies each image into a sibling `<note>.assets` folder and inserts a relative Markdown image link. A successful note save removes unreferenced direct files from that note's companion folder and deletes the folder when it becomes empty.
 - Image companion folders stay out of the sidebar and folder menus. The Image action lives beside table insertion in the top edit formatting toolbar. Renaming a note moves its companion folder and rewrites that note's image paths.
 - The Paper palette provides coordinated warm-tan light and dark appearances; code-fence language suggestions remain readable in every palette.
