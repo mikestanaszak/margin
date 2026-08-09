@@ -1,6 +1,8 @@
 import { EditorSelection, EditorState, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { history, undo, undoDepth } from "@codemirror/commands";
+import { CompletionContext } from "@codemirror/autocomplete";
+import { all as highlightLanguages, createLowlight } from "lowlight";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render } from "@testing-library/react";
 import { createElement } from "react";
@@ -10,6 +12,7 @@ import {
   insertLink,
   insertTable,
   MarkdownEditor,
+  codeFenceLanguageCompletions,
   selectionFromSaved,
   wrapSelection,
 } from "./MarkdownEditor";
@@ -48,6 +51,48 @@ function appendText(view: EditorView, text: string, time: number) {
 
 afterEach(() => {
   views.splice(0).forEach((view) => view.destroy());
+});
+
+async function languageCompletions(doc: string) {
+  const state = EditorState.create({ doc });
+  return await codeFenceLanguageCompletions(
+    new CompletionContext(state, doc.length, true),
+  );
+}
+
+describe("code-fence language autocomplete", () => {
+  it("suggests supported Highlight.js names and aliases after an opening fence", async () => {
+    const result = await languageCompletions("```typ");
+
+    expect(result).not.toBeNull();
+    expect(result?.from).toBe(3);
+    expect(result?.options.map((option) => option.label)).toEqual(
+      expect.arrayContaining(["typescript", "ts"]),
+    );
+  });
+
+  it("keeps a custom fence identifier completable", async () => {
+    const result = await languageCompletions("```futurelang");
+
+    expect(result).not.toBeNull();
+    expect(result?.from).toBe(3);
+  });
+
+  it("only suggests language identifiers Highlight.js supports", async () => {
+    const result = await languageCompletions("```");
+    const highlighter = createLowlight(highlightLanguages);
+
+    expect(result?.options.filter(({ label }) => !highlighter.registered(label))).toEqual([]);
+  });
+
+  it.each([
+    "typescript",
+    "```typescript\nconst value = 1",
+    "Text ```typescript",
+    "    ```typescript",
+  ])("does not suggest languages outside a fence language position: %j", async (doc) => {
+    expect(await languageCompletions(doc)).toBeNull();
+  });
 });
 
 describe("Markdown editor formatting", () => {
@@ -101,6 +146,28 @@ describe("Markdown editor formatting", () => {
 
     expect(content).toHaveTextContent("Read-only external note");
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("enables native spell check only for editable notes", () => {
+    const editable = render(
+      createElement(MarkdownEditor, {
+        notePath: "editable.md",
+        value: "A misspelled note",
+        onChange: vi.fn(),
+      }),
+    );
+    expect(editable.container.querySelector(".cm-content")).toHaveAttribute("spellcheck", "true");
+    editable.unmount();
+
+    const readOnly = render(
+      createElement(MarkdownEditor, {
+        notePath: "outside.md",
+        value: "Read-only note",
+        onChange: vi.fn(),
+        readOnly: true,
+      }),
+    );
+    expect(readOnly.container.querySelector(".cm-content")).toHaveAttribute("spellcheck", "false");
   });
 });
 

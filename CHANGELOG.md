@@ -2,6 +2,23 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## 0.4.0 — 2026-08-08
+
+### Added
+
+- Code fences offer language suggestions while you type, including common aliases.
+- Preview code blocks now expose a copy control when hovered or focused.
+- Mermaid code fences render diagrams locally in Preview, with the source preserved when a diagram cannot render.
+
+### Improved
+
+- Update installation now keeps its status accurate when the desktop restart request is unavailable.
+- Margin checks every Windows, macOS, and Linux installer before a release is published.
+
+### Fixed
+
+- Spell check is now enabled only for editable notes, never previews or read-only system-opened files.
+
 ## 0.3.2 — 2026-08-06
 
 ### Fixed

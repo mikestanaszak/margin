@@ -29,3 +29,10 @@ if (!Range.prototype.getClientRects) {
 if (!Range.prototype.getBoundingClientRect) {
   Range.prototype.getBoundingClientRect = () => new DOMRect();
 }
+
+const svgElementPrototype = SVGElement.prototype as SVGElement & {
+  getBBox?: () => DOMRect;
+};
+if (!svgElementPrototype.getBBox) {
+  svgElementPrototype.getBBox = () => new DOMRect(0, 0, 100, 20);
+}

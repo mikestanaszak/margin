@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("react-dom/client", () => ({
@@ -12,6 +12,9 @@ vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (path: string) => `asset://${path}`,
   invoke,
 }));
+vi.mock("@tauri-apps/plugin-process", () => ({
+  relaunch: vi.fn(),
+}));
 
 import {
   CascadingNoteOptions,
@@ -24,8 +27,11 @@ import {
   QuickCaptureDialog,
   SettingsDialog,
   TableEditorDialog,
+  UpdateDialog,
   activeOutlineAncestors,
   outlineTree,
+  restartInstalledUpdate,
+  type UpdateState,
 } from "./main";
 
 const notes = [
@@ -49,7 +55,295 @@ const notes = [
   },
 ];
 
+describe("update restart", () => {
+  it("marks an installed update as restarting only after the user chooses restart", async () => {
+    const states: UpdateState[] = [];
+    const errors: string[] = [];
+    const relaunchApp = vi.fn().mockResolvedValue(undefined);
+
+    await restartInstalledUpdate(
+      relaunchApp,
+      (state) => states.push(state),
+      (error) => errors.push(error),
+    );
+
+    expect(relaunchApp).toHaveBeenCalledOnce();
+    expect(states).toEqual(["restarting"]);
+    expect(errors).toEqual([""]);
+  });
+
+  it("returns to ready and reports a restart failure", async () => {
+    const states: UpdateState[] = [];
+    const errors: string[] = [];
+    const relaunchApp = vi.fn().mockRejectedValue(new Error("permission denied"));
+
+    await restartInstalledUpdate(
+      relaunchApp,
+      (state) => states.push(state),
+      (error) => errors.push(error),
+    );
+
+    expect(states).toEqual(["restarting", "ready"]);
+    expect(errors[errors.length - 1]).toContain("Could not restart Margin");
+  });
+
+  it("shows a disabled restarting control while a relaunch is in progress", () => {
+    const props = {
+      update: { version: "0.4.0", body: "Restart improvements" } as never,
+      error: "",
+      onClose: () => undefined,
+      onInstall: () => undefined,
+      onRestart: () => undefined,
+      onSkip: () => undefined,
+    };
+    const { rerender } = render(<UpdateDialog {...props} state="ready" />);
+
+    expect(screen.getByRole("button", { name: "Restart Margin" })).toBeEnabled();
+
+    rerender(<UpdateDialog {...props} state="restarting" />);
+
+    expect(
+      screen.getByRole("button", { name: "Restarting Margin…" }),
+    ).toBeDisabled();
+  });
+});
+
 describe("Markdown preview", () => {
+  it("copies fenced code without adding a control to inline code", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(
+      <MarkdownPreview
+        markdown={[
+          "Use `inline code` in prose.",
+          "",
+          "```TypeScript",
+          "const ready = true;",
+          "```",
+        ].join("\n")}
+        notePath={notes[0].path}
+        notes={notes}
+        onOpen={vi.fn()}
+        onEditTable={vi.fn()}
+        onToggleTask={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByRole("button", { name: "Copy code" })).toHaveLength(1);
+    expect(screen.getByText("inline code", { selector: "code" }).parentElement).not.toHaveClass(
+      "preview-code-block",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy code" }));
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("const ready = true;\n"),
+    );
+    expect(screen.getByRole("button", { name: "Code copied" })).toBeInTheDocument();
+  });
+
+  it("reports a failed fenced-code copy", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
+    render(
+      <MarkdownPreview
+        markdown={"```text\nprivate value\n```"}
+        notePath={notes[0].path}
+        notes={notes}
+        onOpen={vi.fn()}
+        onEditTable={vi.fn()}
+        onToggleTask={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy code" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Could not copy code" }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders Mermaid fenced blocks as diagrams", async () => {
+    render(
+      <MarkdownPreview
+        markdown={["```mermaid", "flowchart LR", "  Start --> Finish", "```"].join("\n")}
+        notePath={notes[0].path}
+        notes={notes}
+        onOpen={() => undefined}
+        onEditTable={() => undefined}
+        onToggleTask={() => undefined}
+      />,
+    );
+
+    const diagram = await screen.findByRole("img", { name: "Mermaid diagram" });
+    expect(diagram.querySelector("svg")).not.toBeNull();
+  });
+
+  it("shows malformed Mermaid as its original code", async () => {
+    const source = "this is not a diagram";
+    render(
+      <MarkdownPreview
+        markdown={["```mermaid", source, "```"].join("\n")}
+        notePath={notes[0].path}
+        notes={notes}
+        onOpen={() => undefined}
+        onEditTable={() => undefined}
+        onToggleTask={() => undefined}
+      />,
+    );
+
+    const fallback = await screen.findByLabelText(
+      "Mermaid diagram could not be rendered",
+    );
+    expect(fallback).toHaveTextContent(source);
+    expect(screen.queryByRole("img", { name: "Mermaid diagram" })).toBeNull();
+  });
+
+  it("removes unsafe links from rendered Mermaid diagrams", async () => {
+    render(
+      <MarkdownPreview
+        markdown={[
+          "```mermaid",
+          "flowchart LR",
+          "  Unsafe[Unsafe link]",
+          '  click Unsafe "javascript:alert(document.domain)"',
+          "```",
+        ].join("\n")}
+        notePath={notes[0].path}
+        notes={notes}
+        onOpen={() => undefined}
+        onEditTable={() => undefined}
+        onToggleTask={() => undefined}
+      />,
+    );
+
+    const diagram = await screen.findByRole("img", { name: "Mermaid diagram" });
+    expect(diagram.querySelector('[href^="javascript:"]')).toBeNull();
+    expect(diagram.querySelector("script")).toBeNull();
+    expect(
+      Array.from(diagram.querySelectorAll("*")).some((element) =>
+        Array.from(element.attributes).some((attribute) =>
+          attribute.name.toLowerCase().startsWith("on"),
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it(
+    "regenerates Mermaid diagrams when the app changes to dark appearance",
+    async () => {
+      const originalTheme = document.documentElement.dataset.theme;
+      document.documentElement.dataset.theme = "light";
+      try {
+        render(
+          <MarkdownPreview
+            markdown={["```mermaid", "flowchart LR", "  Start --> Finish", "```"].join("\n")}
+            notePath={notes[0].path}
+            notes={notes}
+            onOpen={() => undefined}
+            onEditTable={() => undefined}
+            onToggleTask={() => undefined}
+          />,
+        );
+
+        const diagram = await screen.findByRole("img", { name: "Mermaid diagram" });
+        const lightStyles = diagram.querySelector("style")?.textContent;
+        expect(lightStyles).toBeTruthy();
+
+        document.documentElement.dataset.theme = "dark";
+
+        await waitFor(
+          () =>
+            expect(
+              screen
+                .getByRole("img", { name: "Mermaid diagram" })
+                .querySelector("style")?.textContent,
+            ).not.toBe(lightStyles),
+          { timeout: 10_000 },
+        );
+      } finally {
+        if (originalTheme) document.documentElement.dataset.theme = originalTheme;
+        else delete document.documentElement.dataset.theme;
+      }
+    },
+    15_000,
+  );
+
+  it(
+    "regenerates Mermaid diagrams when system appearance changes",
+    async () => {
+      const originalTheme = document.documentElement.dataset.theme;
+      const originalMatchMedia = window.matchMedia;
+      const listeners = new Set<() => void>();
+      let prefersDark = false;
+      const mediaQuery = {
+        get matches() {
+          return prefersDark;
+        },
+        media: "(prefers-color-scheme: dark)",
+        onchange: null,
+        addEventListener: (_type: string, listener: () => void) => {
+          listeners.add(listener);
+        },
+        removeEventListener: (_type: string, listener: () => void) => {
+          listeners.delete(listener);
+        },
+        addListener: (listener: () => void) => {
+          listeners.add(listener);
+        },
+        removeListener: (listener: () => void) => {
+          listeners.delete(listener);
+        },
+        dispatchEvent: () => false,
+      } as unknown as MediaQueryList;
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: vi.fn(() => mediaQuery),
+      });
+      document.documentElement.dataset.theme = "system";
+      try {
+        render(
+          <MarkdownPreview
+            markdown={["```mermaid", "flowchart LR", "  Start --> Finish", "```"].join("\n")}
+            notePath={notes[0].path}
+            notes={notes}
+            onOpen={() => undefined}
+            onEditTable={() => undefined}
+            onToggleTask={() => undefined}
+          />,
+        );
+
+        const diagram = await screen.findByRole("img", { name: "Mermaid diagram" });
+        const lightStyles = diagram.querySelector("style")?.textContent;
+        prefersDark = true;
+        listeners.forEach((listener) => listener());
+
+        await waitFor(
+          () =>
+            expect(
+              screen
+                .getByRole("img", { name: "Mermaid diagram" })
+                .querySelector("style")?.textContent,
+            ).not.toBe(lightStyles),
+          { timeout: 10_000 },
+        );
+      } finally {
+        Object.defineProperty(window, "matchMedia", {
+          configurable: true,
+          value: originalMatchMedia,
+        });
+        if (originalTheme) document.documentElement.dataset.theme = originalTheme;
+        else delete document.documentElement.dataset.theme;
+      }
+    },
+    15_000,
+  );
+
   it("renders GFM and routes wiki and relative Markdown links inside the library", () => {
     const onOpen = vi.fn();
     const onEditTable = vi.fn();

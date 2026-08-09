@@ -19,6 +19,7 @@ import { all as highlightLanguages } from "lowlight";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import MarkdownEditor, { type MarkdownEditorHandle } from "./MarkdownEditor";
+import MermaidDiagram from "./MermaidDiagram";
 import {
   NoteListItem,
   QuickSwitcher,
@@ -88,13 +89,29 @@ type MarkdownNode = {
 type OutlineItem = { index: number; level: number; title: string };
 type OutlineNode = OutlineItem & { children: OutlineNode[] };
 type AppUpdate = NonNullable<Awaited<ReturnType<typeof check>>>;
-type UpdateState =
+export type UpdateState =
   | "idle"
   | "checking"
   | "available"
   | "downloading"
   | "ready"
+  | "restarting"
   | "error";
+
+export async function restartInstalledUpdate(
+  relaunchApp: () => Promise<void>,
+  setState: (state: UpdateState) => void,
+  setError: (message: string) => void,
+): Promise<void> {
+  setState("restarting");
+  setError("");
+  try {
+    await relaunchApp();
+  } catch (error) {
+    setState("ready");
+    setError(`Could not restart Margin: ${String(error)}`);
+  }
+}
 type ShortcutId =
   | "newNote"
   | "search"
@@ -1839,7 +1856,9 @@ function App() {
           error={updateError}
           onClose={() => setUpdateDialogOpen(false)}
           onInstall={() => void installUpdate()}
-          onRestart={() => void relaunch()}
+          onRestart={() =>
+            void restartInstalledUpdate(relaunch, setUpdateState, setUpdateError)
+          }
           onSkip={skipUpdate}
         />
       )}
@@ -2837,7 +2856,7 @@ function TableEditorDialog({
     </div>
   );
 }
-function UpdateDialog({
+export function UpdateDialog({
   update,
   state,
   error,
@@ -2856,6 +2875,7 @@ function UpdateDialog({
 }) {
   const busy = state === "downloading";
   const ready = state === "ready";
+  const restarting = state === "restarting";
   return (
     <div className="modal-backdrop">
       <section
@@ -2885,8 +2905,11 @@ function UpdateDialog({
             Update installed. Restart Margin when you’re ready.
           </p>
         )}
+        {restarting && (
+          <p className="update-status">Restarting Margin…</p>
+        )}
         <div>
-          {!ready && (
+          {!ready && !restarting && (
             <>
               <button type="button" onClick={onSkip} disabled={busy}>
                 Skip this version
@@ -2901,9 +2924,14 @@ function UpdateDialog({
               </button>
             </>
           )}
-          {ready && (
-            <button className="primary" type="button" onClick={onRestart}>
-              Restart Margin
+          {(ready || restarting) && (
+            <button
+              className="primary"
+              type="button"
+              onClick={onRestart}
+              disabled={restarting}
+            >
+              {restarting ? "Restarting Margin…" : "Restart Margin"}
             </button>
           )}
         </div>
@@ -3968,6 +3996,22 @@ function MarkdownPreview({
         remarkPlugins={[remarkGfm, annotateTaskIndexes, normalizeCodeLanguages]}
         rehypePlugins={[[rehypeHighlight, { languages: highlightLanguages }]]}
         components={{
+          pre: ({ children, node: _node, ...props }) => {
+            const child = React.Children.toArray(children)[0];
+            if (
+              React.isValidElement<{
+                className?: string;
+                children?: React.ReactNode;
+              }>(child) &&
+              child.props.className?.split(/\s+/).includes("language-mermaid")
+            )
+              return (
+                <MermaidDiagram
+                  source={String(child.props.children || "").replace(/\n$/, "")}
+                />
+              );
+            return <PreviewCodeBlock {...props}>{children}</PreviewCodeBlock>;
+          },
           a: ({ href, children }) => {
             if (href?.startsWith("note:")) {
               const title = decodeURIComponent(href.slice(5));
@@ -4063,6 +4107,52 @@ function MarkdownPreview({
   );
 }
 const MemoizedMarkdownPreview = React.memo(MarkdownPreview);
+
+function PreviewCodeBlock({
+  children,
+  ...props
+}: React.ComponentPropsWithoutRef<"pre">) {
+  const preRef = useRef<HTMLPreElement>(null);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">(
+    "idle",
+  );
+  const copyCode = async () => {
+    const code = preRef.current?.querySelector("code")?.textContent;
+    if (code === null || code === undefined) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  };
+  const buttonLabel =
+    copyStatus === "copied"
+      ? "Code copied"
+      : copyStatus === "failed"
+        ? "Could not copy code"
+        : "Copy code";
+  const buttonText =
+    copyStatus === "copied"
+      ? "Copied"
+      : copyStatus === "failed"
+        ? "Copy failed"
+        : "Copy";
+
+  return (
+    <div className="preview-code-block">
+      <pre ref={preRef} {...props}>{children}</pre>
+      <button
+        type="button"
+        className="preview-code-copy"
+        aria-label={buttonLabel}
+        onClick={() => void copyCode()}
+      >
+        {buttonText}
+      </button>
+    </div>
+  );
+}
 
 function normalizeCodeLanguages() {
   return (tree: MarkdownNode) => {

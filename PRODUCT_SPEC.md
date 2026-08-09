@@ -15,13 +15,17 @@
 
 - Preview is the default; Cmd/Ctrl+E switches between Preview and Edit, with Split view available.
 - GitHub-flavored Markdown preview: headings, links, images, tasks, tables, blockquotes, and highlighted code blocks.
+- Fenced code blocks have a keyboard-accessible Copy control with success and failure feedback.
+- Mermaid code fences render as local diagrams in Preview, with light and dark themes and a visible source fallback for malformed diagrams.
 - Preview tasks are clickable and save their completion state.
 - Tables can be edited in place, with row/column insertion, deletion, and reordering.
 - Internal Markdown and wiki links open the matching note; web links open in the system browser.
 - Inline code can be selected with a double-click.
+- Typing after an opening triple-backtick suggests supported Highlight.js language names and common aliases without restricting custom identifiers.
 - Autosave preserves editor selection and scroll position.
 - Preview uses the same comfortable, left-aligned reading margin as the editor.
 - Resizable heading outline with hierarchy, active-section tracking, synchronized scrolling, and a configurable shortcut.
+- Edit mode provides operating-system spell check; Preview and read-only notes remain non-editable.
 
 ### Capture, import, and customization
 
@@ -39,7 +43,7 @@
 - Margin registers as an editor for `.md` and `.markdown` files. Files already
   inside the selected library open directly; files outside it can be opened as
   their original or imported as a copy into a chosen folder.
-- Signed in-app updates, with daily checks and an available-update prompt.
+- Signed in-app updates, with daily checks and an available-update prompt. Choosing Update now downloads and installs the update; Restart Margin appears only after that operation finishes.
 
 ## Planned
 
@@ -47,8 +51,4 @@
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
 - Theme palettes for Margin, including future app-icon variants.
-- Edit-mode-only spell check.
-- Code-fence language autocomplete.
-- Copy controls for fenced code blocks.
-- Mermaid diagram rendering in Markdown preview.
 - Optional AI-agent integrations for user-directed note drafting, summarizing, organizing, and appending work logs, with explicit per-action approval and no automatic access to a library.
