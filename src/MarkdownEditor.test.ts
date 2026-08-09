@@ -169,6 +169,66 @@ describe("Markdown editor formatting", () => {
     );
     expect(readOnly.container.querySelector(".cm-content")).toHaveAttribute("spellcheck", "false");
   });
+
+  it("imports a desktop image drop when the file MIME type is unavailable", () => {
+    const onImageFile = vi.fn();
+    const { container } = render(
+      createElement(MarkdownEditor, {
+        notePath: "editable.md",
+        value: "",
+        onChange: vi.fn(),
+        onImageFile,
+      }),
+    );
+    const image = new File(["image"], "photo.png", { type: "" });
+    const content = container.querySelector<HTMLElement>(".cm-content");
+
+    fireEvent.drop(content!, { dataTransfer: { files: [image] } });
+
+    expect(onImageFile).toHaveBeenCalledWith(image, "drop");
+  });
+
+  it("imports an image from a clipboard item", () => {
+    const onImageFile = vi.fn();
+    const { container } = render(
+      createElement(MarkdownEditor, {
+        notePath: "editable.md",
+        value: "",
+        onChange: vi.fn(),
+        onImageFile,
+      }),
+    );
+    const image = new File(["image"], "clipboard.png", { type: "image/png" });
+    const content = container.querySelector<HTMLElement>(".cm-content");
+
+    fireEvent.paste(content!, {
+      clipboardData: {
+        files: [],
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => image,
+          },
+        ],
+      },
+    });
+
+    expect(onImageFile).toHaveBeenCalledWith(image, "paste");
+  });
+
+  it("keeps the image picker out of the standalone editor surface", () => {
+    const { container } = render(
+      createElement(MarkdownEditor, {
+        notePath: "editable.md",
+        value: "",
+        onChange: vi.fn(),
+        onInsertImage: vi.fn(),
+      }),
+    );
+
+    expect(container.querySelector(".markdown-editor-image-button")).toBeNull();
+  });
 });
 
 describe("editor view-state restoration", () => {

@@ -252,6 +252,7 @@ fn runtime_icon_bytes(palette: &str) -> Result<&'static [u8], String> {
         "ink" => Ok(&include_bytes!("../icons/runtime/ink.png")[..]),
         "mint" => Ok(&include_bytes!("../icons/runtime/mint.png")[..]),
         "linen" => Ok(&include_bytes!("../icons/runtime/linen.png")[..]),
+        "paper" => Ok(&include_bytes!("../icons/runtime/paper.png")[..]),
         _ => Err("Unknown palette icon".into()),
     }
 }
@@ -294,8 +295,13 @@ fn set_runtime_palette_icon(app: AppHandle, palette: String) -> Result<(), Strin
 
     #[cfg(target_os = "macos")]
     {
-        tauri::image::Image::from_bytes(icon_bytes)
+        let icon = tauri::image::Image::from_bytes(icon_bytes)
             .map_err(|error| format!("Could not load palette icon: {error}"))?;
+        for window in app.webview_windows().into_values() {
+            window
+                .set_icon(icon.clone())
+                .map_err(|error| format!("Could not update palette icon: {error}"))?;
+        }
         set_macos_application_icon(&app, icon_bytes)?;
     }
 
@@ -875,6 +881,33 @@ fn note_summary(note: NoteDocument, library: &Path) -> NoteSummary {
     }
 }
 
+fn is_managed_note_asset_directory(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    let Some(stem) = name.strip_suffix(".assets").filter(|stem| !stem.is_empty()) else {
+        return false;
+    };
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+
+    fs::read_dir(parent)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .any(|entry| {
+            entry.file_type().is_ok_and(|file_type| file_type.is_file())
+                && is_markdown_path(&entry.path())
+                && entry
+                    .path()
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|note_stem| note_stem == stem)
+        })
+}
+
 fn load_library_contents(library: &Path) -> (Vec<NoteSummary>, Vec<String>) {
     let mut notes = Vec::new();
     let mut folders = Vec::new();
@@ -882,7 +915,9 @@ fn load_library_contents(library: &Path) -> (Vec<NoteSummary>, Vec<String>) {
         .min_depth(1)
         .follow_links(false)
         .into_iter()
-        .filter_entry(|entry| entry.file_name() != ".markdown-notes")
+        .filter_entry(|entry| {
+            entry.file_name() != ".markdown-notes" && !is_managed_note_asset_directory(entry.path())
+        })
         .filter_map(Result::ok)
     {
         if entry.file_type().is_symlink() {
@@ -2274,6 +2309,7 @@ mod tests {
         assert!(runtime_icon_bytes("ink").is_ok());
         assert!(runtime_icon_bytes("mint").is_ok());
         assert!(runtime_icon_bytes("linen").is_ok());
+        assert!(runtime_icon_bytes("paper").is_ok());
         assert!(runtime_icon_bytes("violet").is_err());
     }
 
@@ -2532,6 +2568,39 @@ mod tests {
                 .join("Completed")
                 .join("Completed work.md")
                 .exists());
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn library_snapshot_omits_note_asset_directories() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let result = (|| -> Result<(), String> {
+            fs::create_dir_all(
+                library
+                    .join("Projects")
+                    .join("Project.assets")
+                    .join("nested"),
+            )
+            .map_err(|error| error.to_string())?;
+            fs::write(library.join("Projects").join("Project.md"), "# Project\n")
+                .map_err(|error| error.to_string())?;
+            fs::write(
+                library
+                    .join("Projects")
+                    .join("Project.assets")
+                    .join("nested")
+                    .join("photo.png"),
+                b"image",
+            )
+            .map_err(|error| error.to_string())?;
+
+            let snapshot = build_library_snapshot(&library);
+            assert_eq!(snapshot.folders, ["Projects"]);
+            assert_eq!(snapshot.notes.len(), 1);
             Ok(())
         })();
         fs::remove_dir_all(&library).ok();
