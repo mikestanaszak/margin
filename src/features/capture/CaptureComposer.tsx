@@ -8,7 +8,7 @@ export type CaptureComposerProps = {
   status: string;
   disabled: boolean;
   onClose: () => void;
-  onSave: (text: string) => boolean | void | Promise<boolean | void>;
+  onSave: (text: string) => boolean | Promise<boolean>;
 };
 
 export function CaptureComposer({
@@ -43,8 +43,10 @@ export function CaptureComposer({
     if (!text.trim() || disabled || saving) return;
     setSaving(true);
     try {
-      const result = await onSave(text);
-      if (result !== false) setText("");
+      if (await onSave(text)) setText("");
+    } catch {
+      // The caller owns the user-facing error status. Keep the draft available
+      // even if an unexpected rejection escapes that boundary.
     } finally {
       setSaving(false);
     }

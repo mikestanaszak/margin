@@ -88,7 +88,7 @@ export function CaptureWindow() {
     };
   }, [hide]);
 
-  const save = async (text: string) => {
+  const save = async (text: string): Promise<boolean> => {
     if (!libraryReady) {
       setStatus("Loading your notes folder…");
       return false;

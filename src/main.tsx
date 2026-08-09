@@ -1109,14 +1109,19 @@ function App() {
     }
   };
   const saveQuickCapture = async (text: string) => {
-    if (!library) return void (await selectLibrary());
+    if (!library) {
+      await selectLibrary();
+      return false;
+    }
     try {
       const daily = await native.appendQuickNote(library, text);
       await refresh();
       setQuickCaptureOpen(false);
       setStatus(`Saved to Daily/${fileStem(daily.path)}.md`);
+      return true;
     } catch (error) {
       setStatus(`Could not save quick note: ${String(error)}`);
+      return false;
     }
   };
   const importDailyNote = async (target: NoteSummary) => {
@@ -3003,7 +3008,7 @@ function QuickCaptureDialog({
 }: {
   shortcut: string;
   onClose: () => void;
-  onSave: (text: string) => void;
+  onSave: (text: string) => boolean | Promise<boolean>;
 }) {
   return (
     <div className="modal-backdrop quick-capture-backdrop">
