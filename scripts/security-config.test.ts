@@ -26,7 +26,7 @@ describe("desktop security configuration", () => {
     }>("src-tauri/tauri.conf.json");
     const { security } = config.app;
 
-    expect(security.assetProtocol.scope).toEqual([]);
+    expect(security.assetProtocol.scope).toEqual(["$HOME/**"]);
     expect(security.csp).not.toMatch(
       /unsafe-eval|http:\/\/localhost:1420|ws:\/\/localhost:1420/,
     );

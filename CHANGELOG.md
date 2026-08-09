@@ -2,6 +2,12 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## 0.4.5 — 2026-08-09
+
+### Fixed
+
+- Markdown image previews now declare a safe startup asset scope for the signed-in user's files, so Windows can load copied note images immediately after Margin opens.
+
 ## 0.4.4 — 2026-08-09
 
 ### Improved
