@@ -18,12 +18,15 @@
     "local-first"
   ],
   "type": "module",
+  "packageManager": "pnpm@10.15.1",
   "scripts": {
     "dev": "vite",
     "dev:desktop": "tauri dev",
     "start": "pnpm run dev:desktop",
     "build": "tsc -b && vite build",
-    "test": "vitest run",
+    "test": "pnpm test:unit && pnpm test:integration",
+    "test:unit": "vitest run --exclude src/MermaidDiagram.integration.test.tsx",
+    "test:integration": "vitest run src/MermaidDiagram.integration.test.tsx --maxWorkers=1 --minWorkers=1",
     "test:watch": "vitest",
     "test:all": "pnpm test && cargo test --manifest-path src-tauri/Cargo.toml",
     "tauri": "tauri"
