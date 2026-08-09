@@ -216,6 +216,36 @@ fn selected_library_file(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(directory.join("selected-library.txt"))
 }
 
+fn runtime_icon_bytes(palette: &str) -> Result<&'static [u8], String> {
+    match palette {
+        "ink" => Ok(&include_bytes!("../icons/runtime/ink.png")[..]),
+        "mint" => Ok(&include_bytes!("../icons/runtime/mint.png")[..]),
+        "linen" => Ok(&include_bytes!("../icons/runtime/linen.png")[..]),
+        _ => Err("Unknown palette icon".into()),
+    }
+}
+
+#[tauri::command]
+fn set_runtime_palette_icon(app: AppHandle, palette: String) -> Result<(), String> {
+    let icon_bytes = runtime_icon_bytes(&palette)?;
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        let icon = tauri::image::Image::from_bytes(icon_bytes)
+            .map_err(|error| format!("Could not load palette icon: {error}"))?;
+        for window in app.webview_windows().into_values() {
+            window
+                .set_icon(icon.clone())
+                .map_err(|error| format!("Could not update palette icon: {error}"))?;
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    let _ = (app, icon_bytes);
+
+    Ok(())
+}
+
 #[tauri::command]
 fn show_quick_capture(app: AppHandle) -> Result<(), String> {
     show_capture_window(&app)
@@ -1897,7 +1927,8 @@ pub fn run() {
             save_selected_library,
             load_selected_library,
             configure_quick_capture_shortcut,
-            take_opened_markdown_files
+            take_opened_markdown_files,
+            set_runtime_palette_icon
         ])
         .build(tauri::generate_context!())
         .expect("error while building Margin")
@@ -1930,9 +1961,9 @@ mod tests {
         import_markdown_file, library_folder, load_folders, load_library, load_trash,
         move_folder_to_trash, move_note_to_folder, move_note_to_trash, normalize_tags,
         path_for_title, read_library_note_file, read_note_file, relative_note_id,
-        rename_file_safely, rename_folder, rename_note, restore_note_from_trash, safe_file_stem,
-        save_note, save_note_document, search_snapshot, split_front_matter, stage_file_updates,
-        LibraryIndex, LinkRewrite, SaveNoteResult,
+        rename_file_safely, rename_folder, rename_note, restore_note_from_trash,
+        runtime_icon_bytes, safe_file_stem, save_note, save_note_document, search_snapshot,
+        split_front_matter, stage_file_updates, LibraryIndex, LinkRewrite, SaveNoteResult,
     };
     use std::{
         fs,
@@ -1993,6 +2024,14 @@ mod tests {
         let (front, body) = split_front_matter(raw);
         assert_eq!(front.tags.unwrap(), vec!["ideas", "product"]);
         assert_eq!(body, "# A note\n\nBody");
+    }
+
+    #[test]
+    fn runtime_palette_icon_accepts_only_shipped_palettes() {
+        assert!(runtime_icon_bytes("ink").is_ok());
+        assert!(runtime_icon_bytes("mint").is_ok());
+        assert!(runtime_icon_bytes("linen").is_ok());
+        assert!(runtime_icon_bytes("violet").is_err());
     }
 
     #[test]
