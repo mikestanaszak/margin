@@ -4258,6 +4258,7 @@ function ConflictDialog({
   );
 }
 export {
+  App,
   CascadingNoteOptions,
   captureMarkdownEdit,
   ConflictDialog,

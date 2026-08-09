@@ -7,7 +7,23 @@ vi.mock("react-dom/client", () => ({
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ label: "test", hide: vi.fn() }),
 }));
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn(() => Promise.resolve()) }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(() => Promise.resolve(() => undefined)),
+}));
+vi.mock("@tauri-apps/plugin-updater", () => ({
+  check: vi.fn(() => Promise.resolve(null)),
+}));
+const { invoke } = vi.hoisted(() => ({
+  invoke: vi.fn((command: string) =>
+    Promise.resolve(
+      command === "take_opened_markdown_files"
+        ? []
+        : command === "load_selected_library"
+          ? null
+          : undefined,
+    ),
+  ),
+}));
 vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (path: string) => `asset://${path}`,
   invoke,
@@ -17,6 +33,7 @@ vi.mock("@tauri-apps/plugin-process", () => ({
 }));
 
 import {
+  App,
   CascadingNoteOptions,
   captureMarkdownEdit,
   ConflictDialog,
@@ -552,34 +569,21 @@ describe("navigation structures and safety dialogs", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("changes the palette immediately from Settings", () => {
-    document.documentElement.dataset.palette = "mint";
-    render(
-      <SettingsDialog
-        palette="mint"
-        onPalette={(palette) => {
-          document.documentElement.dataset.palette = palette;
-        }}
-        theme="system"
-        onTheme={() => undefined}
-        shortcuts={{ newNote: "ctrl+n", search: "ctrl+k", switcher: "ctrl+p", save: "ctrl+s", view: "ctrl+e", sidebar: "ctrl+\\", outline: "ctrl+shift+o", quickCapture: "ctrl+alt+shift+space" }}
-        onShortcuts={() => undefined}
-        quickCaptureStatus="Ready"
-        library="C:/Notes"
-        quickImportTargets={notes}
-        quickImportDefaultPath=""
-        onQuickImportDefaultPath={() => undefined}
-        updateState="idle"
-        updateMessage=""
-        onCheckForUpdates={() => undefined}
-        onChangeLibrary={() => undefined}
-        onClose={() => undefined}
-      />,
-    );
+  it("persists palette changes made through App Settings", () => {
+    const previousPalette = localStorage.getItem("margin.palette");
+    localStorage.setItem("margin.palette", "mint");
+    try {
+      render(<App />);
+      fireEvent.click(screen.getByLabelText("Settings"));
+      fireEvent.click(screen.getByRole("radio", { name: "Linen" }));
 
-    fireEvent.click(screen.getByRole("radio", { name: "Linen" }));
-
-    expect(document.documentElement.dataset.palette).toBe("linen");
+      expect(document.documentElement.dataset.palette).toBe("linen");
+      expect(localStorage.getItem("margin.palette")).toBe("linen");
+    } finally {
+      if (previousPalette === null) localStorage.removeItem("margin.palette");
+      else localStorage.setItem("margin.palette", previousPalette);
+      delete document.documentElement.dataset.palette;
+    }
   });
 
   it("labels the palette choices and marks the current palette", () => {
