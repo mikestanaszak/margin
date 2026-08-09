@@ -436,6 +436,32 @@ describe("navigation structures and safety dialogs", () => {
     }
   });
 
+  it("updates the runtime icon when the appearance changes", () => {
+    const previousPalette = localStorage.getItem("margin.palette");
+    const previousTheme = localStorage.getItem("margin.theme");
+    localStorage.setItem("margin.palette", "paper");
+    localStorage.setItem("margin.theme", "light");
+    try {
+      render(<App />);
+      invoke.mockClear();
+      fireEvent.click(screen.getByLabelText("Settings"));
+      fireEvent.change(screen.getByLabelText("Appearance"), {
+        target: { value: "dark" },
+      });
+
+      expect(invoke).toHaveBeenCalledWith("set_runtime_palette_icon", {
+        palette: "paper",
+      });
+    } finally {
+      if (previousPalette === null) localStorage.removeItem("margin.palette");
+      else localStorage.setItem("margin.palette", previousPalette);
+      if (previousTheme === null) localStorage.removeItem("margin.theme");
+      else localStorage.setItem("margin.theme", previousTheme);
+      delete document.documentElement.dataset.palette;
+      delete document.documentElement.dataset.theme;
+    }
+  });
+
   it("labels the palette choices and marks the current palette", () => {
     render(
       <SettingsDialog
