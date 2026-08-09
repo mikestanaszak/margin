@@ -1,0 +1,38 @@
+html.capture-window-html,
+body.capture-window-body,
+body.capture-window-body #root {
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body.capture-window-body {
+  margin: 0;
+  color: var(--text, #242722);
+  background: transparent;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+body.capture-window-body button,
+body.capture-window-body textarea {
+  font: inherit;
+}
+
+body.capture-window-body button {
+  cursor: pointer;
+}
+
+body.capture-window-body button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.capture-window {
+  height: 100%;
+}
+
+.quick-capture-backdrop > .capture-card {
+  width: min(560px, calc(100vw - 32px));
+  height: auto;
+  min-height: 276px;
+}

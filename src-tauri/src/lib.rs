@@ -2324,7 +2324,7 @@ pub fn run() {
                 shortcut: default_capture,
                 registered,
             })));
-            WebviewWindowBuilder::new(app, "capture", WebviewUrl::App("index.html".into()))
+            WebviewWindowBuilder::new(app, "capture", WebviewUrl::App("capture.html".into()))
                 .title("Margin Capture")
                 .inner_size(496.0, 276.0)
                 .min_inner_size(420.0, 240.0)

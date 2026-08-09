@@ -16,7 +16,6 @@ import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { all as highlightLanguages } from "lowlight";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { insertImage, MarkdownEditor, type MarkdownEditorHandle } from "./MarkdownEditor";
 import MermaidDiagram from "./MermaidDiagram";
@@ -31,6 +30,7 @@ import {
   ResizableSplit,
   ViewModeControl,
 } from "./components";
+import { CaptureComposer } from "./features/capture/CaptureComposer";
 import { isMac } from "./platform";
 import {
   loadPalette,
@@ -3005,288 +3005,16 @@ function QuickCaptureDialog({
   onClose: () => void;
   onSave: (text: string) => void;
 }) {
-  const [text, setText] = useState("");
   return (
     <div className="modal-backdrop quick-capture-backdrop">
-      <form
-        className="modal quick-capture-dialog"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSave(text);
-        }}
-      >
-        <header>
-          <div>
-            <p className="eyebrow">Quick capture</p>
-            <h2>What’s on your mind?</h2>
-          </div>
-          <button
-            type="button"
-            aria-label="Close quick capture"
-            onClick={onClose}
-          >
-            ×
-          </button>
-        </header>
-        <textarea
-          autoFocus
-          placeholder="Start typing…"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              onClose();
-            }
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              onSave(text);
-            }
-          }}
-        />
-        <footer>
-          <span>Saved to today’s Daily note</span>
-          <span>
-            <kbd>{shortcut}</kbd> opens · <kbd>⌘↵</kbd> saves
-          </span>
-        </footer>
-        <div>
-          <button type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="primary" disabled={!text.trim()}>
-            Save capture
-          </button>
-        </div>
-      </form>
+      <CaptureComposer
+        shortcut={shortcut}
+        status="Saved to today’s Daily note"
+        disabled={false}
+        onClose={onClose}
+        onSave={onSave}
+      />
     </div>
-  );
-}
-type CaptureMarkdownEdit = {
-  value: string;
-  selectionStart: number;
-  selectionEnd: number;
-};
-function captureMarkdownEdit(
-  value: string,
-  selectionStart: number,
-  selectionEnd: number,
-  key: string,
-  shiftKey = false,
-): CaptureMarkdownEdit | undefined {
-  const lineStart = value.lastIndexOf("\n", selectionStart - 1) + 1;
-  const lineEnd = value.indexOf("\n", selectionStart);
-  const end = lineEnd < 0 ? value.length : lineEnd;
-  if (key === "Tab") {
-    const indentation =
-      value.slice(lineStart, selectionStart).match(/^(?: {1,2}|\t)/)?.[0] || "";
-    if (shiftKey && indentation)
-      return {
-        value: `${value.slice(0, lineStart)}${value.slice(lineStart + indentation.length)}`,
-        selectionStart: Math.max(
-          lineStart,
-          selectionStart - indentation.length,
-        ),
-        selectionEnd: Math.max(lineStart, selectionEnd - indentation.length),
-      };
-    if (!shiftKey)
-      return {
-        value: `${value.slice(0, lineStart)}  ${value.slice(lineStart)}`,
-        selectionStart: selectionStart + 2,
-        selectionEnd: selectionEnd + 2,
-      };
-    return undefined;
-  }
-  if (key !== "Enter" || selectionStart !== selectionEnd) return undefined;
-  const beforeCaret = value.slice(lineStart, selectionStart);
-  const task = beforeCaret.match(/^([ \t]*)([-+*]) \[[ xX]\]\s?(.*)$/);
-  const bullet = beforeCaret.match(/^([ \t]*)([-+*])\s+(.*)$/);
-  const ordered = beforeCaret.match(/^([ \t]*)(\d+)([.)])\s+(.*)$/);
-  const quote = beforeCaret.match(/^([ \t]*>\s?)(.*)$/);
-  const match = task || bullet || ordered || quote;
-  if (!match) return undefined;
-  const content = match[match.length - 1];
-  const indent = task || bullet || ordered ? match[1] : "";
-  if (!content.trim())
-    return {
-      value: `${value.slice(0, lineStart)}${indent}${value.slice(selectionStart)}`,
-      selectionStart: lineStart + indent.length,
-      selectionEnd: lineStart + indent.length,
-    };
-  const prefix = task
-    ? `${match[1]}${match[2]} [ ] `
-    : bullet
-      ? `${match[1]}${match[2]} `
-      : ordered
-        ? `${match[1]}${Number(match[2]) + 1}${match[3]} `
-        : `${match[1]}`;
-  const insertion = `\n${prefix}`;
-  return {
-    value: `${value.slice(0, selectionStart)}${insertion}${value.slice(selectionEnd)}`,
-    selectionStart: selectionStart + insertion.length,
-    selectionEnd: selectionStart + insertion.length,
-  };
-}
-function CaptureWindow() {
-  const [library, setLibrary] = useState<string | null>(null);
-  const [libraryReady, setLibraryReady] = useState(false);
-  const [text, setText] = useState("");
-  const [status, setStatus] = useState("");
-  const [templates, setTemplates] = useState<NoteTemplate[]>(loadTemplates);
-  const input = useRef<HTMLTextAreaElement>(null);
-  const shortcut = formatShortcut(defaultShortcuts.quickCapture);
-  const hide = useCallback(() => {
-    void (async () => {
-      try {
-        await native.hideQuickCapture();
-      } catch {
-        await getCurrentWindow()
-          .hide()
-          .catch(() => undefined);
-      }
-    })();
-  }, []);
-  useEffect(() => {
-    void native.loadSelectedLibrary()
-      .then(setLibrary)
-      .catch(() => setLibrary(null))
-      .finally(() => setLibraryReady(true));
-  }, []);
-  useEffect(() => {
-    const syncTemplates = () => setTemplates(loadTemplates());
-    window.addEventListener("focus", syncTemplates);
-    return () => window.removeEventListener("focus", syncTemplates);
-  }, []);
-  useEffect(() => {
-    const focus = () => window.setTimeout(() => input.current?.focus(), 40);
-    const dismissOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        hide();
-      }
-    };
-    const suppressWebviewMenu = (event: MouseEvent) => event.preventDefault();
-    document.documentElement.classList.add("capture-window-html");
-    document.body.classList.add("capture-window-body");
-    focus();
-    window.addEventListener("focus", focus);
-    window.addEventListener("keydown", dismissOnEscape);
-    window.addEventListener("contextmenu", suppressWebviewMenu);
-    return () => {
-      window.removeEventListener("focus", focus);
-      window.removeEventListener("keydown", dismissOnEscape);
-      window.removeEventListener("contextmenu", suppressWebviewMenu);
-      document.documentElement.classList.remove("capture-window-html");
-      document.body.classList.remove("capture-window-body");
-    };
-  }, [hide]);
-  const save = async () => {
-    if (!text.trim()) return;
-    if (!libraryReady) {
-      setStatus("Loading your notes folder…");
-      return;
-    }
-    if (!library) {
-      setStatus("Open Margin and choose your notes folder first.");
-      return;
-    }
-    try {
-      await native.appendQuickNote(
-        library,
-        text,
-        expandTemplate(
-          templates.find((template) => template.id === "daily") ||
-            templates[0] ||
-            defaultTemplates[0],
-        ),
-      );
-      setText("");
-      setStatus("Saved to today’s Daily note");
-      window.setTimeout(hide, 160);
-    } catch (error) {
-      setStatus(`Could not save: ${String(error)}`);
-    }
-  };
-  return (
-    <main className="capture-window">
-      <form
-        className="capture-card"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void save();
-        }}
-      >
-        <header className="capture-header">
-          <div>
-            <p className="eyebrow">Margin</p>
-            <h1>Quick capture</h1>
-          </div>
-          <button
-            type="button"
-            className="capture-close"
-            aria-label="Hide quick capture"
-            onClick={hide}
-          >
-            ×
-          </button>
-        </header>
-        <div className="capture-composer">
-          <textarea
-            ref={input}
-            placeholder="Start typing…"
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                event.preventDefault();
-                void save();
-                return;
-              }
-              const textarea = event.currentTarget;
-              const next = captureMarkdownEdit(
-                text,
-                textarea.selectionStart,
-                textarea.selectionEnd,
-                event.key,
-                event.shiftKey,
-              );
-              if (next) {
-                event.preventDefault();
-                setText(next.value);
-                window.requestAnimationFrame(() =>
-                  textarea.setSelectionRange(
-                    next.selectionStart,
-                    next.selectionEnd,
-                  ),
-                );
-              }
-            }}
-          />
-        </div>
-        <footer>
-          <span className="capture-status">
-            {status ||
-              (libraryReady
-                ? "Adds to today’s Daily note"
-                : "Loading your notes folder…")}
-          </span>
-          <span className="capture-hint">
-            <kbd>{shortcut}</kbd>
-            <span>opens</span>
-            <kbd>{isMac ? "⌘↵" : "Ctrl+Enter"}</kbd>
-            <span>saves</span>
-          </span>
-        </footer>
-        <div className="capture-actions">
-          <button type="button" className="capture-cancel" onClick={hide}>
-            Cancel
-          </button>
-          <button className="primary" disabled={!text.trim() || !libraryReady}>
-            Save capture
-          </button>
-        </div>
-      </form>
-    </main>
   );
 }
 function folderOptionLabel(folder: string) {
@@ -4263,7 +3991,6 @@ function ConflictDialog({
 export {
   App,
   CascadingNoteOptions,
-  captureMarkdownEdit,
   ConflictDialog,
   createRefreshCoordinator,
   FolderNoteTree,
@@ -4286,15 +4013,8 @@ export {
   syncScrollPosition,
   virtualNoteRowHeight,
 };
-const isCaptureWindow = (() => {
-  try {
-    return getCurrentWindow().label === "capture";
-  } catch {
-    return false;
-  }
-})();
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {isCaptureWindow ? <CaptureWindow /> : <App />}
+    <App />
   </React.StrictMode>,
 );
