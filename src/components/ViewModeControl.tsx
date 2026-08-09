@@ -1,9 +1,8 @@
-import type { ReactNode } from "react";
 import "./view-layout.css";
 
-export type ViewMode = "edit" | "split" | "preview";
+type ViewMode = "edit" | "split" | "preview";
 
-export type ViewModeControlProps = {
+type ViewModeControlProps = {
   mode: ViewMode;
   onChange: (mode: ViewMode) => void;
   /** Shortcut shown alongside Preview, such as "Ctrl+E" or "⌘E". */
@@ -52,43 +51,5 @@ export function ViewModeControl({
         );
       })}
     </div>
-  );
-}
-
-export type FocusModeToggleProps = {
-  focused: boolean;
-  onChange: (focused: boolean) => void;
-  hotkeyHint?: string;
-  /** Optional icon rendered before the visible label. */
-  icon?: ReactNode;
-  disabled?: boolean;
-  className?: string;
-};
-
-/** An optional companion control for entering and leaving a distraction-free view. */
-export function FocusModeToggle({
-  focused,
-  onChange,
-  hotkeyHint,
-  icon,
-  disabled = false,
-  className,
-}: FocusModeToggleProps) {
-  const action = focused ? "Exit focus mode" : "Enter focus mode";
-  const buttonClassName = ["nr-focus-mode", className].filter(Boolean).join(" ");
-
-  return (
-    <button
-      type="button"
-      className={buttonClassName}
-      aria-label={`${action}${hotkeyHint ? ` (${hotkeyHint})` : ""}`}
-      aria-pressed={focused}
-      disabled={disabled}
-      onClick={() => onChange(!focused)}
-    >
-      {icon && <span className="nr-focus-mode__icon" aria-hidden="true">{icon}</span>}
-      <span>{focused ? "Exit focus" : "Focus"}</span>
-      {hotkeyHint && <kbd aria-hidden="true">{hotkeyHint}</kbd>}
-    </button>
   );
 }

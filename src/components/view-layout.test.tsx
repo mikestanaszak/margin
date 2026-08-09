@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ResizableSplit } from "./ResizableSplit";
-import { FocusModeToggle, ViewModeControl } from "./ViewModeControl";
+import { ViewModeControl } from "./ViewModeControl";
 
 beforeEach(() => localStorage.clear());
 
@@ -15,15 +15,6 @@ describe("view controls", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Split view" }));
     expect(onChange).toHaveBeenCalledWith("split");
-  });
-
-  it("toggles focus mode and honors disabled state", () => {
-    const onChange = vi.fn();
-    const { rerender } = render(<FocusModeToggle focused={false} onChange={onChange} />);
-    fireEvent.click(screen.getByRole("button", { name: "Enter focus mode" }));
-    expect(onChange).toHaveBeenCalledWith(true);
-    rerender(<FocusModeToggle focused onChange={onChange} disabled />);
-    expect(screen.getByRole("button", { name: "Exit focus mode" })).toBeDisabled();
   });
 });
 

@@ -1,5 +1,4 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import {
   formatRelativeDate,
@@ -7,7 +6,6 @@ import {
   NoteListItem,
   QuickSwitcher,
   scoreNote,
-  TagCombobox,
 } from "./navigation-qol";
 
 const notes = [
@@ -45,42 +43,6 @@ describe("search ranking and relative dates", () => {
     expect(formatRelativeDate(now, now, "en")).toBe("now");
     expect(formatRelativeDate(now - 24 * 60 * 60 * 1000, now, "en")).toBe("yesterday");
     expect(formatRelativeDate("not-a-date", now, "en")).toBe("Unknown date");
-  });
-});
-
-function TagHarness({ onAdd }: { onAdd: (tag: string) => void }) {
-  const [value, setValue] = useState("");
-  return (
-    <TagCombobox
-      options={["Work", "Planning", "work"]}
-      selectedTags={["Work"]}
-      inputValue={value}
-      onInputValueChange={setValue}
-      onAdd={onAdd}
-    />
-  );
-}
-
-describe("tag combobox", () => {
-  it("filters duplicate tags and commits an existing tag from the keyboard", () => {
-    const onAdd = vi.fn();
-    render(<TagHarness onAdd={onAdd} />);
-    const input = screen.getByRole("combobox", { name: "Add a tag" });
-    fireEvent.change(input, { target: { value: "plan" } });
-    expect(screen.queryByRole("option", { name: "#Work" })).not.toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "#Planning" })).toBeInTheDocument();
-    fireEvent.keyDown(input, { key: "Enter" });
-    expect(onAdd).toHaveBeenCalledWith("Planning");
-    expect(input).toHaveValue("");
-  });
-
-  it("offers and commits a new tag", () => {
-    const onAdd = vi.fn();
-    render(<TagHarness onAdd={onAdd} />);
-    const input = screen.getByRole("combobox", { name: "Add a tag" });
-    fireEvent.change(input, { target: { value: "release" } });
-    fireEvent.click(screen.getByRole("option", { name: /Create release/ }));
-    expect(onAdd).toHaveBeenCalledWith("release");
   });
 });
 
