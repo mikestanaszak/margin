@@ -9,7 +9,7 @@ import React, {
 } from "react";
 import { createRoot } from "react-dom/client";
 import { open } from "@tauri-apps/plugin-dialog";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
@@ -20,6 +20,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { insertImage, MarkdownEditor, type MarkdownEditorHandle } from "./MarkdownEditor";
 import MermaidDiagram from "./MermaidDiagram";
+import type {
+  ImportedImageResponse,
+  NoteDocument,
+  NoteSummary,
+} from "./app/types";
 import {
   NoteListItem,
   QuickSwitcher,
@@ -47,45 +52,9 @@ import {
   toggleTask,
   type MarkdownTable,
 } from "./note-utils";
+import { native } from "./services/native";
 import "./styles.css";
 
-type NoteSummary = {
-  path: string;
-  title: string;
-  tags: string[];
-  updated: number;
-  excerpt: string;
-  folder: string;
-};
-type NoteDocument = {
-  path: string;
-  title: string;
-  tags: string[];
-  body: string;
-  updated: number;
-  revision: string;
-  created?: string;
-  updated_at?: string;
-};
-type LibrarySnapshot = {
-  notes: NoteSummary[];
-  folders: string[];
-  trash: NoteSummary[];
-  warnings: IndexWarning[];
-};
-type IndexWarning = {
-  path: string;
-  kind: "walk" | "unreadable_markdown" | "invalid_metadata";
-};
-type SaveNoteResult =
-  | { status: "saved"; note: NoteDocument }
-  | { status: "conflict"; disk: NoteDocument }
-  | { status: "error"; message: string };
-type FolderRenameResult = {
-  folder: string;
-  paths: { from: string; to: string }[];
-};
-type ImportedImageResponse = { markdown_path: string; alt: string };
 type Filter = {
   type: "all" | "today" | "favorites" | "trash" | "folder";
   folder?: string;
@@ -430,10 +399,10 @@ function App() {
       refreshCoordinator.current = createRefreshCoordinator(async (request) => {
         const generation = ++refreshGeneration.current;
         try {
-          const snapshot = await invoke<LibrarySnapshot>("load_library_snapshot", {
-            libraryPath: request.path,
-            force: request.force,
-          });
+          const snapshot = await native.loadLibrarySnapshot(
+            request.path,
+            request.force,
+          );
           if (
             generation !== refreshGeneration.current ||
             libraryRef.current !== request.path
@@ -486,10 +455,7 @@ function App() {
     }
     let disposed = false;
     const timer = window.setTimeout(() => {
-      void invoke<NoteSummary[]>("search_library", {
-        libraryPath: requestLibrary,
-        query: normalizedQuery,
-      })
+      void native.searchLibrary(requestLibrary, normalizedQuery)
         .then((matches) => {
           if (!disposed && libraryRef.current === requestLibrary)
             setMatchingPaths(new Set(matches.map((item) => item.path)));
@@ -510,11 +476,7 @@ function App() {
     }
     let disposed = false;
     const timer = window.setTimeout(() => {
-      void invoke<NoteSummary[]>("find_backlinks", {
-        libraryPath: library,
-        notePath: note.path,
-        title: note.title,
-      })
+      void native.findBacklinks(library, note.path, note.title)
         .then((matches) => {
           if (!disposed) setBacklinks(matches);
         })
@@ -568,14 +530,12 @@ function App() {
     localStorage.setItem(outlinePaneWidthKey, String(outlinePaneWidth));
   }, [outlinePaneWidth]);
   const showQuickCapture = () => {
-    void invoke("show_quick_capture").catch(() => setQuickCaptureOpen(true));
+    void native.showQuickCapture().catch(() => setQuickCaptureOpen(true));
   };
   useEffect(() => {
     let disposed = false;
     const requested = shortcuts.quickCapture;
-    void invoke("configure_quick_capture_shortcut", {
-      shortcut: nativeShortcut(requested),
-    })
+    void native.configureQuickCaptureShortcut(nativeShortcut(requested))
       .then(() => {
         if (!disposed) {
           registeredCaptureShortcut.current = requested;
@@ -600,7 +560,7 @@ function App() {
   }, [shortcuts.quickCapture]);
   useEffect(() => {
     let disposed = false;
-    void invoke<string | null>("load_selected_library")
+    void native.loadSelectedLibrary()
       .then(async (selected) => {
         if (disposed) return;
         if (selected) {
@@ -609,9 +569,7 @@ function App() {
         }
         const legacyLibrary = localStorage.getItem(libraryKey);
         if (legacyLibrary) {
-          await invoke("save_selected_library", {
-            libraryPath: legacyLibrary,
-          }).catch(() => undefined);
+          await native.saveSelectedLibrary(legacyLibrary).catch(() => undefined);
           setLibrary(legacyLibrary);
         }
       })
@@ -654,7 +612,7 @@ function App() {
         (event) => event.payload.forEach(receiveOpenedMarkdown),
       );
       if (!disposed) {
-        const pending = await invoke<string[]>("take_opened_markdown_files");
+        const pending = await native.takeOpenedMarkdownFiles();
         pending.forEach(receiveOpenedMarkdown);
       }
     })();
@@ -696,9 +654,7 @@ function App() {
     }
     void (async () => {
       try {
-        const loaded = await invoke<NoteDocument>("read_note", {
-          path: activePath,
-        });
+        const loaded = await native.readNote(activePath);
         if (
           generation !== noteLoadGeneration.current ||
           activePathRef.current !== activePath
@@ -731,9 +687,7 @@ function App() {
       )
         return;
       try {
-        const disk = await invoke<NoteDocument>("read_note", {
-          path: currentNote.path,
-        });
+        const disk = await native.readNote(currentNote.path);
         if (
           noteRef.current?.path !== currentNote.path ||
           baseline.current?.revision !== currentBaseline.revision
@@ -839,9 +793,7 @@ function App() {
       title: "Choose your notes folder",
     });
     if (typeof selected === "string") {
-      await invoke("save_selected_library", { libraryPath: selected }).catch(
-        () => undefined,
-      );
+      await native.saveSelectedLibrary(selected).catch(() => undefined);
       setLibrary(selected);
       setActivePath(null);
       setFilter({ type: "all" });
@@ -850,11 +802,11 @@ function App() {
   const importOpenedMarkdown = async (folder: string) => {
     if (!openedMarkdownPath || !library) return;
     try {
-      const imported = await invoke<NoteDocument>("import_markdown_file", {
-        sourcePath: openedMarkdownPath,
-        libraryPath: library,
-        folder: folder || null,
-      });
+      const imported = await native.importMarkdownFile(
+        openedMarkdownPath,
+        library,
+        folder || null,
+      );
       await refresh();
       setActivePath(imported.path);
       setOpenedMarkdownPath(null);
@@ -872,16 +824,10 @@ function App() {
           : null
         : targetFolder;
     try {
-      const created = await invoke<NoteDocument>("create_note", {
-        libraryPath: library,
-        folder,
-      });
+      const created = await native.createNote(library, folder);
       let saved = created;
       if (body) {
-        const result = await invoke<SaveNoteResult>("save_note", {
-          note: { ...created, body },
-          libraryPath: library,
-        });
+        const result = await native.saveNote({ ...created, body }, library);
         if (result.status === "saved") saved = result.note;
         else if (result.status === "conflict")
           throw new Error("The new note changed on disk before it could be saved");
@@ -913,10 +859,7 @@ function App() {
   const createFolder = async (folder: string) => {
     if (!library) return;
     try {
-      const created = await invoke<string>("create_folder", {
-        libraryPath: library,
-        folder,
-      });
+      const created = await native.createFolder(library, folder);
       await refresh();
       setFilter({ type: "folder", folder: created });
       setFolderDialogOpen(false);
@@ -927,11 +870,7 @@ function App() {
   const renameFolder = async (folder: string, name: string) => {
     if (!library) return;
     try {
-      const renamed = await invoke<FolderRenameResult>("rename_folder", {
-        folder,
-        name,
-        libraryPath: library,
-      });
+      const renamed = await native.renameFolder(folder, name, library);
       const paths = new Map(renamed.paths.map((path) => [path.from, path.to]));
       const renamedDescendant = (value: string) =>
         value === folder
@@ -977,10 +916,7 @@ function App() {
         activePathRef.current === previousPath ||
         activePathRef.current === originalPath;
       if (isActive) setStatus("Saving…");
-      const result = await invoke<SaveNoteResult>("save_note", {
-        note: noteToSave,
-        libraryPath: library,
-      });
+      const result = await native.saveNote(noteToSave, library);
       if (result.status === "conflict") {
         setConflict({ disk: result.disk, mine: noteToSave, path: previousPath });
         if (isActive) setStatus("Save conflict: the note changed on disk");
@@ -1058,10 +994,7 @@ function App() {
   const duplicateNote = async (source: Pick<NoteSummary, "path">) => {
     if (!library) return;
     try {
-      const copy = await invoke<NoteDocument>("duplicate_note", {
-        path: source.path,
-        libraryPath: library,
-      });
+      const copy = await native.duplicateNote(source.path, library);
       await refresh();
       setActivePath(copy.path);
     } catch (error) {
@@ -1071,11 +1004,11 @@ function App() {
   const moveNoteToFolder = async (source: NoteSummary, folder: string) => {
     if (!library) return;
     try {
-      const moved = await invoke<NoteDocument>("move_note_to_folder", {
-        path: source.path,
-        folder: folder || null,
-        libraryPath: library,
-      });
+      const moved = await native.moveNoteToFolder(
+        source.path,
+        folder || null,
+        library,
+      );
       setFavorites((current) =>
         current.map((path) => (path === source.path ? moved.path : path)),
       );
@@ -1092,10 +1025,7 @@ function App() {
   const revealNote = async (source: NoteSummary) => {
     if (!library) return;
     try {
-      await invoke("reveal_note_in_file_manager", {
-        path: source.path,
-        libraryPath: library,
-      });
+      await native.revealNoteInFileManager(source.path, library);
     } catch (error) {
       setStatus(`Could not reveal note: ${String(error)}`);
     }
@@ -1107,10 +1037,7 @@ function App() {
     )
       return;
     try {
-      await invoke("move_note_to_trash", {
-        path: source.path,
-        libraryPath: library,
-      });
+      await native.moveNoteToTrash(source.path, library);
       setFavorites((current) => current.filter((path) => path !== source.path));
       if (activePath === source.path) setActivePath(null);
       await refresh();
@@ -1130,7 +1057,7 @@ function App() {
     )
       return;
     try {
-      await invoke("move_folder_to_trash", { folder, libraryPath: library });
+      await native.moveFolderToTrash(folder, library);
       setFavorites((current) =>
         current.filter((path) => !contained.some((item) => item.path === path)),
       );
@@ -1156,10 +1083,7 @@ function App() {
   const restoreNote = async (source: NoteSummary) => {
     if (!library) return;
     try {
-      const restored = await invoke<NoteDocument>("restore_note_from_trash", {
-        path: source.path,
-        libraryPath: library,
-      });
+      const restored = await native.restoreNoteFromTrash(source.path, library);
       await refresh();
       setActivePath(restored.path);
       setFilter({ type: "all" });
@@ -1176,10 +1100,7 @@ function App() {
     )
       return;
     try {
-      await invoke("delete_note_permanently", {
-        path: source.path,
-        libraryPath: library,
-      });
+      await native.deleteNotePermanently(source.path, library);
       if (activePath === source.path) setActivePath(null);
       await refresh();
       setStatus("Note permanently deleted");
@@ -1190,10 +1111,7 @@ function App() {
   const saveQuickCapture = async (text: string) => {
     if (!library) return void (await selectLibrary());
     try {
-      const daily = await invoke<NoteDocument>("append_quick_note", {
-        libraryPath: library,
-        text,
-      });
+      const daily = await native.appendQuickNote(library, text);
       await refresh();
       setQuickCaptureOpen(false);
       setStatus(`Saved to Daily/${fileStem(daily.path)}.md`);
@@ -1204,11 +1122,11 @@ function App() {
   const importDailyNote = async (target: NoteSummary) => {
     if (!note || !library) return;
     try {
-      const saved = await invoke<NoteDocument>("import_daily_note", {
-        sourcePath: note.path,
-        targetPath: target.path,
-        libraryPath: library,
-      });
+      const saved = await native.importDailyNote(
+        note.path,
+        target.path,
+        library,
+      );
       await refresh();
       setImportDialogOpen(false);
       openLinkedNote({ ...target, path: saved.path });
@@ -1220,14 +1138,11 @@ function App() {
   const importDailyNoteToNew = async (folder: string, title: string) => {
     if (!note || !library) return;
     try {
-      const saved = await invoke<NoteDocument>(
-        "import_daily_note_to_new_note",
-        {
-          sourcePath: note.path,
-          folder: folder || null,
-          title,
-          libraryPath: library,
-        },
+      const saved = await native.importDailyNoteToNewNote(
+        note.path,
+        folder || null,
+        title,
+        library,
       );
       await refresh();
       setImportDialogOpen(false);
@@ -1334,10 +1249,12 @@ function App() {
       activeNote = noteRef.current;
       activeLibrary = libraryRef.current;
       if (!activeNote || !activeLibrary || !pathIsInLibrary(activeNote.path, activeLibrary)) return;
-      const image = await invoke<ImportedImageResponse>("import_note_image_from_bytes", {
-        notePath: activeNote.path, filename: file.name || "pasted-image.png",
-        bytes: Array.from(new Uint8Array(await file.arrayBuffer())), libraryPath: activeLibrary,
-      });
+      const image = await native.importNoteImageFromBytes(
+        activeNote.path,
+        file.name || "pasted-image.png",
+        Array.from(new Uint8Array(await file.arrayBuffer())),
+        activeLibrary,
+      );
       insertImportedImage(activeNote.path, image);
     } catch (error) { setStatus(`Could not import image: ${String(error)}`); }
   }, [insertImportedImage, waitForPendingNoteSave]);
@@ -1352,7 +1269,11 @@ function App() {
       activeNote = noteRef.current;
       activeLibrary = libraryRef.current;
       if (!activeNote || !activeLibrary || !pathIsInLibrary(activeNote.path, activeLibrary)) return;
-      const image = await invoke<ImportedImageResponse>("import_note_image_from_path", { notePath: activeNote.path, sourcePath: selected, libraryPath: activeLibrary });
+      const image = await native.importNoteImageFromPath(
+        activeNote.path,
+        selected,
+        activeLibrary,
+      );
       insertImportedImage(activeNote.path, image);
     } catch (error) { setStatus(`Could not import image: ${String(error)}`); }
   }, [insertImportedImage, waitForPendingNoteSave]);
@@ -3217,7 +3138,7 @@ function CaptureWindow() {
   const hide = useCallback(() => {
     void (async () => {
       try {
-        await invoke("hide_quick_capture");
+        await native.hideQuickCapture();
       } catch {
         await getCurrentWindow()
           .hide()
@@ -3226,7 +3147,7 @@ function CaptureWindow() {
     })();
   }, []);
   useEffect(() => {
-    void invoke<string | null>("load_selected_library")
+    void native.loadSelectedLibrary()
       .then(setLibrary)
       .catch(() => setLibrary(null))
       .finally(() => setLibraryReady(true));
@@ -3270,15 +3191,15 @@ function CaptureWindow() {
       return;
     }
     try {
-      await invoke<NoteDocument>("append_quick_note", {
-        libraryPath: library,
+      await native.appendQuickNote(
+        library,
         text,
-        dailyTemplate: expandTemplate(
+        expandTemplate(
           templates.find((template) => template.id === "daily") ||
             templates[0] ||
             defaultTemplates[0],
         ),
-      });
+      );
       setText("");
       setStatus("Saved to today’s Daily note");
       window.setTimeout(hide, 160);
@@ -4080,7 +4001,7 @@ function MarkdownPreview({
       );
       return;
     }
-    void invoke("open_external_url", { url }).catch((error) =>
+    void native.openExternalUrl(url).catch((error) =>
       onOpenExternalError(String(error)),
     );
   };
