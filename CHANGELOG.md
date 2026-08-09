@@ -2,6 +2,16 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## 0.4.1 — 2026-08-09
+
+### Added
+
+- Images can be selected, dragged into the editor, or pasted. Margin stores a copy in a sibling `.assets` folder and inserts a relative Markdown image link.
+
+### Improved
+
+- Image asset folders follow notes when they are renamed, moved, trashed, restored, or permanently deleted.
+
 ## 0.4.0 — 2026-08-08
 
 ### Added
