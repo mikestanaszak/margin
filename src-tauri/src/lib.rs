@@ -145,9 +145,11 @@ where
 
 fn markdown_asset_directory(path: &Path) -> Option<PathBuf> {
     let canonical = fs::canonicalize(path).ok()?;
-    (canonical.is_file() && is_markdown_path(&canonical))
-        .then(|| canonical.parent().map(Path::to_path_buf))
-        .flatten()
+    if canonical.is_file() && is_markdown_path(&canonical) {
+        canonical.parent().map(Path::to_path_buf)
+    } else {
+        None
+    }
 }
 
 fn allow_asset_directory(app: &AppHandle, directory: &Path) -> Result<(), String> {
@@ -497,7 +499,7 @@ enum SaveNoteResult {
 }
 
 enum SaveNoteFailure {
-    Conflict(NoteDocument),
+    Conflict(Box<NoteDocument>),
     Error(String),
 }
 
@@ -595,10 +597,7 @@ fn note_excerpt(body: &str) -> String {
     body.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with("```"))
-        .map(|line| {
-            line.trim_start_matches(|character: char| matches!(character, '>' | '-' | '*' | ' '))
-                .trim()
-        })
+        .map(|line| line.trim_start_matches(['>', '-', '*', ' ']).trim())
         .collect::<Vec<_>>()
         .join(" ")
         .chars()
@@ -691,7 +690,7 @@ fn load_library_contents(library: &Path) -> (Vec<NoteSummary>, Vec<String>) {
             }
         }
     }
-    notes.sort_by(|a, b| b.updated.cmp(&a.updated));
+    notes.sort_by_key(|note| std::cmp::Reverse(note.updated));
     folders.sort_by_key(|folder| folder.to_lowercase());
     (notes, folders)
 }
@@ -920,7 +919,7 @@ fn load_trash_contents(library: &Path) -> Vec<NoteSummary> {
             ..note_summary(note, library)
         })
         .collect::<Vec<_>>();
-    notes.sort_by(|a, b| b.updated.cmp(&a.updated));
+    notes.sort_by_key(|note| std::cmp::Reverse(note.updated));
     notes
 }
 
@@ -1193,7 +1192,10 @@ fn relative_markdown_path(from_file: &Path, target: &Path) -> Option<String> {
         .take_while(|(left, right)| left == right)
         .count();
     let mut parts = Vec::new();
-    parts.extend(std::iter::repeat("..".to_string()).take(from_parts.len() - shared));
+    parts.extend(std::iter::repeat_n(
+        "..".to_string(),
+        from_parts.len() - shared,
+    ));
     parts.extend(
         target_parts[shared..]
             .iter()
@@ -1449,7 +1451,7 @@ fn save_note_checked(
     if path.exists() {
         let disk = read_note_file(&path).map_err(SaveNoteFailure::Error)?;
         if note.revision.is_empty() || note.revision != disk.revision {
-            return Err(SaveNoteFailure::Conflict(disk));
+            return Err(SaveNoteFailure::Conflict(Box::new(disk)));
         }
     } else if !note.revision.is_empty() {
         return Err(SaveNoteFailure::Error(
@@ -1549,7 +1551,7 @@ fn save_note(note: NoteDocument, library_path: String) -> SaveNoteResult {
     })();
     match result {
         Ok(note) => SaveNoteResult::Saved { note },
-        Err(SaveNoteFailure::Conflict(disk)) => SaveNoteResult::Conflict { disk },
+        Err(SaveNoteFailure::Conflict(disk)) => SaveNoteResult::Conflict { disk: *disk },
         Err(SaveNoteFailure::Error(message)) => SaveNoteResult::Error { message },
     }
 }
