@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default capabilities for Margin",
   "windows": ["main", "capture"],
-  "permissions": ["core:default", "dialog:default", "global-shortcut:allow-register", "global-shortcut:allow-unregister", "opener:allow-default-urls"]
+  "permissions": ["core:default"]
 }
