@@ -13,6 +13,7 @@
 - **Keep your files.** A Margin library is just a folder of UTF-8 Markdown files. Open the same notes in Finder, Explorer, or another editor whenever you want.
 - **Stay oriented.** Browse All notes, Favorites, Trash, and a real nested folder tree. Choosing a parent folder keeps its notes visibly grouped by subfolder.
 - **Write without the Markdown tax.** Work in Preview, Edit, or Split view; use the outline to jump between headings; and use a selection toolbar for common formatting.
+- **Keep images with their note.** Pick, drag, or paste an image and Margin copies it into the note's adjacent `.assets` folder before inserting a relative Markdown reference.
 - **Make Preview useful.** Check off tasks directly in Preview, follow Markdown and wiki links, open web links in your default browser, and view highlighted code, images, and tables.
 - **Edit tables like a person.** Hover a Preview table to open its editor, then add, remove, reorder, and fill rows or columns without hand-editing pipes.
 - **Keep filenames understandable.** The first top-level heading becomes the note title and filename, so the folder still makes sense outside Margin.

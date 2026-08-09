@@ -36,6 +36,7 @@
 - Daily captures can be imported into a configured default note, another existing note, or a new note in any folder.
 - Light, dark, and system appearance; system is the default. Ink, Mint, and Linen palettes are available independently of appearance, with Mint as the default.
 - On Windows and macOS, Margin updates its running icon to match the selected palette; Linux keeps the packaged icon.
+- Images can be picked, dragged into the editor, or pasted. Margin copies each image into a sibling `<note>.assets` folder and inserts a relative Markdown image link.
 - Settings for library location, hotkeys, Quick Capture destination, supported code-block languages, and manual update checks.
 
 ### Desktop and updates
@@ -52,3 +53,4 @@
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
 - Optional AI-agent integrations for user-directed note drafting, summarizing, organizing, and appending work logs, with explicit per-action approval and no automatic access to a library.
+- Code-fence language autocomplete: suggest supported languages and aliases while typing after an opening triple-backtick fence, while still allowing custom language identifiers.

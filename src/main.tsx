@@ -18,7 +18,7 @@ import remarkGfm from "remark-gfm";
 import { all as highlightLanguages } from "lowlight";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { MarkdownEditor, type MarkdownEditorHandle } from "./MarkdownEditor";
+import { insertImage, MarkdownEditor, type MarkdownEditorHandle } from "./MarkdownEditor";
 import MermaidDiagram from "./MermaidDiagram";
 import {
   NoteListItem,
@@ -80,6 +80,7 @@ type FolderRenameResult = {
   folder: string;
   paths: { from: string; to: string }[];
 };
+type ImportedImageResponse = { markdown_path: string; alt: string };
 type Filter = {
   type: "all" | "today" | "favorites" | "trash" | "folder";
   folder?: string;
@@ -1305,6 +1306,42 @@ function App() {
   const isManagedNote = Boolean(
     note && library && pathIsInLibrary(note.path, library),
   );
+  const insertImportedImage = useCallback((notePath: string, image: ImportedImageResponse) => {
+    if (noteRef.current?.path !== notePath) {
+      setStatus("The image was imported, but the active note changed before it could be inserted.");
+      return;
+    }
+    const view = editor.current?.getView();
+    if (!view) {
+      setStatus("The image was imported, but the editor is unavailable.");
+      return;
+    }
+    insertImage(view, { markdownPath: image.markdown_path, alt: image.alt });
+  }, []);
+  const importImageFile = useCallback(async (file: File) => {
+    const activeNote = noteRef.current;
+    const activeLibrary = libraryRef.current;
+    if (!activeNote || !activeLibrary || !pathIsInLibrary(activeNote.path, activeLibrary)) return;
+    if (file.size > 25 * 1024 * 1024) return setStatus("Images must be 25 MB or smaller.");
+    try {
+      const image = await invoke<ImportedImageResponse>("import_note_image_from_bytes", {
+        notePath: activeNote.path, filename: file.name || "pasted-image.png",
+        bytes: Array.from(new Uint8Array(await file.arrayBuffer())), libraryPath: activeLibrary,
+      });
+      insertImportedImage(activeNote.path, image);
+    } catch (error) { setStatus(`Could not import image: ${String(error)}`); }
+  }, [insertImportedImage]);
+  const chooseImage = useCallback(async () => {
+    const activeNote = noteRef.current;
+    const activeLibrary = libraryRef.current;
+    if (!activeNote || !activeLibrary || !pathIsInLibrary(activeNote.path, activeLibrary)) return;
+    const selected = await open({ multiple: false, title: "Choose an image", filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp"] }] });
+    if (typeof selected !== "string") return;
+    try {
+      const image = await invoke<ImportedImageResponse>("import_note_image_from_path", { notePath: activeNote.path, sourcePath: selected, libraryPath: activeLibrary });
+      insertImportedImage(activeNote.path, image);
+    } catch (error) { setStatus(`Could not import image: ${String(error)}`); }
+  }, [insertImportedImage]);
   const noteEditor = note ? (
     <MarkdownEditor
       key={`${note.path}-${isManagedNote ? "managed" : "external"}`}
@@ -1320,6 +1357,8 @@ function App() {
         )
       }
       onBlur={() => isManagedNote && void enqueueSave(note)}
+      onInsertImage={isManagedNote ? () => void chooseImage() : undefined}
+      onImageFile={isManagedNote ? (file) => void importImageFile(file) : undefined}
       autoFocus
       readOnly={!isManagedNote}
       className="markdown-editor"
