@@ -1,5 +1,5 @@
-import { render, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const renderer = vi.hoisted(() => {
   const sources: string[] = [];
@@ -9,6 +9,7 @@ const renderer = vi.hoisted(() => {
   return {
     sources,
     releases,
+    initialize: vi.fn(),
     get maximumActive() {
       return maximumActive;
     },
@@ -28,7 +29,7 @@ const renderer = vi.hoisted(() => {
 
 vi.mock("mermaid", () => ({
   default: {
-    initialize: vi.fn(),
+    initialize: renderer.initialize,
     render: renderer.render,
   },
 }));
@@ -36,6 +37,13 @@ vi.mock("mermaid", () => ({
 import MermaidDiagram from "./MermaidDiagram";
 
 describe("Mermaid rendering coordination", () => {
+  beforeEach(() => {
+    renderer.sources.splice(0);
+    renderer.releases.splice(0);
+    renderer.initialize.mockClear();
+    renderer.render.mockClear();
+  });
+
   it("serializes diagrams and skips source updates made obsolete in the queue", async () => {
     const first = render(<MermaidDiagram source="first" />);
     const second = render(<MermaidDiagram source="second" />);
@@ -43,6 +51,12 @@ describe("Mermaid rendering coordination", () => {
 
     await waitFor(() => expect(renderer.sources).toEqual(["first"]));
     expect(renderer.maximumActive).toBe(1);
+    expect(renderer.initialize).toHaveBeenCalledWith({
+      securityLevel: "strict",
+      startOnLoad: false,
+      suppressErrorRendering: true,
+      theme: "default",
+    });
 
     renderer.releases.shift()?.();
 
@@ -54,5 +68,15 @@ describe("Mermaid rendering coordination", () => {
       expect(first.getByRole("img", { name: "Mermaid diagram" })).toBeVisible();
       expect(second.getByRole("img", { name: "Mermaid diagram" })).toBeVisible();
     });
+  });
+
+  it("falls back to the source when the renderer rejects", async () => {
+    renderer.render.mockRejectedValueOnce(new Error("invalid diagram"));
+
+    render(<MermaidDiagram source="not valid mermaid" />);
+
+    expect(
+      await screen.findByLabelText("Mermaid diagram could not be rendered"),
+    ).toHaveTextContent("not valid mermaid");
   });
 });

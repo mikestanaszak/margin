@@ -37,6 +37,8 @@
 - Light, dark, and system appearance; system is the default. Ink, Mint, and Linen palettes are available independently of appearance, with Mint as the default.
 - On Windows and macOS, Margin updates its running icon to match the selected palette; Linux keeps the packaged icon.
 - Images can be picked, dragged into the editor, or pasted. Margin copies each image into a sibling `<note>.assets` folder and inserts a relative Markdown image link.
+- Image companion folders stay out of the sidebar and folder menus. The Image action lives beside table insertion in the edit formatting toolbar.
+- The Paper palette provides coordinated warm-tan light and dark appearances; code-fence language suggestions remain readable in every palette.
 - Settings for library location, hotkeys, Quick Capture destination, supported code-block languages, and manual update checks.
 
 ### Desktop and updates

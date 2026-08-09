@@ -2,6 +2,24 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## 0.4.2 — 2026-08-09
+
+### Added
+
+- Paper, a warm tan palette with matched light and dark appearances and a runtime icon.
+- A README feature tour explaining editor tools, image handling, links and backlinks, navigation, capture, templates, and settings.
+
+### Improved
+
+- Image insertion is beside table insertion in the edit toolbar. Images can now be dropped from desktop file managers or pasted from clipboard image items.
+- Companion image folders are hidden from library navigation.
+- Code-fence language suggestions now use readable palette-aware text, panel, and selection colors.
+
+### Fixed
+
+- Theme switches update macOS window icons as well as the application icon.
+- Mermaid preview coverage no longer runs the heavyweight renderer in the general UI suite, removing the intermittent timeout.
+
 ## 0.4.1 — 2026-08-09
 
 ### Added

@@ -31,6 +31,22 @@ Margin is designed around the little things that make a note app pleasant to liv
 - Use light or dark appearance, following the system by default, and review or change shortcuts in Settings.
 - Keep editing position stable while autosave writes safely in the background.
 
+## Feature tour
+
+### Write, format, and preview
+
+Use **Edit** for Markdown writing and **Preview** or **Split** to see the rendered note. Select text in Edit to reveal the formatting toolbar: headings, bold, italic, links, tables, and **Image**. Image opens a picker; you can also drop an image into the editor or paste one from the clipboard. Margin stores a copy beside the note in `<note>.assets` and inserts a portable relative image reference. These companion folders are intentionally hidden from the sidebar and folder menus.
+
+Fenced code blocks support language suggestions as you type after the opening backticks. The Preview includes syntax highlighting, a Copy control for code blocks, interactive task checkboxes, table editing, and Mermaid diagrams.
+
+### Connect notes and navigate the library
+
+Use `[[Note title]]` to link to another note. **Linked from** appears beneath an open note only when another indexed note contains a wiki link matching that note title (case-insensitively); it updates after the linking note is saved. Search, Quick Open, folders, favorites, and the optional heading outline help you move around a library without adding proprietary metadata to your files.
+
+### Capture, organize, and personalize
+
+Quick Capture collects thoughts from anywhere, then lets you append, import, or turn them into notes. Daily notes and reusable templates reduce repetitive setup. Settings contains shortcut controls, update checks, and appearance choices: follow the system, light, or dark appearance with Mint, Ink, Linen, or Paper palettes.
+
 ## Catch thoughts before they disappear
 
 Press **Ctrl+Alt+Shift+Space** on Windows or **Command+Option+Shift+Space** on macOS to open Quick Capture from anywhere. It remembers your library, uses your Daily note template on the first capture of the day, understands basic list continuation while you type, and saves with **Ctrl/Command+Enter**.

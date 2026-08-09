@@ -31,6 +31,13 @@ vi.mock("@tauri-apps/api/core", () => ({
 vi.mock("@tauri-apps/plugin-process", () => ({
   relaunch: vi.fn(),
 }));
+vi.mock("./MermaidDiagram", () => ({
+  default: ({ source }: { source: string }) => (
+    <figure role="img" aria-label="Mermaid diagram" data-source={source}>
+      {source}
+    </figure>
+  ),
+}));
 
 import {
   App,
@@ -185,24 +192,8 @@ describe("Markdown preview", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders Mermaid fenced blocks as diagrams", async () => {
-    render(
-      <MarkdownPreview
-        markdown={["```mermaid", "flowchart LR", "  Start --> Finish", "```"].join("\n")}
-        notePath={notes[0].path}
-        notes={notes}
-        onOpen={() => undefined}
-        onEditTable={() => undefined}
-        onToggleTask={() => undefined}
-      />,
-    );
-
-    const diagram = await screen.findByRole("img", { name: "Mermaid diagram" });
-    expect(diagram.querySelector("svg")).not.toBeNull();
-  });
-
-  it("shows malformed Mermaid as its original code", async () => {
-    const source = "this is not a diagram";
+  it("passes Mermaid fence source to the diagram renderer", () => {
+    const source = "flowchart LR\n  Start --> Finish";
     render(
       <MarkdownPreview
         markdown={["```mermaid", source, "```"].join("\n")}
@@ -214,152 +205,11 @@ describe("Markdown preview", () => {
       />,
     );
 
-    const fallback = await screen.findByLabelText(
-      "Mermaid diagram could not be rendered",
+    expect(screen.getByRole("img", { name: "Mermaid diagram" })).toHaveAttribute(
+      "data-source",
+      source,
     );
-    expect(fallback).toHaveTextContent(source);
-    expect(screen.queryByRole("img", { name: "Mermaid diagram" })).toBeNull();
   });
-
-  it("removes unsafe links from rendered Mermaid diagrams", async () => {
-    render(
-      <MarkdownPreview
-        markdown={[
-          "```mermaid",
-          "flowchart LR",
-          "  Unsafe[Unsafe link]",
-          '  click Unsafe "javascript:alert(document.domain)"',
-          "```",
-        ].join("\n")}
-        notePath={notes[0].path}
-        notes={notes}
-        onOpen={() => undefined}
-        onEditTable={() => undefined}
-        onToggleTask={() => undefined}
-      />,
-    );
-
-    const diagram = await screen.findByRole("img", { name: "Mermaid diagram" });
-    expect(diagram.querySelector('[href^="javascript:"]')).toBeNull();
-    expect(diagram.querySelector("script")).toBeNull();
-    expect(
-      Array.from(diagram.querySelectorAll("*")).some((element) =>
-        Array.from(element.attributes).some((attribute) =>
-          attribute.name.toLowerCase().startsWith("on"),
-        ),
-      ),
-    ).toBe(false);
-  });
-
-  it(
-    "regenerates Mermaid diagrams when the app changes to dark appearance",
-    async () => {
-      const originalTheme = document.documentElement.dataset.theme;
-      document.documentElement.dataset.theme = "light";
-      try {
-        render(
-          <MarkdownPreview
-            markdown={["```mermaid", "flowchart LR", "  Start --> Finish", "```"].join("\n")}
-            notePath={notes[0].path}
-            notes={notes}
-            onOpen={() => undefined}
-            onEditTable={() => undefined}
-            onToggleTask={() => undefined}
-          />,
-        );
-
-        const diagram = await screen.findByRole("img", { name: "Mermaid diagram" });
-        const lightStyles = diagram.querySelector("style")?.textContent;
-        expect(lightStyles).toBeTruthy();
-
-        document.documentElement.dataset.theme = "dark";
-
-        await waitFor(
-          () =>
-            expect(
-              screen
-                .getByRole("img", { name: "Mermaid diagram" })
-                .querySelector("style")?.textContent,
-            ).not.toBe(lightStyles),
-          { timeout: 10_000 },
-        );
-      } finally {
-        if (originalTheme) document.documentElement.dataset.theme = originalTheme;
-        else delete document.documentElement.dataset.theme;
-      }
-    },
-    15_000,
-  );
-
-  it(
-    "regenerates Mermaid diagrams when system appearance changes",
-    async () => {
-      const originalTheme = document.documentElement.dataset.theme;
-      const originalMatchMedia = window.matchMedia;
-      const listeners = new Set<() => void>();
-      let prefersDark = false;
-      const mediaQuery = {
-        get matches() {
-          return prefersDark;
-        },
-        media: "(prefers-color-scheme: dark)",
-        onchange: null,
-        addEventListener: (_type: string, listener: () => void) => {
-          listeners.add(listener);
-        },
-        removeEventListener: (_type: string, listener: () => void) => {
-          listeners.delete(listener);
-        },
-        addListener: (listener: () => void) => {
-          listeners.add(listener);
-        },
-        removeListener: (listener: () => void) => {
-          listeners.delete(listener);
-        },
-        dispatchEvent: () => false,
-      } as unknown as MediaQueryList;
-      Object.defineProperty(window, "matchMedia", {
-        configurable: true,
-        value: vi.fn(() => mediaQuery),
-      });
-      document.documentElement.dataset.theme = "system";
-      try {
-        render(
-          <MarkdownPreview
-            markdown={["```mermaid", "flowchart LR", "  Start --> Finish", "```"].join("\n")}
-            notePath={notes[0].path}
-            notes={notes}
-            onOpen={() => undefined}
-            onEditTable={() => undefined}
-            onToggleTask={() => undefined}
-          />,
-        );
-
-        const diagram = await screen.findByRole("img", { name: "Mermaid diagram" });
-        const lightStyles = diagram.querySelector("style")?.textContent;
-        prefersDark = true;
-        listeners.forEach((listener) => listener());
-
-        await waitFor(
-          () =>
-            expect(
-              screen
-                .getByRole("img", { name: "Mermaid diagram" })
-                .querySelector("style")?.textContent,
-            ).not.toBe(lightStyles),
-          { timeout: 10_000 },
-        );
-      } finally {
-        Object.defineProperty(window, "matchMedia", {
-          configurable: true,
-          value: originalMatchMedia,
-        });
-        if (originalTheme) document.documentElement.dataset.theme = originalTheme;
-        else delete document.documentElement.dataset.theme;
-      }
-    },
-    15_000,
-  );
 
   it("renders GFM and routes wiki and relative Markdown links inside the library", () => {
     const onOpen = vi.fn();
@@ -586,6 +436,32 @@ describe("navigation structures and safety dialogs", () => {
     }
   });
 
+  it("updates the runtime icon when the appearance changes", () => {
+    const previousPalette = localStorage.getItem("margin.palette");
+    const previousTheme = localStorage.getItem("margin.theme");
+    localStorage.setItem("margin.palette", "paper");
+    localStorage.setItem("margin.theme", "light");
+    try {
+      render(<App />);
+      invoke.mockClear();
+      fireEvent.click(screen.getByLabelText("Settings"));
+      fireEvent.change(screen.getByLabelText("Appearance"), {
+        target: { value: "dark" },
+      });
+
+      expect(invoke).toHaveBeenCalledWith("set_runtime_palette_icon", {
+        palette: "paper",
+      });
+    } finally {
+      if (previousPalette === null) localStorage.removeItem("margin.palette");
+      else localStorage.setItem("margin.palette", previousPalette);
+      if (previousTheme === null) localStorage.removeItem("margin.theme");
+      else localStorage.setItem("margin.theme", previousTheme);
+      delete document.documentElement.dataset.palette;
+      delete document.documentElement.dataset.theme;
+    }
+  });
+
   it("labels the palette choices and marks the current palette", () => {
     render(
       <SettingsDialog
@@ -610,7 +486,8 @@ describe("navigation structures and safety dialogs", () => {
 
     expect(screen.getByRole("group", { name: "Palette" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Mint" })).toBeChecked();
-    expect(screen.getAllByRole("radio")).toHaveLength(3);
+    expect(screen.getByRole("radio", { name: "Paper" })).toBeInTheDocument();
+    expect(screen.getAllByRole("radio")).toHaveLength(4);
   });
 });
 

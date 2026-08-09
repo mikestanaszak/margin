@@ -757,23 +757,6 @@ select:focus-visible {
   border-radius: 9px;
   box-shadow: var(--shadow);
 }
-.markdown-editor-image-button {
-  position: absolute;
-  z-index: 4;
-  top: 10px;
-  right: 14px;
-  padding: 5px 9px;
-  color: var(--muted);
-  background: var(--surface-soft);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  font-size: 12px;
-  font-weight: 650;
-}
-.markdown-editor-image-button:hover {
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-}
 .markdown-editor-toolbar button {
   min-width: 28px;
   min-height: 28px;
@@ -1377,6 +1360,59 @@ select:focus-visible {
   --swatch-bg: #fbf7ef;
   --swatch-text: #352d27;
   --swatch-accent: #a6533d;
+}
+.palette-option[data-palette="paper"] {
+  --swatch-bg: #f5eddf;
+  --swatch-text: #34281f;
+  --swatch-accent: #8a5b32;
+}
+:root[data-palette="paper"] {
+  --bg: #f5eddf;
+  --sidebar: #e9dac5;
+  --surface: #fffaf0;
+  --surface-soft: #f4e9d8;
+  --text: #34281f;
+  --muted: #756150;
+  --faint: #9d8774;
+  --border: #decbb4;
+  --accent: #8a5b32;
+  --accent-strong: #704522;
+  --accent-soft: #ecd5b9;
+  --danger: #a6443d;
+  --shadow: 0 16px 50px rgb(77 52 31 / 16%);
+}
+:root[data-palette="paper"][data-theme="dark"] {
+  --bg: #211912;
+  --sidebar: #2b2017;
+  --surface: #35281d;
+  --surface-soft: #413224;
+  --text: #f7ecdc;
+  --muted: #d2bda7;
+  --faint: #a78f7b;
+  --border: #594433;
+  --accent: #e5ad70;
+  --accent-strong: #f1c28e;
+  --accent-soft: #5d422b;
+  --danger: #ef9185;
+  --shadow: 0 20px 60px rgb(0 0 0 / 38%);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="paper"]:not([data-theme]),
+  :root[data-palette="paper"][data-theme="system"] {
+    --bg: #211912;
+    --sidebar: #2b2017;
+    --surface: #35281d;
+    --surface-soft: #413224;
+    --text: #f7ecdc;
+    --muted: #d2bda7;
+    --faint: #a78f7b;
+    --border: #594433;
+    --accent: #e5ad70;
+    --accent-strong: #f1c28e;
+    --accent-soft: #5d422b;
+    --danger: #ef9185;
+    --shadow: 0 20px 60px rgb(0 0 0 / 38%);
+  }
 }
 .shortcut-settings p {
   margin: 0 0 4px;

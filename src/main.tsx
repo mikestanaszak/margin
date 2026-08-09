@@ -538,15 +538,13 @@ function App() {
   }, [favorites]);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem(themeKey, theme);
-  }, [theme]);
-  useEffect(() => {
     document.documentElement.dataset.palette = palette;
+    localStorage.setItem(themeKey, theme);
     localStorage.setItem(paletteStorageKey, palette);
     void invoke<void>("set_runtime_palette_icon", { palette }).catch(
       () => undefined,
     );
-  }, [palette]);
+  }, [palette, theme]);
   useEffect(() => {
     localStorage.setItem(shortcutsKey, JSON.stringify(shortcuts));
   }, [shortcuts]);

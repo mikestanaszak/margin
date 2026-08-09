@@ -4,14 +4,15 @@ import { history, undo, undoDepth } from "@codemirror/commands";
 import { CompletionContext } from "@codemirror/autocomplete";
 import { all as highlightLanguages, createLowlight } from "lowlight";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render } from "@testing-library/react";
-import { createElement } from "react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
+import { createElement, createRef } from "react";
 import {
   applyHeading,
   captureViewState,
   insertLink,
   insertTable,
   MarkdownEditor,
+  type MarkdownEditorHandle,
   codeFenceLanguageCompletions,
   selectionFromSaved,
   wrapSelection,
@@ -168,6 +169,95 @@ describe("Markdown editor formatting", () => {
       }),
     );
     expect(readOnly.container.querySelector(".cm-content")).toHaveAttribute("spellcheck", "false");
+  });
+
+  it("imports a desktop image drop when the file MIME type is unavailable", () => {
+    const onImageFile = vi.fn();
+    const { container } = render(
+      createElement(MarkdownEditor, {
+        notePath: "editable.md",
+        value: "",
+        onChange: vi.fn(),
+        onImageFile,
+      }),
+    );
+    const image = new File(["image"], "photo.png", { type: "" });
+    const content = container.querySelector<HTMLElement>(".cm-content");
+
+    fireEvent.drop(content!, { dataTransfer: { files: [image] } });
+
+    expect(onImageFile).toHaveBeenCalledWith(image, "drop");
+  });
+
+  it("imports an image from a clipboard item", () => {
+    const onImageFile = vi.fn();
+    const { container } = render(
+      createElement(MarkdownEditor, {
+        notePath: "editable.md",
+        value: "",
+        onChange: vi.fn(),
+        onImageFile,
+      }),
+    );
+    const image = new File(["image"], "clipboard.png", { type: "image/png" });
+    const content = container.querySelector<HTMLElement>(".cm-content");
+
+    fireEvent.paste(content!, {
+      clipboardData: {
+        files: [],
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => image,
+          },
+        ],
+      },
+    });
+
+    expect(onImageFile).toHaveBeenCalledWith(image, "paste");
+  });
+
+  it("places Image directly after Table in the selection toolbar", async () => {
+    const editorRef = createRef<MarkdownEditorHandle>();
+    const { container } = render(
+      createElement(MarkdownEditor, {
+        ref: editorRef,
+        notePath: "editable.md",
+        value: "Select this text",
+        onChange: vi.fn(),
+        onInsertImage: vi.fn(),
+      }),
+    );
+
+    const host = container.querySelector<HTMLElement>("[data-note-path='editable.md']");
+    const view = editorRef.current?.getView();
+    expect(host).not.toBeNull();
+    expect(view).toBeDefined();
+    vi.spyOn(host!, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 400, 200),
+    );
+    vi.spyOn(view!, "coordsAtPos").mockReturnValue({
+      top: 60,
+      bottom: 72,
+      left: 180,
+      right: 190,
+    });
+
+    act(() => {
+      view?.dispatch({ selection: { anchor: 0, head: 6 } });
+    });
+
+    await waitFor(() =>
+      expect(container.querySelector(".markdown-editor-toolbar")).not.toBeNull(),
+    );
+    const buttons = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".markdown-editor-toolbar button"),
+    );
+    const tableIndex = buttons.findIndex(
+      (button) => button.title === "Insert 3 by 3 table",
+    );
+    expect(buttons[tableIndex + 1]).toHaveAttribute("aria-label", "Insert image");
   });
 });
 

@@ -8,6 +8,7 @@ describe("palette preferences", () => {
   });
 
   it("accepts each shipped palette", () => {
-    expect(paletteOptions.map(({ id }) => id)).toEqual(["ink", "mint", "linen"]);
+    expect(loadPalette("paper")).toBe("paper");
+    expect(paletteOptions.map(({ id }) => id)).toEqual(["ink", "mint", "linen", "paper"]);
   });
 });

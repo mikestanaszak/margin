@@ -135,6 +135,32 @@ export const codeFenceLanguageCompletions: CompletionSource = (context) => {
   };
 };
 
+function isImageFile(file: File) {
+  return (
+    file.type.startsWith("image/") ||
+    /\.(png|jpe?g|gif|webp)$/i.test(file.name)
+  );
+}
+
+function imageFileFromDataTransfer(data: DataTransfer | null) {
+  const file = Array.from(data?.files ?? []).find(isImageFile);
+  if (file) return file;
+
+  return Array.from(data?.items ?? [])
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .find((item): item is File => item !== null);
+}
+
+function hasImageDataTransfer(data: DataTransfer | null) {
+  return (
+    Array.from(data?.files ?? []).some(isImageFile) ||
+    Array.from(data?.items ?? []).some(
+      (item) => item.kind === "file" && item.type.startsWith("image/"),
+    )
+  );
+}
+
 const editorTheme = EditorView.theme({
   "&": {
     height: "100%",
@@ -156,6 +182,17 @@ const editorTheme = EditorView.theme({
     caretColor: "currentColor",
   },
   ".cm-line": { padding: "0" },
+  ".cm-tooltip": {
+    backgroundColor: "var(--surface)",
+    border: "1px solid var(--border)",
+    color: "var(--text)",
+  },
+  ".cm-tooltip-autocomplete > ul > li": { color: "var(--text)" },
+  ".cm-tooltip-autocomplete > ul > li[aria-selected]": {
+    backgroundColor: "var(--accent-soft)",
+    color: "var(--text)",
+  },
+  ".cm-completionDetail": { color: "var(--muted)" },
 });
 
 export function captureViewState(view: EditorView): SavedViewState {
@@ -443,19 +480,19 @@ export const MarkdownEditor = forwardRef<
           return insertLink(editorView);
         },
         paste: (event) => {
-          const image = Array.from(event.clipboardData?.files ?? []).find((file) => file.type.startsWith("image/"));
+          const image = imageFileFromDataTransfer(event.clipboardData);
           if (!image || !onImageFileRef.current) return false;
           event.preventDefault();
           onImageFileRef.current(image, "paste");
           return true;
         },
         dragover: (event) => {
-          if (!onImageFileRef.current || !Array.from(event.dataTransfer?.files ?? []).some((file) => file.type.startsWith("image/"))) return false;
+          if (!onImageFileRef.current || !hasImageDataTransfer(event.dataTransfer)) return false;
           event.preventDefault();
           return true;
         },
         drop: (event) => {
-          const image = Array.from(event.dataTransfer?.files ?? []).find((file) => file.type.startsWith("image/"));
+          const image = imageFileFromDataTransfer(event.dataTransfer);
           if (!image || !onImageFileRef.current) return false;
           event.preventDefault();
           onImageFileRef.current(image, "drop");
@@ -556,7 +593,6 @@ export const MarkdownEditor = forwardRef<
       style={{ minHeight: 0, ...style }}
       data-note-path={notePath}
     >
-      {!readOnly && onInsertImage && <button type="button" className="markdown-editor-image-button" title="Insert image" aria-label="Insert image" onClick={onInsertImage}>Image</button>}
       {!readOnly && toolbarPosition && <div className="markdown-editor-toolbar" style={toolbarPosition} role="toolbar" aria-label="Format selected text" onMouseDown={event => event.preventDefault()}>
         <button type="button" title="Heading 2" onClick={() => viewRef.current && applyHeading(viewRef.current, 2)}>H2</button>
         <button type="button" title="Heading 3" onClick={() => viewRef.current && applyHeading(viewRef.current, 3)}>H3</button>
@@ -565,6 +601,7 @@ export const MarkdownEditor = forwardRef<
         <button type="button" title="Italic" onClick={() => viewRef.current && wrapSelection(viewRef.current, "_")}>I</button>
         <button type="button" title="Link" onClick={() => viewRef.current && insertLink(viewRef.current)}>↗</button>
         <button type="button" title="Insert 3 by 3 table" onClick={() => viewRef.current && insertTable(viewRef.current)}>▦</button>
+        {onInsertImage && <button type="button" className="markdown-editor-image-button" title="Insert image" aria-label="Insert image" onClick={onInsertImage}>Image</button>}
       </div>}
     </div>
   );
