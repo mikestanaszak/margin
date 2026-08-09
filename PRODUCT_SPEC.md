@@ -5,6 +5,7 @@
 ### Notes and libraries
 
 - Local Markdown libraries: recursive indexing, external-file refresh, and normal UTF-8 `.md` files.
+- Tags are read from YAML front matter, normalized by trimming duplicates case-insensitively, and included in note-card display and search.
 - First H1 is the note title; filenames stay aligned with titles. When a title rename changes a filename, Margin repairs only unambiguous internal relative Markdown links and leaves external URLs, anchors, absolute paths, and unresolved links untouched.
 - Notes can be created, duplicated, renamed, moved, trashed, restored, permanently deleted, and revealed in Finder or File Explorer.
 - Folders can be created, nested, renamed by double-clicking their name, and moved to Trash. The inline plus button adds a subfolder.
@@ -19,7 +20,7 @@
 - Mermaid code fences render as local diagrams in Preview, with light and dark themes and a visible source fallback for malformed diagrams.
 - Preview tasks are clickable and save their completion state.
 - Tables can be edited in place, with row/column insertion, deletion, and reordering.
-- Internal Markdown and wiki links open the matching note; web links open in the system browser.
+- Internal Markdown and wiki links open the matching note; saved wiki links also populate the receiving note's Backlinks list. Web links open in the system browser.
 - Inline code can be selected with a double-click.
 - Typing after an opening triple-backtick suggests supported Highlight.js language names and common aliases without restricting custom identifiers.
 - Autosave preserves editor selection and scroll position.
@@ -55,4 +56,3 @@
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
 - Optional AI-agent integrations for user-directed note drafting, summarizing, organizing, and appending work logs, with explicit per-action approval and no automatic access to a library.
-- Code-fence language autocomplete: suggest supported languages and aliases while typing after an opening triple-backtick fence, while still allowing custom language identifiers.

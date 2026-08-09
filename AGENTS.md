@@ -18,13 +18,18 @@ Use Windows Command Prompt (`cmd.exe`) for every repository command. Open a regu
 ```cmd
 pnpm install                         # install frontend and Tauri tooling
 pnpm tauri dev                       # run Vite and the native desktop app
+pnpm test                            # run unit tests, then Mermaid integration tests
+pnpm test:unit                       # run unit tests without the real Mermaid renderer
+pnpm test:integration                # run the dedicated Mermaid renderer integration suite
 pnpm build                           # TypeScript type-check and build the web UI
 pnpm tauri build --debug             # build a debug native executable
 pnpm tauri build                     # create a production application bundle
+cargo test --manifest-path src-tauri/Cargo.toml   # run Rust tests
 cargo check --manifest-path src-tauri/Cargo.toml  # validate Rust backend code
+cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings  # lint Rust code
 ```
 
-Run `cargo fmt --manifest-path src-tauri/Cargo.toml` after editing Rust. Build output belongs in the repository-root `target/` directory and is not committed.
+Run `cargo fmt --manifest-path src-tauri/Cargo.toml` after editing Rust, and use `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` to validate formatting. Build output belongs in the repository-root `target/` directory and is not committed.
 
 ## Coding Style & Naming Conventions
 
@@ -32,7 +37,7 @@ Follow the surrounding code: TypeScript uses double quotes, semicolons, `camelCa
 
 ## Testing Guidelines
 
-No automated test framework is currently configured. Before submitting changes, run `pnpm build` and `cargo check`, then manually exercise the affected flow with `pnpm tauri dev` (especially note creation, autosave, search, and external-file changes). Add tests alongside any new test infrastructure; name them for observable behavior, such as `saves_front_matter_tags`.
+Before submitting changes, run `pnpm test`, `pnpm build`, `cargo test --manifest-path src-tauri/Cargo.toml`, `cargo check --manifest-path src-tauri/Cargo.toml`, `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, and `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`. Run `pnpm test:integration` directly when changing Mermaid rendering. Then manually exercise the affected flow with `pnpm tauri dev` (especially note creation, autosave, search, and external-file changes). Add tests for observable behavior, such as `saves_front_matter_tags`.
 
 ## Commit & Pull Request Guidelines
 

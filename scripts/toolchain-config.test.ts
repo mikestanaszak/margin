@@ -9,4 +9,13 @@ describe("toolchain configuration", () => {
     expect(pkg.scripts["test:integration"]).toContain("--maxWorkers=1");
     expect(pkg.scripts.test).toBe("pnpm test:unit && pnpm test:integration");
   });
+
+  it("documents the configured suite without stale claims", () => {
+    const agents = readFileSync("AGENTS.md", "utf8");
+    const spec = readFileSync("PRODUCT_SPEC.md", "utf8");
+
+    expect(agents).not.toContain("No automated test framework is currently configured");
+    expect(agents).toContain("pnpm test");
+    expect(spec.match(/code-fence language autocomplete/gi) ?? []).toHaveLength(0);
+  });
 });

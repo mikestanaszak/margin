@@ -14,7 +14,7 @@ Margin is a calm, local-first desktop workspace for ordinary Markdown notes. Pic
 | --- | --- |
 | Write | Preview, Edit, and Split views; Markdown formatting tools; spell check in Edit; autosave; and a heading outline. |
 | Preview | GitHub-flavored Markdown, syntax-highlighted code, Mermaid diagrams, interactive tasks, image rendering, and editable tables. |
-| Organize | Real nested folders, All notes, Favorites, Trash, search, Quick Open, and per-folder note counts. |
+| Organize | Real nested folders, YAML front-matter tags, All notes, Favorites, Trash, search, Quick Open, and per-folder note counts. |
 | Navigate | Markdown links and `[[wiki links]]` open notes in the library. **Linked from** appears when another saved note contains a matching wiki link. |
 | Capture | Global Quick Capture, dated Daily notes, and reusable Markdown templates with `{{date}}` and `{{time}}`. |
 | Customize | System, light, and dark appearance; Ink, Mint, Linen, and Paper palettes; configurable shortcuts; update checks; and a library picker. |
@@ -56,7 +56,9 @@ Notes can also be opened from their file manager. A Markdown file already in the
 
 ### Links, backlinks, and navigation
 
-Use `[label](Relative note.md)` or `[[Note title]]` to connect notes. Margin only treats links that resolve to a note in the library as in-app navigation; web, email, and phone links open through the operating system. **Linked from** is added beneath the active note after another note containing a matching saved wiki link is indexed. It updates after that other note saves or the library refreshes.
+Use `[label](Relative note.md)` or `[[Note title]]` to connect notes. Margin only treats Markdown links that resolve to a note in the library as in-app navigation; web, email, and phone links open through the operating system. **Linked from** is added beneath the active note after another note containing a matching saved wiki link is indexed. It updates after that other note saves or the library refreshes.
+
+Tags are stored in each note's YAML front matter. Margin normalizes them by trimming empty entries and duplicate names case-insensitively; they appear on note cards and participate in search.
 
 ### Capture and templates
 
@@ -117,4 +119,4 @@ pnpm install
 pnpm tauri dev
 ```
 
-Run `pnpm test`, `pnpm build`, and `cargo test --manifest-path src-tauri/Cargo.toml` before contributing. More development detail is in [TESTING.md](TESTING.md).
+Run `pnpm test`, `pnpm build`, `cargo test --manifest-path src-tauri/Cargo.toml`, `cargo check --manifest-path src-tauri/Cargo.toml`, `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, and `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` before contributing. Run `pnpm test:integration` directly when changing Mermaid rendering. More development detail is in [TESTING.md](TESTING.md).
