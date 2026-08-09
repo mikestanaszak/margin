@@ -225,11 +225,32 @@ fn runtime_icon_bytes(palette: &str) -> Result<&'static [u8], String> {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn set_macos_application_icon(app: &AppHandle, icon_bytes: &'static [u8]) -> Result<(), String> {
+    app.run_on_main_thread(move || {
+        use objc2::{AllocAnyThread, MainThreadMarker};
+        use objc2_app_kit::{NSApplication, NSImage};
+        use objc2_foundation::NSData;
+
+        let Some(main_thread) = MainThreadMarker::new() else {
+            return;
+        };
+        let data = NSData::with_bytes(icon_bytes);
+        let Some(icon) = NSImage::initWithData(NSImage::alloc(), &data) else {
+            return;
+        };
+        let application = NSApplication::sharedApplication(main_thread);
+        // SAFETY: the icon is non-null and this closure runs on AppKit's main thread.
+        unsafe { application.setApplicationIconImage(Some(&icon)) };
+    })
+    .map_err(|error| format!("Could not update palette icon: {error}"))
+}
+
 #[tauri::command]
 fn set_runtime_palette_icon(app: AppHandle, palette: String) -> Result<(), String> {
     let icon_bytes = runtime_icon_bytes(&palette)?;
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     {
         let icon = tauri::image::Image::from_bytes(icon_bytes)
             .map_err(|error| format!("Could not load palette icon: {error}"))?;
@@ -238,6 +259,13 @@ fn set_runtime_palette_icon(app: AppHandle, palette: String) -> Result<(), Strin
                 .set_icon(icon.clone())
                 .map_err(|error| format!("Could not update palette icon: {error}"))?;
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        tauri::image::Image::from_bytes(icon_bytes)
+            .map_err(|error| format!("Could not load palette icon: {error}"))?;
+        set_macos_application_icon(&app, icon_bytes)?;
     }
 
     #[cfg(target_os = "linux")]
