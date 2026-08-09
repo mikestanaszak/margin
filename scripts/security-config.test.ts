@@ -17,11 +17,16 @@ describe("desktop security configuration", () => {
   it("does not register superseded snapshot commands", () => {
     const source = readText("src-tauri/src/lib.rs");
     const start = source.indexOf("tauri::generate_handler![");
-    const handler = source.slice(start, source.indexOf("])\n", start) + 2);
+    const end = source.indexOf("])\n", start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const handler = source.slice(start, end + 2);
 
     for (const command of ["load_library,", "load_folders,", "load_trash,", "rename_note,"]) {
       expect(handler).not.toContain(command);
     }
+
+    expect(handler).toContain("load_library_snapshot,");
   });
 
   it("keeps development sources and global file globs out of production", () => {
