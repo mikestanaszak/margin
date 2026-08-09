@@ -545,11 +545,68 @@ describe("navigation structures and safety dialogs", () => {
 
   it("closes settings with Escape while retaining a scrollable settings panel", () => {
     const onClose = vi.fn();
-    render(<SettingsDialog theme="system" onTheme={() => undefined} shortcuts={{ newNote: "ctrl+n", search: "ctrl+k", switcher: "ctrl+p", save: "ctrl+s", view: "ctrl+e", sidebar: "ctrl+\\", outline: "ctrl+shift+o", quickCapture: "ctrl+alt+shift+space" }} onShortcuts={() => undefined} quickCaptureStatus="Ready" library="C:/Notes" quickImportTargets={notes} quickImportDefaultPath="" onQuickImportDefaultPath={() => undefined} updateState="idle" updateMessage="" onCheckForUpdates={() => undefined} onChangeLibrary={() => undefined} onClose={onClose} />);
+    render(<SettingsDialog theme="system" onTheme={() => undefined} palette="mint" onPalette={() => undefined} shortcuts={{ newNote: "ctrl+n", search: "ctrl+k", switcher: "ctrl+p", save: "ctrl+s", view: "ctrl+e", sidebar: "ctrl+\\", outline: "ctrl+shift+o", quickCapture: "ctrl+alt+shift+space" }} onShortcuts={() => undefined} quickCaptureStatus="Ready" library="C:/Notes" quickImportTargets={notes} quickImportDefaultPath="" onQuickImportDefaultPath={() => undefined} updateState="idle" updateMessage="" onCheckForUpdates={() => undefined} onChangeLibrary={() => undefined} onClose={onClose} />);
     expect(screen.getByRole("button", { name: "Change library" })).toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "Settings" }).parentElement).toHaveClass("settings-backdrop");
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("changes the palette immediately from Settings", () => {
+    document.documentElement.dataset.palette = "mint";
+    render(
+      <SettingsDialog
+        palette="mint"
+        onPalette={(palette) => {
+          document.documentElement.dataset.palette = palette;
+        }}
+        theme="system"
+        onTheme={() => undefined}
+        shortcuts={{ newNote: "ctrl+n", search: "ctrl+k", switcher: "ctrl+p", save: "ctrl+s", view: "ctrl+e", sidebar: "ctrl+\\", outline: "ctrl+shift+o", quickCapture: "ctrl+alt+shift+space" }}
+        onShortcuts={() => undefined}
+        quickCaptureStatus="Ready"
+        library="C:/Notes"
+        quickImportTargets={notes}
+        quickImportDefaultPath=""
+        onQuickImportDefaultPath={() => undefined}
+        updateState="idle"
+        updateMessage=""
+        onCheckForUpdates={() => undefined}
+        onChangeLibrary={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("radio", { name: "Linen" }));
+
+    expect(document.documentElement.dataset.palette).toBe("linen");
+  });
+
+  it("labels the palette choices and marks the current palette", () => {
+    render(
+      <SettingsDialog
+        palette="mint"
+        onPalette={() => undefined}
+        theme="system"
+        onTheme={() => undefined}
+        shortcuts={{ newNote: "ctrl+n", search: "ctrl+k", switcher: "ctrl+p", save: "ctrl+s", view: "ctrl+e", sidebar: "ctrl+\\", outline: "ctrl+shift+o", quickCapture: "ctrl+alt+shift+space" }}
+        onShortcuts={() => undefined}
+        quickCaptureStatus="Ready"
+        library="C:/Notes"
+        quickImportTargets={notes}
+        quickImportDefaultPath=""
+        onQuickImportDefaultPath={() => undefined}
+        updateState="idle"
+        updateMessage=""
+        onCheckForUpdates={() => undefined}
+        onChangeLibrary={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("group", { name: "Palette" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Mint" })).toBeChecked();
+    expect(screen.getAllByRole("radio")).toHaveLength(3);
   });
 });
 

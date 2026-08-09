@@ -29,6 +29,7 @@ import {
 import { isMac } from "./platform";
 import {
   loadPalette,
+  paletteOptions,
   paletteStorageKey,
   type Palette,
 } from "./theme-palettes";
@@ -346,7 +347,7 @@ function App() {
       ? saved
       : "system";
   });
-  const [palette] = useState<Palette>(() =>
+  const [palette, setPalette] = useState<Palette>(() =>
     loadPalette(localStorage.getItem(paletteStorageKey)),
   );
   const [shortcuts, setShortcuts] = useState<Shortcuts>(loadShortcuts);
@@ -1833,6 +1834,8 @@ function App() {
         <SettingsDialog
           theme={theme}
           onTheme={setTheme}
+          palette={palette}
+          onPalette={setPalette}
           shortcuts={shortcuts}
           onShortcuts={setShortcuts}
           quickCaptureStatus={quickCaptureStatus}
@@ -3735,6 +3738,8 @@ function TemplateEditorDialog({
 function SettingsDialog({
   theme,
   onTheme,
+  palette,
+  onPalette,
   shortcuts,
   onShortcuts,
   quickCaptureStatus,
@@ -3751,6 +3756,8 @@ function SettingsDialog({
 }: {
   theme: "system" | "light" | "dark";
   onTheme: (theme: "system" | "light" | "dark") => void;
+  palette: Palette;
+  onPalette: (palette: Palette) => void;
   shortcuts: Shortcuts;
   onShortcuts: (shortcuts: Shortcuts) => void;
   quickCaptureStatus: string;
@@ -3807,6 +3814,28 @@ function SettingsDialog({
             <option value="dark">Dark</option>
           </select>
         </label>
+        <fieldset className="palette-picker">
+          <legend>Palette</legend>
+          <div className="palette-options">
+            {paletteOptions.map(({ id, label }) => (
+              <label className="palette-option" data-palette={id} key={id}>
+                <input
+                  type="radio"
+                  name="palette"
+                  value={id}
+                  checked={palette === id}
+                  onChange={() => onPalette(id)}
+                />
+                <span className="palette-swatch" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
         <section className="quick-import-settings">
           <h3>Quick capture imports</h3>
           <p>
