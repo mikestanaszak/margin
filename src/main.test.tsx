@@ -436,6 +436,58 @@ describe("navigation structures and safety dialogs", () => {
     }
   });
 
+  it("keeps Image beside Table in the persistent top edit bar", async () => {
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "load_selected_library"
+          ? "C:/Notes"
+          : command === "load_library_snapshot"
+            ? { notes, folders: [], trash: [] }
+            : command === "read_note"
+              ? {
+                  path: notes[0].path,
+                  title: notes[0].title,
+                  tags: [],
+                  body: "# Project Alpha\n",
+                  updated: 1,
+                  revision: "test",
+                }
+              : command === "take_opened_markdown_files"
+                ? []
+                : command === "find_backlinks"
+                  ? []
+                  : undefined,
+      ) as never,
+    );
+    try {
+      const { container } = render(<App />);
+      const noteButton = (await screen.findAllByRole("button", { name: /Project Alpha/ })).find(
+        (button) => button.classList.contains("nr-note-main"),
+      );
+      expect(noteButton).toBeDefined();
+      fireEvent.click(noteButton!);
+      fireEvent.click(await screen.findByRole("button", { name: /Edit view/ }));
+
+      await waitFor(() => {
+        expect(container.querySelector(".editor-tools")).not.toBeNull();
+      });
+      const tools = container.querySelector(".editor-tools")!;
+      const buttons = Array.from(tools.querySelectorAll("button"));
+      const tableIndex = buttons.findIndex((button) => button.textContent === "Table");
+      expect(buttons[tableIndex + 1]).toHaveTextContent("Image");
+    } finally {
+      invoke.mockImplementation((command: string) =>
+        Promise.resolve(
+          command === "take_opened_markdown_files"
+            ? []
+            : command === "load_selected_library"
+              ? null
+              : undefined,
+        ),
+      );
+    }
+  });
+
   it("updates the runtime icon when the appearance changes", () => {
     const previousPalette = localStorage.getItem("margin.palette");
     const previousTheme = localStorage.getItem("margin.theme");

@@ -40,7 +40,6 @@ export type MarkdownEditorProps = {
   value: string;
   onChange: (value: string) => void;
   onBlur?: () => void;
-  onInsertImage?: () => void;
   onImageFile?: (file: File, source: "drop" | "paste") => void;
   className?: string;
   style?: CSSProperties;
@@ -146,15 +145,23 @@ function imageFileFromDataTransfer(data: DataTransfer | null) {
   const file = Array.from(data?.files ?? []).find(isImageFile);
   if (file) return file;
 
-  return Array.from(data?.items ?? [])
-    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-    .map((item) => item.getAsFile())
-    .find((item): item is File => item !== null);
+  for (const item of Array.from(data?.items ?? [])) {
+    if (item.kind !== "file") continue;
+    const itemFile = item.getAsFile();
+    if (!itemFile) continue;
+    if (
+      item.type.startsWith("image/") ||
+      isImageFile(itemFile) ||
+      (!item.type && !itemFile.type && !itemFile.name)
+    ) {
+      return itemFile;
+    }
+  }
 }
 
 function hasImageDataTransfer(data: DataTransfer | null) {
   return (
-    Array.from(data?.files ?? []).some(isImageFile) ||
+    Boolean(imageFileFromDataTransfer(data)) ||
     Array.from(data?.items ?? []).some(
       (item) => item.kind === "file" && item.type.startsWith("image/"),
     )
@@ -386,7 +393,6 @@ export const MarkdownEditor = forwardRef<
     value,
     onChange,
     onBlur,
-    onInsertImage,
     onImageFile,
     className,
     style,
@@ -601,7 +607,6 @@ export const MarkdownEditor = forwardRef<
         <button type="button" title="Italic" onClick={() => viewRef.current && wrapSelection(viewRef.current, "_")}>I</button>
         <button type="button" title="Link" onClick={() => viewRef.current && insertLink(viewRef.current)}>↗</button>
         <button type="button" title="Insert 3 by 3 table" onClick={() => viewRef.current && insertTable(viewRef.current)}>▦</button>
-        {onInsertImage && <button type="button" className="markdown-editor-image-button" title="Insert image" aria-label="Insert image" onClick={onInsertImage}>Image</button>}
       </div>}
     </div>
   );
