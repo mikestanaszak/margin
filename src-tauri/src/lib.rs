@@ -1,6 +1,7 @@
 use chrono::Local;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -130,6 +131,9 @@ where
 {
     let mut result = Vec::new();
     for path in paths {
+        let Ok(path) = fs::canonicalize(path) else {
+            continue;
+        };
         if path.is_file() && is_markdown_path(&path) {
             let value = path.to_string_lossy().to_string();
             if !result.iter().any(|existing| existing == &value) {
@@ -140,9 +144,36 @@ where
     result
 }
 
+fn markdown_asset_directory(path: &Path) -> Option<PathBuf> {
+    let canonical = fs::canonicalize(path).ok()?;
+    if canonical.is_file() && is_markdown_path(&canonical) {
+        canonical.parent().map(Path::to_path_buf)
+    } else {
+        None
+    }
+}
+
+fn allow_asset_directory(app: &AppHandle, directory: &Path) -> Result<(), String> {
+    app.asset_protocol_scope()
+        .allow_directory(directory, true)
+        .map_err(|error| format!("Could not allow note images: {error}"))
+}
+
+fn allow_opened_markdown_assets(app: &AppHandle, paths: &[String]) -> Result<(), String> {
+    for path in paths {
+        if let Some(directory) = markdown_asset_directory(Path::new(path)) {
+            allow_asset_directory(app, &directory)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 fn queue_opened_markdown_files(app: &AppHandle, paths: Vec<String>) {
     if paths.is_empty() {
+        return;
+    }
+    if allow_opened_markdown_assets(app, &paths).is_err() {
         return;
     }
     if let Ok(mut pending) = app.state::<OpenedMarkdownFiles>().0.lock() {
@@ -310,6 +341,7 @@ fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
 #[tauri::command]
 fn save_selected_library(app: AppHandle, library_path: String) -> Result<(), String> {
     let library = canonical_library_root(library_path.trim())?;
+    allow_asset_directory(&app, &library)?;
     fs::write(
         selected_library_file(&app)?,
         library.to_string_lossy().as_bytes(),
@@ -322,7 +354,10 @@ fn load_selected_library(app: AppHandle) -> Result<Option<String>, String> {
     let path = selected_library_file(&app)?;
     match fs::read_to_string(path) {
         Ok(value) => match canonical_library_root(value.trim()) {
-            Ok(library) => Ok(Some(library.to_string_lossy().to_string())),
+            Ok(library) => {
+                allow_asset_directory(&app, &library)?;
+                Ok(Some(library.to_string_lossy().to_string()))
+            }
             Err(_) => Ok(None),
         },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -523,7 +558,7 @@ enum SaveNoteResult {
 }
 
 enum SaveNoteFailure {
-    Conflict(NoteDocument),
+    Conflict(Box<NoteDocument>),
     Error(String),
 }
 
@@ -546,14 +581,15 @@ fn modified_seconds(path: &Path) -> u64 {
         .as_secs()
 }
 
-fn file_revision(path: &Path) -> String {
-    fs::metadata(path)
+fn file_revision(path: &Path, contents: &str) -> String {
+    let modified = fs::metadata(path)
         .and_then(|meta| meta.modified())
         .unwrap_or(SystemTime::UNIX_EPOCH)
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_nanos()
-        .to_string()
+        .as_nanos();
+    let digest = Sha256::digest(contents.as_bytes());
+    format!("{modified}:{}:{digest:x}", contents.len())
 }
 
 fn now_rfc3339() -> String {
@@ -621,10 +657,7 @@ fn note_excerpt(body: &str) -> String {
     body.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with("```"))
-        .map(|line| {
-            line.trim_start_matches(|character: char| matches!(character, '>' | '-' | '*' | ' '))
-                .trim()
-        })
+        .map(|line| line.trim_start_matches(['>', '-', '*', ' ']).trim())
         .collect::<Vec<_>>()
         .join(" ")
         .chars()
@@ -648,7 +681,7 @@ fn read_note_file(path: &Path) -> Result<NoteDocument, String> {
         tags: normalize_tags(front.tags.unwrap_or_default()),
         body,
         updated: modified_seconds(path),
-        revision: file_revision(path),
+        revision: file_revision(path, &raw),
         created: front.created,
         updated_at: front.updated,
     })
@@ -717,7 +750,7 @@ fn load_library_contents(library: &Path) -> (Vec<NoteSummary>, Vec<String>) {
             }
         }
     }
-    notes.sort_by(|a, b| b.updated.cmp(&a.updated));
+    notes.sort_by_key(|note| std::cmp::Reverse(note.updated));
     folders.sort_by_key(|folder| folder.to_lowercase());
     (notes, folders)
 }
@@ -946,7 +979,7 @@ fn load_trash_contents(library: &Path) -> Vec<NoteSummary> {
             ..note_summary(note, library)
         })
         .collect::<Vec<_>>();
-    notes.sort_by(|a, b| b.updated.cmp(&a.updated));
+    notes.sort_by_key(|note| std::cmp::Reverse(note.updated));
     notes
 }
 
@@ -1219,7 +1252,10 @@ fn relative_markdown_path(from_file: &Path, target: &Path) -> Option<String> {
         .take_while(|(left, right)| left == right)
         .count();
     let mut parts = Vec::new();
-    parts.extend(std::iter::repeat("..".to_string()).take(from_parts.len() - shared));
+    parts.extend(std::iter::repeat_n(
+        "..".to_string(),
+        from_parts.len() - shared,
+    ));
     parts.extend(
         target_parts[shared..]
             .iter()
@@ -1475,7 +1511,7 @@ fn save_note_checked(
     if path.exists() {
         let disk = read_note_file(&path).map_err(SaveNoteFailure::Error)?;
         if note.revision.is_empty() || note.revision != disk.revision {
-            return Err(SaveNoteFailure::Conflict(disk));
+            return Err(SaveNoteFailure::Conflict(Box::new(disk)));
         }
     } else if !note.revision.is_empty() {
         return Err(SaveNoteFailure::Error(
@@ -1575,7 +1611,7 @@ fn save_note(note: NoteDocument, library_path: String) -> SaveNoteResult {
     })();
     match result {
         Ok(note) => SaveNoteResult::Saved { note },
-        Err(SaveNoteFailure::Conflict(disk)) => SaveNoteResult::Conflict { disk },
+        Err(SaveNoteFailure::Conflict(disk)) => SaveNoteResult::Conflict { disk: *disk },
         Err(SaveNoteFailure::Error(message)) => SaveNoteResult::Error { message },
     }
 }
@@ -1888,9 +1924,10 @@ pub fn run() {
         )
         .setup(move |app| {
             app.manage(LibraryIndex(Mutex::new(None)));
-            app.manage(OpenedMarkdownFiles(Mutex::new(markdown_file_paths(
-                std::env::args_os().skip(1).map(PathBuf::from),
-            ))));
+            let opened_markdown_files =
+                markdown_file_paths(std::env::args_os().skip(1).map(PathBuf::from));
+            allow_opened_markdown_assets(app.handle(), &opened_markdown_files)?;
+            app.manage(OpenedMarkdownFiles(Mutex::new(opened_markdown_files)));
             let registered = app.global_shortcut().register(default_capture).is_ok();
             app.manage(CaptureShortcut(Mutex::new(CaptureShortcutState {
                 shortcut: default_capture,
@@ -1987,8 +2024,8 @@ mod tests {
         build_library_snapshot, create_folder, create_note, delete_note_permanently,
         duplicate_note, existing_library_path, import_daily_note, import_daily_note_to_new_note,
         import_markdown_file, library_folder, load_folders, load_library, load_trash,
-        move_folder_to_trash, move_note_to_folder, move_note_to_trash, normalize_tags,
-        path_for_title, read_library_note_file, read_note_file, relative_note_id,
+        markdown_asset_directory, move_folder_to_trash, move_note_to_folder, move_note_to_trash,
+        normalize_tags, path_for_title, read_library_note_file, read_note_file, relative_note_id,
         rename_file_safely, rename_folder, rename_note, restore_note_from_trash,
         runtime_icon_bytes, safe_file_stem, save_note, save_note_document, search_snapshot,
         split_front_matter, stage_file_updates, LibraryIndex, LinkRewrite, SaveNoteResult,
@@ -2070,6 +2107,26 @@ mod tests {
     }
 
     #[test]
+    fn markdown_assets_are_scoped_to_explicit_note_directories() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let note = library.join("Example.md");
+        let not_markdown = library.join("image.png");
+        let missing = library.join("Missing.md");
+        fs::write(&note, "# Example\n").unwrap();
+        fs::write(&not_markdown, "not an image").unwrap();
+
+        assert_eq!(
+            markdown_asset_directory(&note),
+            Some(fs::canonicalize(&library).unwrap())
+        );
+        assert_eq!(markdown_asset_directory(&not_markdown), None);
+        assert_eq!(markdown_asset_directory(&missing), None);
+
+        fs::remove_dir_all(&library).ok();
+    }
+
+    #[test]
     fn note_workflows_keep_titles_and_filenames_together() {
         let library = temporary_library();
         fs::create_dir_all(&library).unwrap();
@@ -2144,8 +2201,16 @@ mod tests {
             let saved = save_note_document(note)?;
             let mut stale = saved.clone();
             stale.body = "# Mine\n\nUnsaved local change\n".into();
+            let saved_modified = fs::metadata(&saved.path)
+                .and_then(|metadata| metadata.modified())
+                .map_err(|error| error.to_string())?;
 
             fs::write(&saved.path, "# On disk\n\nExternal change\n")
+                .map_err(|error| error.to_string())?;
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&saved.path)
+                .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(saved_modified)))
                 .map_err(|error| error.to_string())?;
 
             match save_note(stale, library_path) {

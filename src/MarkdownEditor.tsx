@@ -529,5 +529,3 @@ export const MarkdownEditor = forwardRef<
 });
 
 MarkdownEditor.displayName = "MarkdownEditor";
-
-export default MarkdownEditor;

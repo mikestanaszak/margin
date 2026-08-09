@@ -10,8 +10,6 @@
   border: 0;
 }
 
-.nr-tag-combobox { position: relative; min-width: 12rem; }
-.nr-tag-combobox > input,
 .nr-switcher > input {
   box-sizing: border-box;
   width: 100%;
@@ -22,27 +20,12 @@
   font: inherit;
   outline: none;
 }
-.nr-tag-combobox > input { padding: 0.45rem 0.65rem; }
-.nr-tag-combobox > input:focus,
 .nr-switcher > input:focus,
 .nr-note-main:focus-visible,
 .nr-note-pin:focus-visible {
   border-color: var(--nr-accent, #71604a);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--nr-accent, #71604a) 20%, transparent);
 }
-.nr-tag-options {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 0.3rem);
-  left: 0;
-  width: max(100%, 14rem);
-  overflow: hidden;
-  border: 1px solid var(--nr-border, #d5d1c8);
-  border-radius: 0.55rem;
-  background: var(--nr-surface, #fff);
-  box-shadow: 0 0.75rem 2rem rgb(45 39 30 / 16%);
-}
-.nr-tag-option,
 .nr-switcher-result {
   display: flex;
   width: 100%;
@@ -53,8 +36,6 @@
   text-align: left;
   cursor: pointer;
 }
-.nr-tag-option { gap: 0.25rem; padding: 0.5rem 0.65rem; }
-.nr-tag-option.nr-is-active,
 .nr-switcher-result.nr-is-active { background: var(--nr-highlight, #f1eee7); }
 
 .nr-switcher-backdrop {
@@ -147,7 +128,6 @@
 .nr-note-pin:hover { background: color-mix(in srgb, var(--nr-accent, #71604a) 12%, transparent); }
 
 @media (prefers-reduced-motion: no-preference) {
-  .nr-tag-option,
   .nr-switcher-result,
   .nr-note-item { transition: background-color 120ms ease, border-color 120ms ease; }
 }

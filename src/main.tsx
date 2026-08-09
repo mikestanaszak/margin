@@ -18,7 +18,7 @@ import remarkGfm from "remark-gfm";
 import { all as highlightLanguages } from "lowlight";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import MarkdownEditor, { type MarkdownEditorHandle } from "./MarkdownEditor";
+import { MarkdownEditor, type MarkdownEditorHandle } from "./MarkdownEditor";
 import MermaidDiagram from "./MermaidDiagram";
 import {
   NoteListItem,
