@@ -31,6 +31,7 @@ import {
   LibraryNavigation,
 } from "../features/library/LibraryNavigation";
 import { NoteList } from "../features/library/NoteList";
+import { useLibrarySearch } from "../features/search/useLibrarySearch";
 import {
   initialNoteSessionState,
   noteSessionReducer,
@@ -245,7 +246,6 @@ export function App() {
   const note = noteSession.draft;
   const [filter, setFilter] = useState<Filter>({ type: "all" });
   const [query, setQuery] = useState("");
-  const [matchingPaths, setMatchingPaths] = useState<Set<string> | null>(null);
   const [backlinks, setBacklinks] = useState<NoteSummary[]>([]);
   const [mode, setMode] = useState<"edit" | "preview" | "split">("preview");
   const [status, setStatus] = useState("Choose a notes folder to begin");
@@ -289,6 +289,25 @@ export function App() {
   const [favorites, setFavorites] = useState<string[]>(() =>
     JSON.parse(localStorage.getItem(favoritesKey) || "[]"),
   );
+  const searchScope = useMemo(() => {
+    const candidates = filter.type === "trash" ? trashNotes : notes;
+    return candidates
+      .filter(
+        (item) =>
+          (filter.type !== "folder" ||
+            item.folder === filter.folder ||
+            item.folder.startsWith(`${filter.folder}/`)) &&
+          (filter.type !== "favorites" || favorites.includes(item.path)) &&
+          (filter.type !== "today" ||
+            (item.folder === "Daily" && item.title === todayTitle())),
+      )
+      .map((item) => item.path);
+  }, [favorites, filter, notes, trashNotes]);
+  const librarySearch = useLibrarySearch({
+    library: query.trim() ? library : null,
+    query,
+    scope: searchScope,
+  });
   const [theme, setTheme] = useState<"system" | "light" | "dark">(() => {
     const saved = localStorage.getItem(themeKey);
     return saved === "light" || saved === "dark" || saved === "system"
@@ -418,29 +437,6 @@ export function App() {
     refreshGeneration.current += 1;
     if (library) void refresh(library);
   }, [library, refresh]);
-  useEffect(() => {
-    const requestLibrary = library;
-    const normalizedQuery = query.trim();
-    if (!requestLibrary || !normalizedQuery) {
-      setMatchingPaths(null);
-      return;
-    }
-    let disposed = false;
-    const timer = window.setTimeout(() => {
-      void native.searchLibrary(requestLibrary, normalizedQuery)
-        .then((matches) => {
-          if (!disposed && libraryRef.current === requestLibrary)
-            setMatchingPaths(new Set(matches.map((item) => item.path)));
-        })
-        .catch(() => {
-          if (!disposed) setMatchingPaths(new Set());
-        });
-    }, 120);
-    return () => {
-      disposed = true;
-      window.clearTimeout(timer);
-    };
-  }, [library, query]);
   useEffect(() => {
     if (!library || !note) {
       setBacklinks([]);
@@ -1182,25 +1178,19 @@ export function App() {
   }, []);
   const listedNotes = filter.type === "trash" ? trashNotes : notes;
   const visibleNotes = useMemo(
-    () =>
-      listedNotes
-        .filter(
-          (item) =>
-            (filter.type !== "folder" ||
-              item.folder === filter.folder ||
-              item.folder.startsWith(`${filter.folder}/`)) &&
-            (filter.type !== "favorites" || favorites.includes(item.path)) &&
-            (filter.type !== "today" ||
-              (item.folder === "Daily" && item.title === todayTitle())) &&
-            (!query || matchingPaths?.has(item.path) === true),
-        )
+    () => {
+      if (query.trim()) return librarySearch.results;
+      const scopedPaths = new Set(searchScope);
+      return listedNotes
+        .filter((item) => scopedPaths.has(item.path))
         .sort(
           (left, right) =>
             Number(favorites.includes(right.path)) -
               Number(favorites.includes(left.path)) ||
             right.updated - left.updated,
-        ),
-    [listedNotes, filter, query, matchingPaths, favorites],
+        );
+    },
+    [favorites, librarySearch.results, listedNotes, query, searchScope],
   );
   const folderCounts = useMemo(
     () =>
@@ -1641,7 +1631,7 @@ export function App() {
       </section>
       {quickOpen && (
         <QuickSwitcher
-          notes={notes.map((item) => ({ ...item, tags: [] }))}
+          library={library}
           onClose={() => setQuickOpen(false)}
           onSelect={(selected) => {
             setActivePath(selected.path);

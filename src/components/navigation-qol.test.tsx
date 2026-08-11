@@ -1,11 +1,11 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+const { searchLibrary } = vi.hoisted(() => ({ searchLibrary: vi.fn() }));
+vi.mock("../services/native", () => ({ native: { searchLibrary } }));
 import {
   formatRelativeDate,
-  fuzzyScore,
   NoteListItem,
   QuickSwitcher,
-  scoreNote,
 } from "./navigation-qol";
 
 const notes = [
@@ -29,15 +29,7 @@ const notes = [
   },
 ];
 
-describe("search ranking and relative dates", () => {
-  it("prefers consecutive word-start matches and title matches", () => {
-    expect(fuzzyScore("pa", "Project Alpha")).toBeGreaterThan(
-      fuzzyScore("pa", "A project") ?? -Infinity,
-    );
-    expect(fuzzyScore("zzz", "Project Alpha")).toBeNull();
-    expect(scoreNote("alpha", notes[0])).toBeGreaterThan(scoreNote("alpha", notes[2]) ?? 0);
-  });
-
+describe("relative dates", () => {
   it("formats second, day, and invalid timestamps", () => {
     const now = Date.UTC(2026, 6, 30, 12);
     expect(formatRelativeDate(now, now, "en")).toBe("now");
@@ -47,26 +39,52 @@ describe("search ranking and relative dates", () => {
 });
 
 describe("quick switcher", () => {
-  it("fuzzy-filters notes and selects the active result with Enter", () => {
+  beforeEach(() => searchLibrary.mockReset());
+
+  it("uses native ranked results and selects the active result with Enter", async () => {
+    searchLibrary.mockImplementation((_library: string, query: string) =>
+      Promise.resolve(query ? [notes[1]] : notes),
+    );
     const onSelect = vi.fn();
-    render(<QuickSwitcher notes={notes} onSelect={onSelect} onClose={() => undefined} />);
+    render(
+      <QuickSwitcher
+        library="C:/Notes"
+        onSelect={onSelect}
+        onClose={() => undefined}
+      />,
+    );
     const input = screen.getByRole("combobox", { name: "Find a note" });
     fireEvent.change(input, { target: { value: "cafe" } });
-    expect(screen.getByRole("option", { name: /Café ideas/ })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("option", { name: /Café ideas/ }),
+    ).toBeInTheDocument();
+    expect(searchLibrary).toHaveBeenLastCalledWith("C:/Notes", "cafe");
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onSelect).toHaveBeenCalledWith(notes[1]);
   });
 
-  it("supports arrow navigation, Escape, and an empty state", () => {
+  it("supports recent results, arrow navigation, Escape, and an empty state", async () => {
+    searchLibrary.mockImplementation((_library: string, query: string) =>
+      Promise.resolve(query ? [] : notes),
+    );
     const onSelect = vi.fn();
     const onClose = vi.fn();
-    render(<QuickSwitcher notes={notes} onSelect={onSelect} onClose={onClose} />);
+    render(
+      <QuickSwitcher
+        library="C:/Notes"
+        onSelect={onSelect}
+        onClose={onClose}
+      />,
+    );
     const input = screen.getByRole("combobox", { name: "Find a note" });
+    await screen.findByRole("option", { name: /Project Alpha/ });
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onSelect).toHaveBeenCalledWith(notes[1]);
     fireEvent.change(input, { target: { value: "no-result-here" } });
-    expect(screen.getByRole("status")).toHaveTextContent("No matching notes");
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("No matching notes"),
+    );
     fireEvent.keyDown(input, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
   });

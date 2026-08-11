@@ -2,26 +2,18 @@ import {
   memo,
   useEffect,
   useId,
-  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
+import type { NoteSummary } from "../app/types";
+import { useLibrarySearch } from "../features/search/useLibrarySearch";
 import "./navigation-qol.css";
 
-export interface QuickSwitcherNote {
-  path: string;
-  title: string;
-  tags: readonly string[];
-  body?: string;
-  searchableText?: string;
-  searchable_text?: string;
-}
-
-export interface QuickSwitcherProps<T extends QuickSwitcherNote = QuickSwitcherNote> {
-  notes: readonly T[];
-  onSelect: (note: T) => void;
+export interface QuickSwitcherProps {
+  library: string | null;
+  onSelect: (note: NoteSummary) => void;
   onClose: () => void;
   placeholder?: string;
   emptyMessage?: string;
@@ -30,37 +22,8 @@ export interface QuickSwitcherProps<T extends QuickSwitcherNote = QuickSwitcherN
   className?: string;
 }
 
-/** A compact fuzzy score: consecutive and word-start matches are preferred. */
-export function fuzzyScore(query: string, candidate: string): number | null {
-  const needle = query.trim().toLocaleLowerCase();
-  const haystack = candidate.toLocaleLowerCase();
-  if (!needle) return 0;
-  let score = 0;
-  let cursor = -1;
-  let previous = -2;
-  for (const character of needle) {
-    const found = haystack.indexOf(character, cursor + 1);
-    if (found < 0) return null;
-    score += found === previous + 1 ? 8 : 2;
-    if (found === 0 || /[\s_\-/#]/.test(haystack[found - 1] ?? "")) score += 5;
-    score -= Math.min(found - cursor - 1, 6);
-    previous = found;
-    cursor = found;
-  }
-  return score - haystack.length * 0.002;
-}
-
-export function scoreNote(query: string, note: QuickSwitcherNote): number | null {
-  const title = fuzzyScore(query, note.title);
-  const tags = fuzzyScore(query, note.tags.join(" "));
-  const body = fuzzyScore(query, note.body ?? note.searchableText ?? note.searchable_text ?? "");
-  const scores = [title == null ? null : title + 40, tags == null ? null : tags + 18, body];
-  const matches = scores.filter((score): score is number => score != null);
-  return matches.length ? Math.max(...matches) : null;
-}
-
-export function QuickSwitcher<T extends QuickSwitcherNote>({
-  notes,
+export function QuickSwitcher({
+  library,
   onSelect,
   onClose,
   placeholder = "Jump to a note…",
@@ -68,24 +31,21 @@ export function QuickSwitcher<T extends QuickSwitcherNote>({
   maxResults = 10,
   initialQuery = "",
   className = "",
-}: QuickSwitcherProps<T>) {
+}: QuickSwitcherProps) {
   const [query, setQuery] = useState(initialQuery);
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const generatedId = useId();
   const listboxId = `quick-switcher-${generatedId}`;
-  const results = useMemo(() => notes
-    .map((note, order) => ({ note, order, score: scoreNote(query, note) }))
-    .filter((result): result is { note: T; order: number; score: number } => result.score != null)
-    .sort((a, b) => b.score - a.score || a.order - b.order)
-    .slice(0, Math.max(0, maxResults)), [maxResults, notes, query]);
+  const search = useLibrarySearch({ library, query, scope: "all" });
+  const results = search.results.slice(0, Math.max(0, maxResults));
 
   useEffect(() => setActiveIndex(0), [query]);
   useEffect(() => inputRef.current?.focus(), []);
 
   const choose = (index: number) => {
     const result = results[index];
-    if (result) onSelect(result.note);
+    if (result) onSelect(result);
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown") {
@@ -128,7 +88,7 @@ export function QuickSwitcher<T extends QuickSwitcherNote>({
           onKeyDown={handleKeyDown}
         />
         <div id={listboxId} role="listbox" aria-label="Matching notes" className="nr-switcher-results">
-          {results.map(({ note }, index) => (
+          {results.map((note, index) => (
             <button
               id={`${listboxId}-option-${index}`}
               key={note.path}
@@ -143,7 +103,9 @@ export function QuickSwitcher<T extends QuickSwitcherNote>({
               {note.tags.length > 0 && <small>{note.tags.map((tag) => `#${tag}`).join(" ")}</small>}
             </button>
           ))}
-          {!results.length && <p className="nr-switcher-empty" role="status">{emptyMessage}</p>}
+          {!results.length && !search.loading && (
+            <p className="nr-switcher-empty" role="status">{emptyMessage}</p>
+          )}
         </div>
       </section>
     </div>

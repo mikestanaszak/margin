@@ -5,6 +5,7 @@ use crate::notes::{note_excerpt, read_library_note_file_for_index};
 use crate::paths::canonical_library_root;
 use crate::paths::{folder_for_path, is_markdown_path, relative_note_id};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use serde::Serialize;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -32,6 +33,13 @@ struct IndexedLibrary {
 }
 
 const INDEX_RECONCILIATION_INTERVAL: Duration = Duration::from_secs(45);
+
+#[derive(Clone, Serialize)]
+pub(crate) struct SearchResult {
+    #[serde(flatten)]
+    pub(crate) note: NoteSummary,
+    pub(crate) score: u32,
+}
 
 impl LibraryIndex {
     pub(crate) fn new() -> Self {
@@ -233,7 +241,7 @@ pub(crate) fn search_library(
     library_index: State<'_, LibraryIndex>,
     library_path: String,
     query: String,
-) -> Result<Vec<NoteSummary>, String> {
+) -> Result<Vec<SearchResult>, String> {
     Ok(search_snapshot(
         &library_index.snapshot(&library_path, false)?,
         &query,
@@ -254,17 +262,67 @@ pub(crate) fn find_backlinks(
     ))
 }
 
-fn search_snapshot(snapshot: &LibrarySnapshot, query: &str) -> Vec<NoteSummary> {
+fn search_snapshot(snapshot: &LibrarySnapshot, query: &str) -> Vec<SearchResult> {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
-        return Vec::new();
+        let mut results = snapshot
+            .notes
+            .iter()
+            .cloned()
+            .map(|note| SearchResult { note, score: 0 })
+            .collect::<Vec<_>>();
+        results.sort_by(|left, right| {
+            right
+                .note
+                .updated
+                .cmp(&left.note.updated)
+                .then_with(|| left.note.path.cmp(&right.note.path))
+        });
+        return results;
     }
-    snapshot
+
+    let mut results = snapshot
         .notes
         .iter()
-        .filter(|note| note.searchable_text.contains(&query))
-        .cloned()
-        .collect()
+        .filter_map(|note| {
+            let title = note.title.to_lowercase();
+            let path = note.id.to_lowercase();
+            let tags = note
+                .tags
+                .iter()
+                .map(|tag| tag.to_lowercase())
+                .collect::<Vec<_>>();
+            let score = if title == query {
+                500
+            } else if title.starts_with(&query) {
+                450
+            } else if title.contains(&query) {
+                400
+            } else if path.contains(&query) {
+                300
+            } else if tags.iter().any(|tag| tag == &query) {
+                250
+            } else if tags.iter().any(|tag| tag.contains(&query)) {
+                200
+            } else if note.searchable_text.contains(&query) {
+                100
+            } else {
+                return None;
+            };
+            Some(SearchResult {
+                note: note.clone(),
+                score,
+            })
+        })
+        .collect::<Vec<_>>();
+    results.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| right.note.updated.cmp(&left.note.updated))
+            .then_with(|| left.note.path.cmp(&right.note.path))
+    });
+    results
 }
 
 fn backlinks_for_snapshot(
@@ -334,11 +392,94 @@ mod tests {
         search_snapshot, LibraryIndex,
     };
     use crate::{
-        model::IndexWarningKind,
+        model::{IndexWarningKind, LibrarySnapshot, NoteSummary},
         test_support::{copy_example_library, temporary_library},
     };
     use std::{fs, thread, time::Duration};
     use walkdir::WalkDir;
+
+    fn searchable_note(
+        path: &str,
+        title: &str,
+        tags: &[&str],
+        body: &str,
+        updated: u64,
+    ) -> NoteSummary {
+        NoteSummary {
+            id: path.to_string(),
+            path: path.to_string(),
+            title: title.to_string(),
+            tags: tags.iter().map(|tag| (*tag).to_string()).collect(),
+            updated,
+            searchable_text: format!("{title} {path} {} {body}", tags.join(" ")).to_lowercase(),
+            excerpt: body.to_string(),
+            folder: String::new(),
+        }
+    }
+
+    #[test]
+    fn ranked_search_prioritizes_title_path_tags_and_body() {
+        let snapshot = LibrarySnapshot {
+            notes: vec![
+                searchable_note("Body.md", "Meeting notes", &[], "alpha appears here", 50),
+                searchable_note("Tags.md", "Labels", &["alpha"], "ordinary body", 60),
+                searchable_note(
+                    "Work/alpha-reference.md",
+                    "Reference",
+                    &[],
+                    "ordinary body",
+                    70,
+                ),
+                searchable_note("Prefix.md", "Alpha planning", &[], "ordinary body", 80),
+                searchable_note("Exact.md", "Alpha", &[], "ordinary body", 10),
+            ],
+            folders: Vec::new(),
+            trash: Vec::new(),
+            warnings: Vec::new(),
+        };
+
+        let results = search_snapshot(&snapshot, "  ALPHA  ");
+        let titles = results
+            .iter()
+            .map(|result| result.note.title.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            titles,
+            [
+                "Alpha",
+                "Alpha planning",
+                "Reference",
+                "Labels",
+                "Meeting notes"
+            ]
+        );
+        assert!(results.windows(2).all(|pair| pair[0].score > pair[1].score));
+    }
+
+    #[test]
+    fn ranked_search_empty_query_returns_recent_notes() {
+        let snapshot = LibrarySnapshot {
+            notes: vec![
+                searchable_note("Old.md", "Old", &[], "", 10),
+                searchable_note("Newest.md", "Newest", &[], "", 30),
+                searchable_note("Middle.md", "Middle", &[], "", 20),
+            ],
+            folders: Vec::new(),
+            trash: Vec::new(),
+            warnings: Vec::new(),
+        };
+
+        let results = search_snapshot(&snapshot, "   ");
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.note.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Newest", "Middle", "Old"]
+        );
+        assert!(results.iter().all(|result| result.score == 0));
+    }
 
     #[test]
     fn library_snapshot_indexes_markdown_and_prunes_internal_storage() {
@@ -585,7 +726,8 @@ mod tests {
             )
             .map_err(|error| error.to_string())?;
             let snapshot = build_library_snapshot(&library);
-            assert_eq!(search_snapshot(&snapshot, "alpine").len(), 1);
+            let search_results = search_snapshot(&snapshot, "alpine");
+            assert_eq!(search_results.len(), 1);
             let project = snapshot
                 .notes
                 .iter()
@@ -598,6 +740,11 @@ mod tests {
             let payload = serde_json::to_value(&snapshot).map_err(|error| error.to_string())?;
             assert!(!payload.to_string().contains("alpine architecture"));
             assert!(!payload.to_string().contains("searchable_text"));
+            let search_payload =
+                serde_json::to_value(&search_results).map_err(|error| error.to_string())?;
+            assert!(!search_payload.to_string().contains("alpine architecture"));
+            assert!(!search_payload.to_string().contains("searchable_text"));
+            assert_eq!(search_payload[0]["score"], 100);
             Ok(())
         })();
         fs::remove_dir_all(&library).ok();
