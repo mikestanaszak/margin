@@ -8,6 +8,10 @@ export type NoteSummary = {
   folder: string;
 };
 
+export type SearchResult = NoteSummary & {
+  score: number;
+};
+
 export type NoteDocument = {
   id?: string;
   path: string;

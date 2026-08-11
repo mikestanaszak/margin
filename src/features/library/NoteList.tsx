@@ -17,6 +17,7 @@ export type NoteListProps = {
   rootFolder: string;
   hierarchical: boolean;
   librarySelected: boolean;
+  emptyMessage?: string;
   renderNote: (note: NoteSummary) => React.ReactNode;
 };
 
@@ -28,6 +29,7 @@ export function NoteList({
   rootFolder,
   hierarchical,
   librarySelected,
+  emptyMessage = "No notes here yet.",
   renderNote,
 }: NoteListProps) {
   return (
@@ -55,7 +57,7 @@ export function NoteList({
             notes.map(renderNote)
           )}
           {librarySelected && !notes.length && (
-            <p className="empty-list">No notes here yet.</p>
+            <p className="empty-list" role="status">{emptyMessage}</p>
           )}
         </div>
       )}

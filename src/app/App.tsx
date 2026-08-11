@@ -306,6 +306,7 @@ export function App() {
   const librarySearch = useLibrarySearch({
     library: query.trim() ? library : null,
     query,
+    source: filter.type === "trash" ? "trash" : "notes",
     scope: searchScope,
   });
   const [theme, setTheme] = useState<"system" | "light" | "dark">(() => {
@@ -1510,6 +1511,14 @@ export function App() {
         rootFolder={filter.type === "folder" ? filter.folder || "" : ""}
         hierarchical={filter.type === "folder" && !query}
         librarySelected={Boolean(library)}
+        emptyMessage={
+          librarySearch.error ??
+          (query.trim()
+            ? librarySearch.loading
+              ? "Searching…"
+              : "No matching notes"
+            : "No notes here yet.")
+        }
         renderNote={renderNote}
       />
       <section className="workspace">

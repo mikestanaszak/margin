@@ -5,7 +5,7 @@ use crate::notes::{note_excerpt, read_library_note_file_for_index};
 use crate::paths::canonical_library_root;
 use crate::paths::{folder_for_path, is_markdown_path, relative_note_id};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -39,6 +39,14 @@ pub(crate) struct SearchResult {
     #[serde(flatten)]
     pub(crate) note: NoteSummary,
     pub(crate) score: u32,
+}
+
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SearchScope {
+    #[default]
+    Notes,
+    Trash,
 }
 
 impl LibraryIndex {
@@ -241,10 +249,12 @@ pub(crate) fn search_library(
     library_index: State<'_, LibraryIndex>,
     library_path: String,
     query: String,
+    scope: Option<SearchScope>,
 ) -> Result<Vec<SearchResult>, String> {
     Ok(search_snapshot(
         &library_index.snapshot(&library_path, false)?,
         &query,
+        scope.unwrap_or_default(),
     ))
 }
 
@@ -262,11 +272,18 @@ pub(crate) fn find_backlinks(
     ))
 }
 
-fn search_snapshot(snapshot: &LibrarySnapshot, query: &str) -> Vec<SearchResult> {
+fn search_snapshot(
+    snapshot: &LibrarySnapshot,
+    query: &str,
+    scope: SearchScope,
+) -> Vec<SearchResult> {
     let query = query.trim().to_lowercase();
+    let notes = match scope {
+        SearchScope::Notes => &snapshot.notes,
+        SearchScope::Trash => &snapshot.trash,
+    };
     if query.is_empty() {
-        let mut results = snapshot
-            .notes
+        let mut results = notes
             .iter()
             .cloned()
             .map(|note| SearchResult { note, score: 0 })
@@ -281,8 +298,7 @@ fn search_snapshot(snapshot: &LibrarySnapshot, query: &str) -> Vec<SearchResult>
         return results;
     }
 
-    let mut results = snapshot
-        .notes
+    let mut results = notes
         .iter()
         .filter_map(|note| {
             let title = note.title.to_lowercase();
@@ -389,7 +405,7 @@ fn load_trash_contents(library: &Path, warnings: &mut Vec<IndexWarning>) -> Vec<
 mod tests {
     use super::{
         backlinks_for_snapshot, build_library_snapshot, collect_library_entry, load_library,
-        search_snapshot, LibraryIndex,
+        search_snapshot, LibraryIndex, SearchScope,
     };
     use crate::{
         model::{IndexWarningKind, LibrarySnapshot, NoteSummary},
@@ -438,7 +454,7 @@ mod tests {
             warnings: Vec::new(),
         };
 
-        let results = search_snapshot(&snapshot, "  ALPHA  ");
+        let results = search_snapshot(&snapshot, "  ALPHA  ", SearchScope::Notes);
         let titles = results
             .iter()
             .map(|result| result.note.title.as_str())
@@ -470,7 +486,7 @@ mod tests {
             warnings: Vec::new(),
         };
 
-        let results = search_snapshot(&snapshot, "   ");
+        let results = search_snapshot(&snapshot, "   ", SearchScope::Notes);
         assert_eq!(
             results
                 .iter()
@@ -479,6 +495,57 @@ mod tests {
             ["Newest", "Middle", "Old"]
         );
         assert!(results.iter().all(|result| result.score == 0));
+    }
+
+    #[test]
+    fn ranked_search_breaks_equal_scores_by_updated_time_then_path() {
+        let snapshot = LibrarySnapshot {
+            notes: vec![
+                searchable_note("B.md", "Alpha beta", &[], "", 30),
+                searchable_note("C.md", "Alpha gamma", &[], "", 20),
+                searchable_note("A.md", "Alpha apple", &[], "", 30),
+            ],
+            folders: Vec::new(),
+            trash: Vec::new(),
+            warnings: Vec::new(),
+        };
+
+        let results = search_snapshot(&snapshot, "alpha", SearchScope::Notes);
+
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.note.path.as_str())
+                .collect::<Vec<_>>(),
+            ["A.md", "B.md", "C.md"]
+        );
+        assert!(results
+            .windows(2)
+            .all(|pair| pair[0].score == pair[1].score));
+    }
+
+    #[test]
+    fn ranked_search_scope_separates_active_and_deleted_notes() {
+        let snapshot = LibrarySnapshot {
+            notes: vec![searchable_note("Active.md", "Alpha active", &[], "", 10)],
+            folders: Vec::new(),
+            trash: vec![searchable_note(
+                ".markdown-notes/trash/Deleted.md",
+                "Alpha deleted",
+                &[],
+                "",
+                20,
+            )],
+            warnings: Vec::new(),
+        };
+
+        let active = search_snapshot(&snapshot, "alpha", SearchScope::Notes);
+        let deleted = search_snapshot(&snapshot, "alpha", SearchScope::Trash);
+
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].note.title, "Alpha active");
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].note.title, "Alpha deleted");
     }
 
     #[test]
@@ -726,7 +793,7 @@ mod tests {
             )
             .map_err(|error| error.to_string())?;
             let snapshot = build_library_snapshot(&library);
-            let search_results = search_snapshot(&snapshot, "alpine");
+            let search_results = search_snapshot(&snapshot, "alpine", SearchScope::Notes);
             assert_eq!(search_results.len(), 1);
             let project = snapshot
                 .notes

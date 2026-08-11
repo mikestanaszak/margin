@@ -104,7 +104,9 @@ export function QuickSwitcher({
             </button>
           ))}
           {!results.length && !search.loading && (
-            <p className="nr-switcher-empty" role="status">{emptyMessage}</p>
+            <p className="nr-switcher-empty" role="status">
+              {search.error ?? emptyMessage}
+            </p>
           )}
         </div>
       </section>

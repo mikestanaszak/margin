@@ -11,10 +11,17 @@ describe("native service", () => {
 
   it("passes search arguments to the native command", async () => {
     await native.searchLibrary("C:/Notes", "alpha");
+    await native.searchLibrary("C:/Notes", "alpha", "trash");
 
-    expect(invoke).toHaveBeenCalledWith("search_library", {
+    expect(invoke).toHaveBeenNthCalledWith(1, "search_library", {
       libraryPath: "C:/Notes",
       query: "alpha",
+      scope: "notes",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "search_library", {
+      libraryPath: "C:/Notes",
+      query: "alpha",
+      scope: "trash",
     });
   });
 

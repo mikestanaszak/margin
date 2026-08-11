@@ -410,6 +410,108 @@ describe("library index warnings", () => {
   });
 });
 
+describe("ranked discovery presentation", () => {
+  it("searches deleted notes only while the Trash filter is active", async () => {
+    const deleted = {
+      ...notes[0],
+      id: "deleted-alpha",
+      path: "C:/Notes/.markdown-notes/trash/Deleted Alpha.md",
+      title: "Deleted Alpha",
+      folder: "Trash",
+    };
+    invoke.mockImplementation(
+      ((command: string, args?: { scope?: string }) =>
+        Promise.resolve(
+          command === "load_selected_library"
+            ? "C:/Notes"
+            : command === "load_library_snapshot"
+              ? {
+                  notes: [notes[0]],
+                  folders: ["Work"],
+                  trash: [deleted],
+                  warnings: [],
+                }
+              : command === "search_library"
+                ? args?.scope === "trash"
+                  ? [{ ...deleted, score: 450 }]
+                  : [{ ...notes[0], score: 450 }]
+                : command === "take_opened_markdown_files"
+                  ? []
+                  : undefined,
+        )) as never,
+    );
+    try {
+      render(<App />);
+      fireEvent.click(await screen.findByRole("button", { name: "Trash 1" }));
+      fireEvent.change(screen.getByPlaceholderText("Search notes"), {
+        target: { value: "alpha" },
+      });
+
+      expect(
+        await screen.findByRole("button", { name: /Deleted Alpha/ }),
+      ).toBeInTheDocument();
+      expect(invoke).toHaveBeenCalledWith("search_library", {
+        libraryPath: "C:/Notes",
+        query: "alpha",
+        scope: "trash",
+      });
+    } finally {
+      invoke.mockImplementation((command: string) =>
+        Promise.resolve(
+          command === "take_opened_markdown_files"
+            ? []
+            : command === "load_selected_library"
+              ? null
+              : undefined,
+        ),
+      );
+    }
+  });
+
+  it("shows the same native search error in persistent Search", async () => {
+    invoke.mockImplementation(
+      ((command: string) => {
+        if (command === "load_selected_library") return Promise.resolve("C:/Notes");
+        if (command === "load_library_snapshot")
+          return Promise.resolve({
+            notes: [notes[0]],
+            folders: ["Work"],
+            trash: [],
+            warnings: [],
+          });
+        if (command === "search_library")
+          return Promise.reject(new Error("native index unavailable"));
+        if (command === "take_opened_markdown_files") return Promise.resolve([]);
+        return Promise.resolve(undefined);
+      }) as never,
+    );
+    try {
+      render(<App />);
+      await waitFor(() =>
+        expect(document.querySelector(".nr-note-main")).not.toBeNull(),
+      );
+      fireEvent.change(screen.getByPlaceholderText("Search notes"), {
+        target: { value: "alpha" },
+      });
+
+      expect(
+        await screen.findByText("Search is unavailable right now."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("No notes here yet.")).not.toBeInTheDocument();
+    } finally {
+      invoke.mockImplementation((command: string) =>
+        Promise.resolve(
+          command === "take_opened_markdown_files"
+            ? []
+            : command === "load_selected_library"
+              ? null
+              : undefined,
+        ),
+      );
+    }
+  });
+});
+
 describe("navigation structures and safety dialogs", () => {
   it("builds a heading hierarchy and identifies the active ancestors", () => {
     const items = [

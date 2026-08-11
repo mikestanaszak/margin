@@ -6,13 +6,17 @@ import type {
   NoteDocument,
   NoteSummary,
   SaveNoteResult,
+  SearchResult,
 } from "../app/types";
 
 export const native = {
   loadLibrarySnapshot: (libraryPath: string, force = false) =>
     invoke<LibrarySnapshot>("load_library_snapshot", { libraryPath, force }),
-  searchLibrary: (libraryPath: string, query: string) =>
-    invoke<NoteSummary[]>("search_library", { libraryPath, query }),
+  searchLibrary: (
+    libraryPath: string,
+    query: string,
+    scope: "notes" | "trash" = "notes",
+  ) => invoke<SearchResult[]>("search_library", { libraryPath, query, scope }),
   findBacklinks: (libraryPath: string, notePath: string, title: string) =>
     invoke<NoteSummary[]>("find_backlinks", { libraryPath, notePath, title }),
   showQuickCapture: () => invoke<void>("show_quick_capture"),

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const { searchLibrary } = vi.hoisted(() => ({ searchLibrary: vi.fn() }));
-vi.mock("../services/native", () => ({ native: { searchLibrary } }));
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 import {
   formatRelativeDate,
   NoteListItem,
@@ -29,6 +29,19 @@ const notes = [
   },
 ];
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+const nativeFailure = {
+  then: (_resolve: (value: never) => void, reject: (reason: unknown) => void) =>
+    reject(new Error("native index unavailable")),
+};
+
 describe("relative dates", () => {
   it("formats second, day, and invalid timestamps", () => {
     const now = Date.UTC(2026, 6, 30, 12);
@@ -39,11 +52,13 @@ describe("relative dates", () => {
 });
 
 describe("quick switcher", () => {
-  beforeEach(() => searchLibrary.mockReset());
+  beforeEach(() => invoke.mockReset());
 
   it("uses native ranked results and selects the active result with Enter", async () => {
-    searchLibrary.mockImplementation((_library: string, query: string) =>
-      Promise.resolve(query ? [notes[1]] : notes),
+    invoke.mockImplementation((command: string, args?: { query: string }) =>
+      Promise.resolve(
+        command === "search_library" && args?.query ? [notes[1]] : notes,
+      ),
     );
     const onSelect = vi.fn();
     render(
@@ -58,14 +73,20 @@ describe("quick switcher", () => {
     expect(
       await screen.findByRole("option", { name: /Café ideas/ }),
     ).toBeInTheDocument();
-    expect(searchLibrary).toHaveBeenLastCalledWith("C:/Notes", "cafe");
+    expect(invoke).toHaveBeenLastCalledWith("search_library", {
+      libraryPath: "C:/Notes",
+      query: "cafe",
+      scope: "notes",
+    });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onSelect).toHaveBeenCalledWith(notes[1]);
   });
 
   it("supports recent results, arrow navigation, Escape, and an empty state", async () => {
-    searchLibrary.mockImplementation((_library: string, query: string) =>
-      Promise.resolve(query ? [] : notes),
+    invoke.mockImplementation((command: string, args?: { query: string }) =>
+      Promise.resolve(
+        command === "search_library" && args?.query ? [] : notes,
+      ),
     );
     const onSelect = vi.fn();
     const onClose = vi.fn();
@@ -87,6 +108,47 @@ describe("quick switcher", () => {
     );
     fireEvent.keyDown(input, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("cannot select an old result while a new query is loading", async () => {
+    const pending = deferred<typeof notes>();
+    invoke
+      .mockResolvedValueOnce([notes[0]])
+      .mockReturnValueOnce(pending.promise);
+    const onSelect = vi.fn();
+    render(
+      <QuickSwitcher
+        library="C:/Notes"
+        onSelect={onSelect}
+        onClose={() => undefined}
+      />,
+    );
+    const input = screen.getByRole("combobox", { name: "Find a note" });
+    await screen.findByRole("option", { name: /Project Alpha/ });
+
+    fireEvent.change(input, { target: { value: "new query" } });
+    expect(
+      screen.queryByRole("option", { name: /Project Alpha/ }),
+    ).not.toBeInTheDocument();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes a native search error from no matches", async () => {
+    invoke.mockImplementation((command: string) =>
+      command === "search_library" ? nativeFailure : Promise.resolve(undefined),
+    );
+    render(
+      <QuickSwitcher
+        library="C:/Notes"
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+    expect(
+      await screen.findByText("Search is unavailable right now."),
+    ).toHaveAttribute("role", "status");
+    expect(screen.queryByText("No matching notes")).not.toBeInTheDocument();
   });
 });
 

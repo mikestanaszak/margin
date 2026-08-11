@@ -2,9 +2,9 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NoteSummary } from "../../app/types";
 
-const { searchLibrary } = vi.hoisted(() => ({ searchLibrary: vi.fn() }));
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 
-vi.mock("../../services/native", () => ({ native: { searchLibrary } }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 import { useLibrarySearch } from "./useLibrarySearch";
 
@@ -27,10 +27,10 @@ function deferred<T>() {
 }
 
 describe("useLibrarySearch", () => {
-  beforeEach(() => searchLibrary.mockReset());
+  beforeEach(() => invoke.mockReset());
 
   it("preserves native rank order while applying the current filter scope", async () => {
-    searchLibrary.mockResolvedValue([
+    invoke.mockResolvedValue([
       note("C:/Notes/Outside.md", "Outside"),
       note("C:/Notes/Work/Second.md", "Second"),
       note("C:/Notes/Work/First.md", "First"),
@@ -45,7 +45,11 @@ describe("useLibrarySearch", () => {
     );
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(searchLibrary).toHaveBeenCalledWith("C:/Notes", "alpha");
+    expect(invoke).toHaveBeenCalledWith("search_library", {
+      libraryPath: "C:/Notes",
+      query: "alpha",
+      scope: "notes",
+    });
     expect(result.current.results.map((item) => item.title)).toEqual([
       "Second",
       "First",
@@ -55,7 +59,7 @@ describe("useLibrarySearch", () => {
   it("discards an older request after the query changes", async () => {
     const older = deferred<NoteSummary[]>();
     const newer = deferred<NoteSummary[]>();
-    searchLibrary
+    invoke
       .mockReturnValueOnce(older.promise)
       .mockReturnValueOnce(newer.promise);
 
@@ -78,7 +82,7 @@ describe("useLibrarySearch", () => {
   });
 
   it("uses an empty query to request native recent notes", async () => {
-    searchLibrary.mockResolvedValue([
+    invoke.mockResolvedValue([
       note("Newest.md", "Newest", 30),
       note("Older.md", "Older", 10),
     ]);
@@ -88,10 +92,89 @@ describe("useLibrarySearch", () => {
     );
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(searchLibrary).toHaveBeenCalledWith("C:/Notes", "");
+    expect(invoke).toHaveBeenCalledWith("search_library", {
+      libraryPath: "C:/Notes",
+      query: "",
+      scope: "notes",
+    });
     expect(result.current.results.map((item) => item.title)).toEqual([
       "Newest",
       "Older",
     ]);
+  });
+
+  it("requests the deleted-note index only for an explicit trash scope", async () => {
+    invoke.mockResolvedValue([
+      note("C:/Notes/.markdown-notes/trash/Deleted.md", "Deleted alpha"),
+    ]);
+
+    const { result } = renderHook(() =>
+      useLibrarySearch({
+        library: "C:/Notes",
+        query: "alpha",
+        source: "trash",
+        scope: "all",
+      }),
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(invoke).toHaveBeenCalledWith("search_library", {
+      libraryPath: "C:/Notes",
+      query: "alpha",
+      scope: "trash",
+    });
+    expect(result.current.results.map((item) => item.title)).toEqual([
+      "Deleted alpha",
+    ]);
+  });
+
+  it("discards a prior library response after the library changes", async () => {
+    const oldLibrary = deferred<NoteSummary[]>();
+    const newLibrary = deferred<NoteSummary[]>();
+    invoke
+      .mockReturnValueOnce(oldLibrary.promise)
+      .mockReturnValueOnce(newLibrary.promise);
+
+    const { result, rerender } = renderHook(
+      ({ library }) =>
+        useLibrarySearch({ library, query: "alpha", scope: "all" }),
+      { initialProps: { library: "C:/Old" } },
+    );
+    rerender({ library: "C:/New" });
+
+    await act(async () =>
+      newLibrary.resolve([note("C:/New/Alpha.md", "New library")]),
+    );
+    expect(result.current.results.map((item) => item.title)).toEqual([
+      "New library",
+    ]);
+
+    await act(async () =>
+      oldLibrary.resolve([note("C:/Old/Alpha.md", "Old library")]),
+    );
+    expect(result.current.results.map((item) => item.title)).toEqual([
+      "New library",
+    ]);
+  });
+
+  it("discards a prior response after the filter scope changes", async () => {
+    const oldScope = deferred<NoteSummary[]>();
+    const newScope = deferred<NoteSummary[]>();
+    invoke.mockReturnValueOnce(oldScope.promise).mockReturnValueOnce(newScope.promise);
+    const alpha = note("C:/Notes/Alpha.md", "Alpha");
+    const beta = note("C:/Notes/Beta.md", "Beta");
+
+    const { result, rerender } = renderHook(
+      ({ scope }) =>
+        useLibrarySearch({ library: "C:/Notes", query: "a", scope }),
+      { initialProps: { scope: [alpha.path] as readonly string[] } },
+    );
+    rerender({ scope: [beta.path] });
+
+    await act(async () => newScope.resolve([alpha, beta]));
+    expect(result.current.results.map((item) => item.title)).toEqual(["Beta"]);
+
+    await act(async () => oldScope.resolve([alpha, beta]));
+    expect(result.current.results.map((item) => item.title)).toEqual(["Beta"]);
   });
 });
