@@ -110,6 +110,22 @@ describe("quick switcher", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("shows existing tags in results without an editing control", async () => {
+    invoke.mockResolvedValue(notes);
+    render(
+      <QuickSwitcher
+        library="C:/Notes"
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    const tagLabels = await screen.findByText("#work #planning", {
+      exact: true,
+    });
+    expect(tagLabels.querySelectorAll("button, input")).toHaveLength(0);
+  });
+
   it("cannot select an old result while a new query is loading", async () => {
     const pending = deferred<typeof notes>();
     invoke

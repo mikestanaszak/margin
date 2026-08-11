@@ -1319,7 +1319,7 @@ export function App() {
     />
   ) : null;
   const visibleNoteCards = useMemo(
-    () => visibleNotes.map((item) => ({ ...item, tags: [], body: item.excerpt })),
+    () => visibleNotes.map((item) => ({ ...item, body: item.excerpt })),
     [visibleNotes],
   );
   const activeNoteDirty = Boolean(

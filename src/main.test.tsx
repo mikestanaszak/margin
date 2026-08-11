@@ -411,6 +411,38 @@ describe("library index warnings", () => {
 });
 
 describe("ranked discovery presentation", () => {
+  it("shows existing tags on note cards without an editing control", async () => {
+    const taggedNote = { ...notes[0], tags: ["work", "planning"] };
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "load_selected_library"
+          ? "C:/Notes"
+          : command === "load_library_snapshot"
+            ? { notes: [taggedNote], folders: ["Work"], trash: [], warnings: [] }
+            : command === "take_opened_markdown_files"
+              ? []
+              : undefined,
+      ) as never,
+    );
+    try {
+      render(<App />);
+
+      const tagLabels = await screen.findByLabelText("Tags: work, planning");
+      expect(tagLabels).toHaveTextContent("#work#planning");
+      expect(tagLabels.querySelectorAll("button, input")).toHaveLength(0);
+    } finally {
+      invoke.mockImplementation((command: string) =>
+        Promise.resolve(
+          command === "take_opened_markdown_files"
+            ? []
+            : command === "load_selected_library"
+              ? null
+              : undefined,
+        ),
+      );
+    }
+  });
+
   it("searches deleted notes only while the Trash filter is active", async () => {
     const deleted = {
       ...notes[0],
