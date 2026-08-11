@@ -1,4 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
+import "./preview.css";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";

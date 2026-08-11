@@ -1,0 +1,30 @@
+/* Library navigation keeps its interactive affordances beside the tree. */
+.folder-add,
+.folder-rename {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--faint);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  line-height: 1;
+  opacity: 0;
+}
+
+.folder-add { font-size: 17px; }
+.folder-rename { font-size: 14px; }
+.folder-row:hover .folder-add,
+.folder-row:focus-within .folder-add,
+.folder-row:hover .folder-rename,
+.folder-row:focus-within .folder-rename { opacity: 1; }
+.folder-add:hover,
+.folder-rename:hover { color: var(--accent-strong); background: var(--accent-soft); }
+
+.folder-note-tree { display: grid; gap: 7px; }
+.folder-note-group { display: grid; gap: 5px; padding-left: calc(var(--folder-note-depth) * 9px); }
+.folder-note-heading { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 11px 7px 3px; color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; }
+.folder-note-heading .folder-icon { width: 17px; height: 17px; }
+.folder-note-heading span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-note-heading small { margin-left: auto; color: var(--faint); font-size: 10px; font-weight: 600; letter-spacing: 0; }

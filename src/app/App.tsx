@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import "./app.css";
 import { open } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";

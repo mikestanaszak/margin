@@ -1,4 +1,5 @@
 import React, { useEffect, type KeyboardEvent } from "react";
+import "./settings.css";
 import { all as highlightLanguages } from "lowlight";
 import type { NoteSummary } from "../../app/types";
 import { formatShortcut, normalizedKey } from "../../note-utils";

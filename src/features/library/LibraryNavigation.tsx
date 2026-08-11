@@ -1,4 +1,5 @@
 import React from "react";
+import "./library.css";
 import type { NoteSummary } from "../../app/types";
 
 export type LibraryFilter =

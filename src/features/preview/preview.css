@@ -1,0 +1,9 @@
+/* Preview-specific refinements live with its renderer rather than the app shell. */
+.preview ul,
+.preview ol { margin: 0.85em 0; padding-left: 1.45em; }
+.preview li { padding-left: 0.16em; margin: 0.32em 0; }
+.preview li > p { margin: 0.24em 0; }
+.preview li > ul,
+.preview li > ol { margin: 0.34em 0 0.42em; }
+.preview .contains-task-list { padding-left: 1.45em; list-style: none; }
+.preview .contains-task-list > li { padding-left: 0.16em; list-style: none; }
