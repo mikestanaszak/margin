@@ -59,7 +59,7 @@ export function noteSessionReducer(
     case "cleared":
       return initialNoteSessionState;
     case "loadRequested":
-      return { ...initialNoteSessionState, phase: "loading" };
+      return { ...state, phase: "loading", error: null };
     case "loadSucceeded":
       return {
         phase: "clean",

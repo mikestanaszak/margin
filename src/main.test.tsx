@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("react-dom/client", () => ({
@@ -571,6 +571,126 @@ describe("navigation structures and safety dialogs", () => {
       );
     }
   });
+
+  it.each(["switch", "clear"] as const)(
+    "does not reactivate a renamed note when its delayed save resolves after %s",
+    async (nextAction) => {
+      const documents = new Map(
+        notes.map((summary) => [
+          summary.path,
+          {
+            path: summary.path,
+            title: summary.title,
+            tags: summary.tags,
+            body: `# ${summary.title}\n\n- [ ] Task`,
+            updated: summary.updated,
+            revision: `${summary.id}-revision`,
+          },
+        ]),
+      );
+      let resolveSave: (value: unknown) => void = () => undefined;
+      const delayedSave = new Promise((resolve) => {
+        resolveSave = resolve;
+      });
+      const confirmMove = vi.spyOn(window, "confirm").mockReturnValue(true);
+      invoke.mockImplementation(
+        ((command: string, args?: unknown) => {
+          const payload = args as { path?: string } | undefined;
+          if (command === "load_selected_library")
+            return Promise.resolve("C:/Notes");
+          if (command === "load_library_snapshot")
+            return Promise.resolve({
+              notes,
+              folders: ["Work", "Personal"],
+              trash: [],
+              warnings: [],
+            });
+          if (command === "read_note")
+            return Promise.resolve(documents.get(payload?.path || ""));
+          if (command === "save_note") return delayedSave;
+          if (
+            command === "take_opened_markdown_files" ||
+            command === "find_backlinks"
+          )
+            return Promise.resolve([]);
+          return Promise.resolve(undefined);
+        }) as never,
+      );
+
+      try {
+        const { container } = render(<App />);
+        const projectButton = (await screen.findAllByRole("button", {
+          name: /Project Alpha/,
+        })).find((button) => button.classList.contains("nr-note-main"));
+        expect(projectButton).toBeDefined();
+        fireEvent.click(projectButton!);
+        fireEvent.click(await screen.findByRole("checkbox"));
+        fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+        await waitFor(() =>
+          expect(invoke).toHaveBeenCalledWith(
+            "save_note",
+            expect.objectContaining({
+              note: expect.objectContaining({ path: notes[0].path }),
+            }),
+          ),
+        );
+
+        if (nextAction === "switch") {
+          const cafeButton = screen
+            .getAllByRole("button", { name: /Café ideas/ })
+            .find((button) => button.classList.contains("nr-note-main"));
+          fireEvent.click(cafeButton!);
+          await waitFor(() =>
+            expect(
+              container.querySelector(".nr-note-main[aria-current='page']"),
+            ).toHaveTextContent("Café ideas"),
+          );
+        } else {
+          fireEvent.contextMenu(projectButton!.closest("article")!, {
+            clientX: 20,
+            clientY: 20,
+          });
+          fireEvent.click(screen.getByRole("menuitem", { name: "Move to Trash" }));
+          await waitFor(() =>
+            expect(
+              container.querySelector(".nr-note-main[aria-current='page']"),
+            ).toBeNull(),
+          );
+        }
+
+        await act(async () => {
+          resolveSave({
+            status: "saved",
+            note: {
+              ...documents.get(notes[0].path)!,
+              path: "C:/Notes/Work/Project Alpha renamed.md",
+              revision: "saved-revision",
+            },
+          });
+          await delayedSave;
+          await Promise.resolve();
+        });
+
+        const activeNote = container.querySelector(
+          ".nr-note-main[aria-current='page']",
+        );
+        if (nextAction === "switch")
+          expect(activeNote).toHaveTextContent("Café ideas");
+        else expect(activeNote).toBeNull();
+      } finally {
+        confirmMove.mockRestore();
+        invoke.mockImplementation((command: string) =>
+          Promise.resolve(
+            command === "take_opened_markdown_files"
+              ? []
+              : command === "load_selected_library"
+                ? null
+                : undefined,
+          ),
+        );
+      }
+    },
+  );
 
   it("keeps the static application icon when the appearance changes", () => {
     const previousPalette = localStorage.getItem("margin.palette");

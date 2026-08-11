@@ -6,7 +6,6 @@ import React, {
   useReducer,
   useRef,
   useState,
-  type KeyboardEvent,
 } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -895,14 +894,16 @@ export function App() {
             : draft.revision,
       };
       if (!hasUnsavedChanges(noteToSave, currentBaseline)) return;
-      const isActive =
+      const saveBelongsToActiveNote = () =>
         activePathRef.current === previousPath ||
         activePathRef.current === originalPath;
-      if (isActive) {
+      const startedActive = saveBelongsToActiveNote();
+      if (startedActive) {
         dispatchNoteSession({ type: "saveRequested" });
         setStatus("Saving…");
       }
       const result = await native.saveNote(noteToSave, library);
+      const isStillActive = saveBelongsToActiveNote();
       if (result.status === "conflict") {
         dispatchNoteSession({
           type: "saveConflicted",
@@ -910,11 +911,12 @@ export function App() {
           mine: noteToSave,
           path: previousPath,
         });
-        if (isActive) setStatus("Save conflict: the note changed on disk");
+        if (isStillActive)
+          setStatus("Save conflict: the note changed on disk");
         return;
       }
       if (result.status === "error") {
-        if (isActive) {
+        if (isStillActive) {
           dispatchNoteSession({
             type: "saveFailed",
             message: result.message,
@@ -930,7 +932,7 @@ export function App() {
       saveQueueKeys.current.set(saved.path, queueKey);
       noteBaselines.current.set(originalPath, saved);
       noteBaselines.current.set(saved.path, saved);
-      if (isActive) {
+      if (isStillActive) {
         activePathRef.current = saved.path;
         baseline.current = saved;
         if (pathChanged) {
@@ -961,7 +963,7 @@ export function App() {
           : item;
       setNotes((current) => current.map(updateSummary));
       setTrashNotes((current) => current.map(updateSummary));
-      if (isActive) setStatus("Saved");
+      if (isStillActive) setStatus("Saved");
     } catch (error) {
       if (activePathRef.current === draft.path) {
         dispatchNoteSession({

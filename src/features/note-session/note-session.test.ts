@@ -28,6 +28,49 @@ describe("noteSessionReducer", () => {
     expect(loaded).toMatchObject({ phase: "clean", draft: note("Loaded") });
   });
 
+  it.each(["clean", "dirty"] as const)(
+    "preserves a %s draft while another note loads",
+    (phase) => {
+      const draft = note(phase === "dirty" ? "Unsaved edits" : "Loaded");
+      const loading = noteSessionReducer(
+        { ...initialNoteSessionState, phase, draft },
+        { type: "loadRequested" },
+      );
+
+      expect(loading).toMatchObject({ phase: "loading", draft });
+    },
+  );
+
+  it("preserves the current draft and conflict when a load fails", () => {
+    const draft = note("Unsaved edits");
+    const conflict = {
+      disk: note("Disk changes", "revision-2"),
+      mine: draft,
+      path: draft.path,
+    };
+    const loading = noteSessionReducer(
+      {
+        phase: "dirty",
+        draft,
+        conflict,
+        error: null,
+      },
+      { type: "loadRequested" },
+    );
+
+    expect(
+      noteSessionReducer(loading, {
+        type: "loadFailed",
+        message: "Could not read note",
+      }),
+    ).toMatchObject({
+      phase: "error",
+      draft,
+      conflict,
+      error: "Could not read note",
+    });
+  });
+
   it("tracks edits and a successful save", () => {
     const editedDraft = note("Edited");
     const dirty = noteSessionReducer(
