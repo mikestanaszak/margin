@@ -1,30 +1,56 @@
-/* Library navigation keeps its interactive affordances beside the tree. */
-.folder-add,
-.folder-rename {
-  flex: 0 0 22px;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  color: var(--faint);
-  background: transparent;
-  border: 0;
-  border-radius: 5px;
-  line-height: 1;
-  opacity: 0;
-}
-
-.folder-add { font-size: 17px; }
-.folder-rename { font-size: 14px; }
-.folder-row:hover .folder-add,
-.folder-row:focus-within .folder-add,
-.folder-row:hover .folder-rename,
-.folder-row:focus-within .folder-rename { opacity: 1; }
-.folder-add:hover,
-.folder-rename:hover { color: var(--accent-strong); background: var(--accent-soft); }
-
-.folder-note-tree { display: grid; gap: 7px; }
-.folder-note-group { display: grid; gap: 5px; padding-left: calc(var(--folder-note-depth) * 9px); }
+.sidebar { grid-row: 2; display: flex; min-height: 0; flex-direction: column; gap: 16px; padding: 16px 12px 14px; overflow: hidden; background: var(--sidebar); border-right: 1px solid var(--border); }
+.new-note { padding: 10px 12px; color: #fff; text-align: left; background: var(--accent); border: 0; border-radius: 9px; font-weight: 700; box-shadow: 0 2px 5px rgb(15 65 39 / 17%); }
+.new-note:hover { background: var(--accent-strong); }
+.new-note kbd { float: right; color: #fff; font-size: 10px; opacity: 0.72; }
+.sidebar nav { min-height: 0; overflow: auto; }
+.nav-item { display: flex; justify-content: space-between; width: 100%; padding: 7px 9px; color: var(--muted); text-align: left; background: transparent; border: 0; border-radius: 7px; }
+.nav-item:hover, .nav-item.selected { color: var(--accent-strong); background: var(--accent-soft); }
+.nav-item small { opacity: 0.75; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; margin: 20px 4px 6px 9px; }
+.section-label { margin: 0; color: var(--faint); font-size: 10px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+.section-heading button { width: 21px; height: 21px; padding: 0; color: var(--muted); background: transparent; border: 0; border-radius: 5px; font-size: 17px; line-height: 1; }
+.section-heading button:hover { color: var(--accent-strong); background: var(--accent-soft); }
+.folder-tree { display: grid; gap: 3px; padding: 2px 0; }
+.folder-row { display: flex; align-items: center; min-width: 0; min-height: 34px; padding: 0 5px 0 calc(5px + var(--folder-depth) * 15px); border-radius: 8px; transition: background 120ms ease; }
+.folder-row:hover { background: color-mix(in srgb, var(--accent-soft) 58%, transparent); }
+.folder-row.selected { background: var(--accent-soft); }
+.folder-disclosure, .folder-spacer { display: grid; flex: 0 0 21px; width: 21px; height: 29px; place-items: center; color: var(--faint); }
+.folder-disclosure { padding: 0; background: transparent; border: 0; border-radius: 5px; }
+.folder-disclosure span { display: block; font-size: 13px; line-height: 1; transition: transform 130ms ease; }
+.folder-disclosure.collapsed span { transform: rotate(-90deg); }
+.folder-disclosure:hover { color: var(--accent-strong); background: color-mix(in srgb, var(--accent-soft) 80%, transparent); }
+.folder-button { display: flex; align-items: center; flex: 1; gap: 8px; min-width: 0; min-height: 29px; padding: 4px 6px 4px 1px; color: var(--muted); text-align: left; background: transparent; border: 0; border-radius: 6px; font-size: 13px; }
+.folder-row.selected .folder-button { color: var(--accent-strong); font-weight: 650; }
+.folder-row:hover .folder-button { color: var(--text); }
+.folder-icon { flex: 0 0 19px; width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.65; opacity: 0.8; }
+.folder-row.selected .folder-icon { opacity: 1; stroke-width: 1.9; }
+.folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-button small { padding-left: 6px; color: var(--faint); font-size: 10px; font-weight: 550; }
+.folder-delete, .folder-add, .folder-rename { flex: 0 0 22px; width: 22px; height: 22px; padding: 0; color: var(--faint); background: transparent; border: 0; border-radius: 5px; line-height: 1; opacity: 0; }
+.folder-delete { font-size: 16px; }.folder-add { font-size: 17px; }.folder-rename { font-size: 14px; }
+.folder-row:hover .folder-delete, .folder-row:focus-within .folder-delete, .folder-row:hover .folder-add, .folder-row:focus-within .folder-add, .folder-row:hover .folder-rename, .folder-row:focus-within .folder-rename { opacity: 1; }
+.folder-delete:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.folder-add:hover, .folder-rename:hover { color: var(--accent-strong); background: var(--accent-soft); }
+.library-control { display: grid; gap: 7px; margin-top: auto; padding: 13px 5px 0; border-top: 1px solid var(--border); }
+.library-control button { width: fit-content; padding: 0; color: var(--accent); background: transparent; border: 0; font-size: 12px; }
+.library-control p { margin: 0; overflow: hidden; color: var(--faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.note-list { grid-row: 2; min-width: 0; overflow: hidden; background: var(--bg); border-right: 1px solid var(--border); }
+.note-list header { display: flex; align-items: center; justify-content: space-between; height: 58px; padding: 15px 19px; border-bottom: 1px solid var(--border); }
+.note-list h1 { margin: 0; font-size: 16px; letter-spacing: -0.03em; }
+.note-list header span { color: var(--faint); font-size: 13px; }
+.notes { height: calc(100% - 58px); padding: 8px; overflow: auto; }
+.virtual-note-list-spacer { position: relative; min-height: 100%; }
+.virtual-note-list-items { position: absolute; top: 0; right: 0; left: 0; }
+.virtual-note-row { height: 92px; overflow: hidden; }
+.virtual-note-row > .nr-note-item, .virtual-note-row .nr-note-main { box-sizing: border-box; height: 100%; }
+.empty-list { padding: 18px 10px; color: var(--muted); font-size: 13px; }
+.folder-note-tree { display: grid; gap: 7px; }.folder-note-group { display: grid; gap: 5px; padding-left: calc(var(--folder-note-depth) * 9px); }
 .folder-note-heading { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 11px 7px 3px; color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; }
-.folder-note-heading .folder-icon { width: 17px; height: 17px; }
-.folder-note-heading span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.folder-note-heading small { margin-left: auto; color: var(--faint); font-size: 10px; font-weight: 600; letter-spacing: 0; }
+.folder-note-heading .folder-icon { width: 17px; height: 17px; }.folder-note-heading span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.folder-note-heading small { margin-left: auto; color: var(--faint); font-size: 10px; font-weight: 600; letter-spacing: 0; }
+.note-context-menu { position: fixed; z-index: 30; width: 208px; padding: 5px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
+.note-context-menu p { padding: 5px 7px 7px; margin: 0 0 3px; overflow: hidden; color: var(--faint); text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--border); font-size: 11px; }
+.note-context-menu button { display: block; width: 100%; padding: 7px 8px; color: var(--text); text-align: left; background: transparent; border: 0; border-radius: 5px; font-size: 12px; }.note-context-menu button:hover { background: var(--surface-soft); }.note-context-menu button.danger { color: var(--danger); }.note-context-menu button.danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.note-context-move { display: grid; gap: 4px; padding: 7px 8px; color: var(--muted); font-size: 11px; }.note-context-move select { width: 100%; padding: 5px 6px; color: var(--text); background: var(--surface-soft); border: 1px solid var(--border); border-radius: 5px; font-size: 12px; }
+.nr-note-item.nr-is-active { border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); background: color-mix(in srgb, var(--accent-soft) 74%, var(--surface)); box-shadow: inset 3px 0 var(--accent); }.nr-note-unsaved { position: absolute; top: 8px; right: 9px; width: 6px; height: 6px; background: #e6a94d; border-radius: 999px; box-shadow: 0 0 0 2px color-mix(in srgb, #e6a94d 18%, transparent); }.nr-note-item.nr-has-unsaved .nr-note-pin { top: 16px; }
+ .sidebar-hidden .sidebar { padding-inline: 0; overflow: hidden; }
+@media (max-width: 800px) { .note-list { display: none; } }

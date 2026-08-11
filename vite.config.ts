@@ -11,6 +11,7 @@ export default defineConfig({
   },
   envPrefix: ["VITE_", "TAURI_"],
   build: {
+    manifest: true,
     rollupOptions: {
       input: {
         main: "index.html",

@@ -25,10 +25,11 @@
     "start": "pnpm run dev:desktop",
     "build": "tsc -b && vite build",
     "test": "pnpm test:unit && pnpm test:integration",
-    "test:unit": "vitest run --exclude src/MermaidDiagram.integration.test.tsx",
+    "test:unit": "vitest run --exclude src/MermaidDiagram.integration.test.tsx --exclude scripts/bundle-boundaries.test.ts",
     "test:integration": "vitest run src/MermaidDiagram.integration.test.tsx --maxWorkers=1 --minWorkers=1",
+    "test:bundle": "pnpm build && vitest run scripts/bundle-boundaries.test.ts",
     "test:watch": "vitest",
-    "test:all": "pnpm test && cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:all": "pnpm test && pnpm test:bundle && cargo test --manifest-path src-tauri/Cargo.toml",
     "tauri": "tauri"
   },
   "dependencies": {
