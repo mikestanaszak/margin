@@ -16,7 +16,11 @@ describe("style ownership", () => {
     expect(library).toContain(".sidebar");
     expect(preview).toContain(".preview");
     expect(preview).toContain(".table-editor-grid");
+    expect(preview).toContain(".preview .hljs-keyword");
+    expect(preview).toContain(".table-column-actions");
+    expect(preview).toContain(".table-drag-handle");
     expect(settings).toContain(".settings-dialog");
     expect(settings).not.toContain(".table-editor-dialog");
+    expect(app).toContain(".compare");
   });
 });
