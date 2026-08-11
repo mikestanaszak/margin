@@ -1,0 +1,627 @@
+use crate::assets::is_managed_note_asset_directory;
+use crate::model::{IndexWarning, IndexWarningKind, LibrarySnapshot, NoteDocument, NoteSummary};
+use crate::notes::{note_excerpt, read_library_note_file_for_index};
+#[cfg(test)]
+use crate::paths::canonical_library_root;
+use crate::paths::{folder_for_path, is_markdown_path, relative_note_id};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
+};
+use tauri::State;
+use walkdir::WalkDir;
+
+/// A process-owned snapshot keeps note contents and search data out of the
+/// webview. The watcher marks the snapshot stale; the next normal refresh
+/// rebuilds it, while a low-frequency reconciliation catches missed events.
+/// Margin deliberately indexes one selected library at a time.
+pub(crate) struct LibraryIndex(Mutex<Option<IndexedLibrary>>);
+
+struct IndexedLibrary {
+    path: PathBuf,
+    snapshot: LibrarySnapshot,
+    dirty: Arc<AtomicBool>,
+    reconciled_at: Instant,
+    _watcher: RecommendedWatcher,
+}
+
+const INDEX_RECONCILIATION_INTERVAL: Duration = Duration::from_secs(45);
+
+impl LibraryIndex {
+    pub(crate) fn new() -> Self {
+        Self(Mutex::new(None))
+    }
+
+    pub(crate) fn snapshot(
+        &self,
+        library_path: &str,
+        force: bool,
+    ) -> Result<LibrarySnapshot, String> {
+        let requested = PathBuf::from(library_path);
+        let library = fs::canonicalize(&requested)
+            .map_err(|error| format!("Could not open the selected library: {error}"))?;
+        if !library.is_dir() {
+            return Err("Choose an existing notes folder".into());
+        }
+
+        let mut state = self.0.lock().map_err(|_| "Library index is unavailable")?;
+        let replace_index = state.as_ref().is_none_or(|current| current.path != library);
+        if replace_index {
+            *state = Some(index_library(&library)?);
+        }
+        let current = state.as_mut().expect("library index was initialized");
+        let should_rebuild = force
+            || current.dirty.swap(false, Ordering::AcqRel)
+            || current.reconciled_at.elapsed() >= INDEX_RECONCILIATION_INTERVAL;
+        if should_rebuild {
+            current.snapshot = build_library_snapshot(&current.path);
+            current.reconciled_at = Instant::now();
+        }
+        Ok(current.snapshot.clone())
+    }
+}
+
+pub(crate) fn build_library_snapshot(library: &Path) -> LibrarySnapshot {
+    let Ok(library) = fs::canonicalize(library) else {
+        return LibrarySnapshot {
+            notes: Vec::new(),
+            folders: Vec::new(),
+            trash: Vec::new(),
+            warnings: Vec::new(),
+        };
+    };
+    let (notes, folders, mut warnings) = load_library_contents(&library);
+    LibrarySnapshot {
+        notes,
+        folders,
+        trash: load_trash_contents(&library, &mut warnings),
+        warnings,
+    }
+}
+
+fn index_library(library: &Path) -> Result<IndexedLibrary, String> {
+    let dirty = Arc::new(AtomicBool::new(false));
+    let watcher_dirty = Arc::clone(&dirty);
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        if event.is_ok() {
+            watcher_dirty.store(true, Ordering::Release);
+        }
+    })
+    .map_err(|error| format!("Could not watch the selected library: {error}"))?;
+    watcher
+        .watch(library, RecursiveMode::Recursive)
+        .map_err(|error| format!("Could not watch the selected library: {error}"))?;
+    Ok(IndexedLibrary {
+        path: library.to_path_buf(),
+        snapshot: build_library_snapshot(library),
+        dirty,
+        reconciled_at: Instant::now(),
+        _watcher: watcher,
+    })
+}
+
+pub(crate) fn note_summary(note: NoteDocument, library: &Path) -> NoteSummary {
+    let folder = folder_for_path(library, Path::new(&note.path));
+    NoteSummary {
+        id: note.id.unwrap_or_else(|| {
+            relative_note_id(library, Path::new(&note.path)).unwrap_or_default()
+        }),
+        searchable_text: format!(
+            "{} {} {} {}",
+            note.title,
+            Path::new(&note.path)
+                .file_name()
+                .and_then(|v| v.to_str())
+                .unwrap_or(""),
+            note.tags.join(" "),
+            note.body
+        )
+        .to_lowercase(),
+        excerpt: note_excerpt(&note.body),
+        path: note.path,
+        title: note.title,
+        tags: note.tags,
+        updated: note.updated,
+        folder,
+    }
+}
+
+pub(crate) fn push_index_warning(
+    warnings: &mut Vec<IndexWarning>,
+    path: &Path,
+    kind: IndexWarningKind,
+) {
+    warnings.push(IndexWarning {
+        path: path.to_string_lossy().to_string(),
+        kind,
+    });
+}
+
+pub(crate) fn collect_library_entry(
+    library: &Path,
+    entry: Result<walkdir::DirEntry, walkdir::Error>,
+    notes: &mut Vec<NoteSummary>,
+    folders: &mut Vec<String>,
+    warnings: &mut Vec<IndexWarning>,
+) {
+    let entry = match entry {
+        Ok(entry) => entry,
+        Err(error) => {
+            push_index_warning(
+                warnings,
+                error.path().unwrap_or(library),
+                IndexWarningKind::Walk,
+            );
+            return;
+        }
+    };
+    if entry.file_type().is_symlink() {
+        return;
+    }
+    if entry.file_type().is_dir() {
+        if let Ok(relative) = entry.path().strip_prefix(library) {
+            let folder = relative.to_string_lossy().replace('\\', "/");
+            if !folder.is_empty() {
+                folders.push(folder);
+            }
+        }
+    } else if entry.file_type().is_file() && is_markdown_path(entry.path()) {
+        match read_library_note_file_for_index(library, entry.path()) {
+            Ok((note, warning)) => {
+                notes.push(note_summary(note, library));
+                if let Some(kind) = warning {
+                    push_index_warning(warnings, entry.path(), kind);
+                }
+            }
+            Err(kind) => push_index_warning(warnings, entry.path(), kind),
+        }
+    }
+}
+
+pub(crate) fn load_library_contents(
+    library: &Path,
+) -> (Vec<NoteSummary>, Vec<String>, Vec<IndexWarning>) {
+    let mut notes = Vec::new();
+    let mut folders = Vec::new();
+    let mut warnings = Vec::new();
+    for entry in WalkDir::new(library)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| {
+            entry.file_name() != ".markdown-notes" && !is_managed_note_asset_directory(entry.path())
+        })
+    {
+        collect_library_entry(library, entry, &mut notes, &mut folders, &mut warnings);
+    }
+    notes.sort_by_key(|note| std::cmp::Reverse(note.updated));
+    folders.sort_by_key(|folder| folder.to_lowercase());
+    (notes, folders, warnings)
+}
+
+#[cfg(test)]
+#[tauri::command]
+pub(crate) fn load_library(library_path: String) -> Result<Vec<NoteSummary>, String> {
+    let library = canonical_library_root(library_path)?;
+    Ok(load_library_contents(&library).0)
+}
+
+#[tauri::command]
+pub(crate) fn load_library_snapshot(
+    library_index: State<'_, LibraryIndex>,
+    library_path: String,
+    force: Option<bool>,
+) -> Result<LibrarySnapshot, String> {
+    library_index.snapshot(&library_path, force.unwrap_or(false))
+}
+
+pub(crate) fn wiki_targets(text: &str) -> Vec<&str> {
+    let mut targets = Vec::new();
+    let mut remaining = text;
+    while let Some(start) = remaining.find("[[") {
+        let after_start = &remaining[start + 2..];
+        let Some(end) = after_start.find("]]") else {
+            break;
+        };
+        let target = after_start[..end].split('|').next().unwrap_or("").trim();
+        if !target.is_empty() {
+            targets.push(target);
+        }
+        remaining = &after_start[end + 2..];
+    }
+    targets
+}
+
+#[tauri::command]
+pub(crate) fn search_library(
+    library_index: State<'_, LibraryIndex>,
+    library_path: String,
+    query: String,
+) -> Result<Vec<NoteSummary>, String> {
+    Ok(search_snapshot(
+        &library_index.snapshot(&library_path, false)?,
+        &query,
+    ))
+}
+
+#[tauri::command]
+pub(crate) fn find_backlinks(
+    library_index: State<'_, LibraryIndex>,
+    library_path: String,
+    note_path: String,
+    title: String,
+) -> Result<Vec<NoteSummary>, String> {
+    Ok(backlinks_for_snapshot(
+        &library_index.snapshot(&library_path, false)?,
+        &note_path,
+        &title,
+    ))
+}
+
+pub(crate) fn search_snapshot(snapshot: &LibrarySnapshot, query: &str) -> Vec<NoteSummary> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    snapshot
+        .notes
+        .iter()
+        .filter(|note| note.searchable_text.contains(&query))
+        .cloned()
+        .collect()
+}
+
+pub(crate) fn backlinks_for_snapshot(
+    snapshot: &LibrarySnapshot,
+    note_path: &str,
+    title: &str,
+) -> Vec<NoteSummary> {
+    let target = title.to_lowercase();
+    snapshot
+        .notes
+        .iter()
+        .filter(|item| {
+            item.path != note_path
+                && wiki_targets(&item.searchable_text)
+                    .iter()
+                    .any(|link| link.to_lowercase() == target)
+        })
+        .cloned()
+        .collect()
+}
+
+pub(crate) fn load_trash_contents(
+    library: &Path,
+    warnings: &mut Vec<IndexWarning>,
+) -> Vec<NoteSummary> {
+    let trash = library.join(".markdown-notes").join("trash");
+    if !trash.exists() {
+        return Vec::new();
+    }
+    let mut notes = Vec::new();
+    for entry in WalkDir::new(&trash).follow_links(false) {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                push_index_warning(
+                    warnings,
+                    error.path().unwrap_or(&trash),
+                    IndexWarningKind::Walk,
+                );
+                continue;
+            }
+        };
+        if entry.file_type().is_symlink()
+            || !entry.file_type().is_file()
+            || !is_markdown_path(entry.path())
+        {
+            continue;
+        }
+        match read_library_note_file_for_index(library, entry.path()) {
+            Ok((note, warning)) => {
+                notes.push(NoteSummary {
+                    folder: "Trash".into(),
+                    ..note_summary(note, library)
+                });
+                if let Some(kind) = warning {
+                    push_index_warning(warnings, entry.path(), kind);
+                }
+            }
+            Err(kind) => push_index_warning(warnings, entry.path(), kind),
+        }
+    }
+    notes.sort_by_key(|note| std::cmp::Reverse(note.updated));
+    notes
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(unused_imports)]
+
+    use crate::{
+        assets::*,
+        capture::*,
+        library::*,
+        model::*,
+        notes::*,
+        paths::*,
+        test_support::{copy_example_library, temporary_library},
+    };
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        thread,
+        time::Duration,
+    };
+    use walkdir::WalkDir;
+
+    #[test]
+    fn library_snapshot_indexes_markdown_and_prunes_internal_storage() {
+        let library = temporary_library();
+        fs::create_dir_all(library.join("Projects")).unwrap();
+        fs::create_dir_all(library.join(".markdown-notes").join("trash")).unwrap();
+        let result = (|| -> Result<(), String> {
+            fs::write(
+                library.join("Projects").join("Plan.markdown"),
+                "# Project plan\n\nVisible note\n",
+            )
+            .map_err(|error| error.to_string())?;
+            fs::write(
+                library.join(".markdown-notes").join("hidden.md"),
+                "# Internal note\n",
+            )
+            .map_err(|error| error.to_string())?;
+            fs::write(
+                library
+                    .join(".markdown-notes")
+                    .join("trash")
+                    .join("Deleted.markdown"),
+                "# Deleted note\n",
+            )
+            .map_err(|error| error.to_string())?;
+
+            let snapshot = build_library_snapshot(&library);
+            assert_eq!(snapshot.notes.len(), 1);
+            assert_eq!(snapshot.notes[0].title, "Project plan");
+            assert_eq!(snapshot.folders, ["Projects"]);
+            assert_eq!(snapshot.trash.len(), 1);
+            assert_eq!(snapshot.trash[0].title, "Deleted note");
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn library_snapshot_reports_index_warnings() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        fs::write(library.join("Unreadable.md"), [0xff, 0xfe, 0xfd]).unwrap();
+
+        let snapshot = build_library_snapshot(&library);
+        assert_eq!(snapshot.notes.len(), 0);
+        assert_eq!(snapshot.warnings.len(), 1);
+        assert_eq!(
+            snapshot.warnings[0].kind,
+            IndexWarningKind::UnreadableMarkdown
+        );
+        assert!(snapshot.warnings[0].path.ends_with("Unreadable.md"));
+
+        let removed = library.join("Removed");
+        let entry = WalkDir::new(&removed)
+            .into_iter()
+            .next()
+            .expect("missing directory must produce a walk result");
+        let mut notes = Vec::new();
+        let mut folders = Vec::new();
+        let mut warnings = Vec::new();
+        collect_library_entry(&library, entry, &mut notes, &mut folders, &mut warnings);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].kind, IndexWarningKind::Walk);
+        assert!(warnings[0].path.ends_with("Removed"));
+
+        fs::remove_dir_all(&library).ok();
+    }
+
+    #[test]
+    fn library_snapshot_keeps_notes_with_invalid_metadata_indexable() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        fs::write(
+            library.join("Broken.md"),
+            "---\ntags: [unclosed\n---\n\n# Fallback title\n\nBody text",
+        )
+        .unwrap();
+
+        let snapshot = build_library_snapshot(&library);
+        assert_eq!(snapshot.notes.len(), 1);
+        assert_eq!(snapshot.notes[0].title, "Fallback title");
+        assert_eq!(snapshot.warnings.len(), 1);
+        assert_eq!(snapshot.warnings[0].kind, IndexWarningKind::InvalidMetadata);
+
+        fs::remove_dir_all(&library).ok();
+    }
+
+    #[test]
+    fn library_snapshot_omits_note_asset_directories() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let result = (|| -> Result<(), String> {
+            fs::create_dir_all(
+                library
+                    .join("Projects")
+                    .join("Project.assets")
+                    .join("nested"),
+            )
+            .map_err(|error| error.to_string())?;
+            fs::write(library.join("Projects").join("Project.md"), "# Project\n")
+                .map_err(|error| error.to_string())?;
+            fs::write(
+                library
+                    .join("Projects")
+                    .join("Project.assets")
+                    .join("nested")
+                    .join("photo.png"),
+                b"image",
+            )
+            .map_err(|error| error.to_string())?;
+
+            let snapshot = build_library_snapshot(&library);
+            assert_eq!(snapshot.folders, ["Projects"]);
+            assert_eq!(snapshot.notes.len(), 1);
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn example_library_indexes_realistic_portable_markdown() {
+        let library = copy_example_library().unwrap();
+        let library_path = library.to_string_lossy().to_string();
+        let result = (|| -> Result<(), String> {
+            let notes = load_library(library_path.clone())?;
+            assert_eq!(notes.len(), 8);
+            assert!(!notes.iter().any(|note| note.title == "Deleted note"));
+
+            let welcome = notes
+                .iter()
+                .find(|note| note.title == "Welcome to Margin")
+                .ok_or("Welcome fixture was not indexed")?;
+            assert_eq!(welcome.tags, ["welcome", "Demo"]);
+            assert!(welcome.searchable_text.contains("localfirst = true"));
+
+            let unicode = notes
+                .iter()
+                .find(|note| note.title == "Café ideas ☕")
+                .ok_or("Unicode fixture was not indexed")?;
+            assert_eq!(unicode.folder, "Personal");
+            assert!(unicode.searchable_text.contains("crème brûlée"));
+
+            let fallback = notes
+                .iter()
+                .find(|note| note.title == "No heading")
+                .ok_or("Filename title fallback was not indexed")?;
+            assert!(fallback
+                .excerpt
+                .contains("intentionally has no level-one heading"));
+
+            assert_eq!(load_trash(library_path.clone())?.len(), 1);
+            assert_eq!(
+                load_folders(library_path)?,
+                vec![
+                    "assets",
+                    "Daily",
+                    "Edge Cases",
+                    "Personal",
+                    "Work",
+                    "Work/Research",
+                ]
+            );
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn external_file_edits_are_visible_on_the_next_index() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let path = library.join("External.md");
+        fs::write(&path, "# Before\n\nOriginal text").unwrap();
+        let library_path = library.to_string_lossy().to_string();
+        assert_eq!(
+            load_library(library_path.clone()).unwrap()[0].title,
+            "Before"
+        );
+
+        fs::write(&path, "# After\n\nChanged outside Margin").unwrap();
+        let indexed = load_library(library_path).unwrap();
+        assert_eq!(indexed[0].title, "After");
+        assert!(indexed[0]
+            .searchable_text
+            .contains("changed outside margin"));
+
+        fs::remove_dir_all(&library).ok();
+    }
+
+    #[test]
+    fn native_index_watches_changes_and_reconciles_on_demand() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let path = library.join("Watched.md");
+        fs::write(&path, "# Before\n\nOriginal text").unwrap();
+        let index = LibraryIndex::new();
+        let library_path = library.to_string_lossy().to_string();
+
+        assert_eq!(
+            index.snapshot(&library_path, false).unwrap().notes[0].title,
+            "Before"
+        );
+        fs::write(&path, "# After\n\nChanged outside Margin").unwrap();
+
+        let mut watched_title = String::new();
+        for _ in 0..30 {
+            thread::sleep(Duration::from_millis(100));
+            watched_title = index.snapshot(&library_path, false).unwrap().notes[0]
+                .title
+                .clone();
+            if watched_title == "After" {
+                break;
+            }
+        }
+        assert_eq!(watched_title, "After");
+
+        fs::write(&path, "# Reconciled\n\nExplicit refresh").unwrap();
+        assert_eq!(
+            index.snapshot(&library_path, true).unwrap().notes[0].title,
+            "Reconciled"
+        );
+        fs::remove_dir_all(&library).ok();
+    }
+
+    #[test]
+    fn native_search_and_backlinks_keep_note_bodies_out_of_snapshot_payloads() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let result = (|| -> Result<(), String> {
+            fs::write(
+                library.join("Project.md"),
+                format!(
+                    "# Project\n\n{} alpine architecture.",
+                    "Background ".repeat(40)
+                ),
+            )
+            .map_err(|error| error.to_string())?;
+            fs::write(
+                library.join("Reference.md"),
+                "# Reference\n\nSee [[Project]] for the next milestone.",
+            )
+            .map_err(|error| error.to_string())?;
+            let snapshot = build_library_snapshot(&library);
+            assert_eq!(search_snapshot(&snapshot, "alpine").len(), 1);
+            let project = snapshot
+                .notes
+                .iter()
+                .find(|note| note.title == "Project")
+                .ok_or("Project was not indexed")?;
+            assert_eq!(
+                backlinks_for_snapshot(&snapshot, &project.path, &project.title)[0].title,
+                "Reference"
+            );
+            let payload = serde_json::to_value(&snapshot).map_err(|error| error.to_string())?;
+            assert!(!payload.to_string().contains("alpine architecture"));
+            assert!(!payload.to_string().contains("searchable_text"));
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+}
