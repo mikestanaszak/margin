@@ -24,13 +24,7 @@
 .preview .hljs-built_in, .preview .hljs-type { color: #79c0ff; }
 
 .table-editor-grid td input { padding-right: 9px; }
-.table-editor-grid th > button, .table-row-action button { position: absolute; width: 19px; height: 19px; padding: 0; color: var(--faint); background: transparent; border: 0; border-radius: 4px; font-size: 14px; line-height: 1; }
-.table-editor-grid th > button { top: 7px; right: 5px; }
-.table-editor-grid th > button:hover, .table-row-action button:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
-.table-row-action { position: relative; width: 29px; min-width: 29px !important; background: var(--surface-soft); }
-.table-row-action button { top: 6px; left: 5px; }
 .table-editor-actions button { padding: 7px 9px; }
-.table-editor-actions button:first-child, .table-editor-actions button:nth-child(2) { color: var(--accent-strong); }
 .table-editor-grid .table-drag-column { width: 31px; min-width: 31px !important; padding: 0; background: var(--surface-soft); }
 .table-editor-grid th:not(.table-drag-column) { position: relative; }
 .table-editor-grid th:not(.table-drag-column) input { padding-left: 31px; padding-right: 54px; }

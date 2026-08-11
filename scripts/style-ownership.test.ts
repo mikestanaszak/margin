@@ -16,11 +16,25 @@ describe("style ownership", () => {
     expect(library).toContain(".sidebar");
     expect(preview).toContain(".preview");
     expect(preview).toContain(".table-editor-grid");
-    expect(preview).toContain(".preview .hljs-keyword");
-    expect(preview).toContain(".table-column-actions");
-    expect(preview).toContain(".table-drag-handle");
     expect(settings).toContain(".settings-dialog");
     expect(settings).not.toContain(".table-editor-dialog");
-    expect(app).toContain(".compare");
+  });
+
+  test("preserves the final-effective feature declarations", () => {
+    const app = readStyle("src/app/app.css");
+    const preview = readStyle("src/features/preview/preview.css");
+
+    expect(preview).toContain(
+      ".preview .hljs-keyword, .preview .hljs-selector-tag, .preview .hljs-literal { color: #ff7b72; }",
+    );
+    expect(preview).toContain(
+      ".table-column-actions { position: absolute; top: 6px; right: 4px; display: flex; gap: 1px; }",
+    );
+    expect(preview).toContain(
+      ".table-row-action { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 29px; min-width: 29px !important; padding: 3px 0 !important; background: var(--surface-soft); }",
+    );
+    expect(preview.match(/\.table-row-action \{/g)).toHaveLength(1);
+    expect(preview).toContain(".table-row-action button { position: static; }");
+    expect(app).toContain(".compare { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }");
   });
 });
