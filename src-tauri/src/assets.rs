@@ -9,7 +9,7 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
-pub(crate) fn markdown_asset_directory(path: &Path) -> Option<PathBuf> {
+fn markdown_asset_directory(path: &Path) -> Option<PathBuf> {
     let canonical = fs::canonicalize(path).ok()?;
     if canonical.is_file() && is_markdown_path(&canonical) {
         canonical.parent().map(Path::to_path_buf)
@@ -65,7 +65,7 @@ pub(crate) fn is_managed_note_asset_directory(path: &Path) -> bool {
 
 const MAX_IMAGE_BYTES: usize = 25 * 1024 * 1024;
 
-pub(crate) fn image_extension(bytes: &[u8]) -> Option<&'static str> {
+fn image_extension(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
         Some("png")
     } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
@@ -181,7 +181,7 @@ pub(crate) fn move_note_assets(
     fs::rename(source_assets, destination_assets).map_err(|error| error.to_string())
 }
 
-pub(crate) fn copy_asset_directory(source: &Path, destination: &Path) -> Result<(), String> {
+fn copy_asset_directory(source: &Path, destination: &Path) -> Result<(), String> {
     fs::create_dir(destination).map_err(|error| error.to_string())?;
     for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
@@ -233,7 +233,7 @@ pub(crate) fn move_note_and_assets(
     Ok(())
 }
 
-pub(crate) fn unique_asset_path(directory: &Path, stem: &str, extension: &str) -> PathBuf {
+fn unique_asset_path(directory: &Path, stem: &str, extension: &str) -> PathBuf {
     let base = safe_file_stem(stem);
     let base = if base.is_empty() { "image" } else { &base };
     let mut number = 0;
@@ -251,7 +251,7 @@ pub(crate) fn unique_asset_path(directory: &Path, stem: &str, extension: &str) -
     }
 }
 
-pub(crate) fn store_note_image(
+fn store_note_image(
     library: &Path,
     note: &Path,
     source_name: &str,
@@ -325,24 +325,13 @@ pub(crate) fn import_note_image_from_bytes(
 
 #[cfg(test)]
 mod tests {
-    #![allow(unused_imports)]
-
+    use super::markdown_asset_directory;
     use crate::{
-        assets::*,
-        capture::*,
-        library::*,
-        model::*,
-        notes::*,
-        paths::*,
-        test_support::{copy_example_library, temporary_library},
+        model::SaveNoteResult,
+        notes::{duplicate_note, read_note_file, save_note},
+        test_support::temporary_library,
     };
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-        thread,
-        time::Duration,
-    };
-    use walkdir::WalkDir;
+    use std::fs;
 
     #[test]
     fn markdown_assets_are_scoped_to_explicit_note_directories() {

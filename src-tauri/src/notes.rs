@@ -2,14 +2,14 @@ use crate::assets::{
     asset_directory_for_note, cleanup_unreferenced_note_assets, copy_note_assets,
     move_note_and_assets, move_note_assets, rewrite_note_asset_references,
 };
-#[cfg(test)]
-use crate::library::{load_library_contents, load_trash_contents};
-#[cfg(test)]
-use crate::model::NoteSummary;
 use crate::model::{
     FolderRenamePath, FolderRenameResult, IndexWarningKind, NoteDocument, SaveNoteResult,
 };
-use crate::paths::*;
+use crate::paths::{
+    canonical_library_root, existing_library_path, is_markdown_path, library_folder,
+    path_for_title, relative_folder_path, relative_note_id, safe_file_stem, unique_directory_path,
+    unique_path,
+};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -23,7 +23,7 @@ use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 use walkdir::WalkDir;
 
-pub(crate) enum SaveNoteFailure {
+enum SaveNoteFailure {
     Conflict(Box<NoteDocument>),
     Error(String),
 }
@@ -31,14 +31,14 @@ pub(crate) enum SaveNoteFailure {
 static TEMPORARY_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Default, Serialize, Deserialize)]
-pub(crate) struct FrontMatter {
-    pub(crate) title: Option<String>,
-    pub(crate) tags: Option<Vec<String>>,
-    pub(crate) created: Option<String>,
-    pub(crate) updated: Option<String>,
+struct FrontMatter {
+    title: Option<String>,
+    tags: Option<Vec<String>>,
+    created: Option<String>,
+    updated: Option<String>,
 }
 
-pub(crate) fn modified_seconds(path: &Path) -> u64 {
+fn modified_seconds(path: &Path) -> u64 {
     fs::metadata(path)
         .and_then(|meta| meta.modified())
         .unwrap_or(SystemTime::UNIX_EPOCH)
@@ -47,7 +47,7 @@ pub(crate) fn modified_seconds(path: &Path) -> u64 {
         .as_secs()
 }
 
-pub(crate) fn file_revision(path: &Path, contents: &str) -> String {
+fn file_revision(path: &Path, contents: &str) -> String {
     let modified = fs::metadata(path)
         .and_then(|meta| meta.modified())
         .unwrap_or(SystemTime::UNIX_EPOCH)
@@ -62,7 +62,7 @@ pub(crate) fn now_rfc3339() -> String {
     Local::now().to_rfc3339()
 }
 
-pub(crate) fn normalize_tags(tags: Vec<String>) -> Vec<String> {
+fn normalize_tags(tags: Vec<String>) -> Vec<String> {
     let mut result = Vec::new();
     for tag in tags {
         let cleaned = tag.trim();
@@ -78,7 +78,7 @@ pub(crate) fn normalize_tags(tags: Vec<String>) -> Vec<String> {
     result
 }
 
-pub(crate) fn front_matter_body(raw: &str) -> String {
+fn front_matter_body(raw: &str) -> String {
     let normalized = raw.replace("\r\n", "\n");
     if let Some(rest) = normalized.strip_prefix("---\n") {
         if let Some((_, body)) = rest.split_once("\n---\n") {
@@ -88,9 +88,7 @@ pub(crate) fn front_matter_body(raw: &str) -> String {
     normalized
 }
 
-pub(crate) fn split_front_matter_result(
-    raw: &str,
-) -> Result<(FrontMatter, String), serde_yaml::Error> {
+fn split_front_matter_result(raw: &str) -> Result<(FrontMatter, String), serde_yaml::Error> {
     let normalized = raw.replace("\r\n", "\n");
     if let Some(rest) = normalized.strip_prefix("---\n") {
         if let Some((yaml, _)) = rest.split_once("\n---\n") {
@@ -103,12 +101,12 @@ pub(crate) fn split_front_matter_result(
     Ok((FrontMatter::default(), normalized))
 }
 
-pub(crate) fn split_front_matter(raw: &str) -> (FrontMatter, String) {
+fn split_front_matter(raw: &str) -> (FrontMatter, String) {
     split_front_matter_result(raw)
         .unwrap_or_else(|_| (FrontMatter::default(), front_matter_body(raw)))
 }
 
-pub(crate) fn title_from_body(body: &str, fallback: &str) -> String {
+fn title_from_body(body: &str, fallback: &str) -> String {
     body.lines()
         .find_map(|line| {
             line.strip_prefix("# ")
@@ -145,7 +143,7 @@ pub(crate) fn note_excerpt(body: &str) -> String {
         .collect()
 }
 
-pub(crate) fn note_document_from_parts(
+fn note_document_from_parts(
     path: &Path,
     raw: &str,
     front: FrontMatter,
@@ -176,7 +174,7 @@ pub(crate) fn read_note_file(path: &Path) -> Result<NoteDocument, String> {
     Ok(note_document_from_parts(path, &raw, front, body))
 }
 
-pub(crate) fn read_library_note_file(library: &Path, path: &Path) -> Result<NoteDocument, String> {
+fn read_library_note_file(library: &Path, path: &Path) -> Result<NoteDocument, String> {
     let path = existing_library_path(library, path)?;
     let mut note = read_note_file(&path)?;
     note.id = Some(relative_note_id(library, &path)?);
@@ -318,20 +316,6 @@ pub(crate) fn rename_folder(
     })
 }
 
-#[cfg(test)]
-#[tauri::command]
-pub(crate) fn load_folders(library_path: String) -> Result<Vec<String>, String> {
-    let library = canonical_library_root(library_path)?;
-    Ok(load_library_contents(&library).1)
-}
-
-#[cfg(test)]
-#[tauri::command]
-pub(crate) fn load_trash(library_path: String) -> Result<Vec<NoteSummary>, String> {
-    let library = canonical_library_root(library_path)?;
-    Ok(load_trash_contents(&library, &mut Vec::new()))
-}
-
 #[tauri::command]
 pub(crate) fn restore_note_from_trash(
     path: String,
@@ -385,7 +369,7 @@ pub(crate) fn delete_note_permanently(path: String, library_path: String) -> Res
     Ok(())
 }
 
-pub(crate) fn unique_temporary_path(path: &Path) -> PathBuf {
+fn unique_temporary_path(path: &Path) -> PathBuf {
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -404,22 +388,22 @@ pub(crate) fn unique_temporary_path(path: &Path) -> PathBuf {
 }
 
 #[derive(Debug)]
-pub(crate) struct LinkRewrite {
-    pub(crate) path: PathBuf,
-    pub(crate) content: String,
+struct LinkRewrite {
+    path: PathBuf,
+    content: String,
 }
 
 #[derive(Debug)]
-pub(crate) struct StagedFileUpdate {
-    pub(crate) target: PathBuf,
-    pub(crate) replacement: PathBuf,
-    pub(crate) backup: PathBuf,
-    pub(crate) applied: bool,
+struct StagedFileUpdate {
+    target: PathBuf,
+    replacement: PathBuf,
+    backup: PathBuf,
+    applied: bool,
 }
 
 /// Returns the byte offset immediately after YAML front matter, so link repair
 /// never alters a note's metadata values.
-pub(crate) fn markdown_body_offset(content: &str) -> usize {
+fn markdown_body_offset(content: &str) -> usize {
     let mut offset = 0;
     let mut first_line = true;
     while offset < content.len() {
@@ -442,7 +426,7 @@ pub(crate) fn markdown_body_offset(content: &str) -> usize {
     0
 }
 
-pub(crate) fn normalize_relative_path(path: &Path) -> PathBuf {
+fn normalize_relative_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         use std::path::Component;
@@ -457,7 +441,7 @@ pub(crate) fn normalize_relative_path(path: &Path) -> PathBuf {
     normalized
 }
 
-pub(crate) fn relative_markdown_path(from_file: &Path, target: &Path) -> Option<String> {
+fn relative_markdown_path(from_file: &Path, target: &Path) -> Option<String> {
     let from = from_file.parent()?;
     let from_parts: Vec<_> = from
         .components()
@@ -491,7 +475,7 @@ pub(crate) fn relative_markdown_path(from_file: &Path, target: &Path) -> Option<
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
-pub(crate) fn is_rewritable_relative_markdown_target(target: &str) -> bool {
+fn is_rewritable_relative_markdown_target(target: &str) -> bool {
     let path = target.trim();
     if path.is_empty()
         || path != target
@@ -506,12 +490,7 @@ pub(crate) fn is_rewritable_relative_markdown_target(target: &str) -> bool {
     is_markdown_path(Path::new(path))
 }
 
-pub(crate) fn rewrite_markdown_links(
-    body: &str,
-    source: &Path,
-    old_path: &Path,
-    new_path: &Path,
-) -> String {
+fn rewrite_markdown_links(body: &str, source: &Path, old_path: &Path, new_path: &Path) -> String {
     let source_parent = match source.parent() {
         Some(parent) => parent,
         None => return body.to_string(),
@@ -565,7 +544,7 @@ pub(crate) fn rewrite_markdown_links(
     output
 }
 
-pub(crate) fn plan_link_rewrites(
+fn plan_link_rewrites(
     library: &Path,
     old_path: &Path,
     new_path: &Path,
@@ -596,7 +575,7 @@ pub(crate) fn plan_link_rewrites(
 
 /// Removes a completed transaction's temporary files after every replacement
 /// has either committed or been successfully restored.
-pub(crate) fn discard_staged_file_updates(updates: &[StagedFileUpdate]) {
+fn discard_staged_file_updates(updates: &[StagedFileUpdate]) {
     for update in updates {
         let _ = fs::remove_file(&update.replacement);
         let _ = fs::remove_file(&update.backup);
@@ -605,7 +584,7 @@ pub(crate) fn discard_staged_file_updates(updates: &[StagedFileUpdate]) {
 
 /// A failed restore must retain its backup: it is the user's only recoverable
 /// copy of the original note. The caller receives that path in the error.
-pub(crate) fn cleanup_after_rollback(updates: &[StagedFileUpdate]) {
+fn cleanup_after_rollback(updates: &[StagedFileUpdate]) {
     for update in updates {
         let _ = fs::remove_file(&update.replacement);
         if !update.applied {
@@ -614,9 +593,7 @@ pub(crate) fn cleanup_after_rollback(updates: &[StagedFileUpdate]) {
     }
 }
 
-pub(crate) fn stage_file_updates(
-    rewrites: Vec<LinkRewrite>,
-) -> Result<Vec<StagedFileUpdate>, String> {
+fn stage_file_updates(rewrites: Vec<LinkRewrite>) -> Result<Vec<StagedFileUpdate>, String> {
     let mut updates = Vec::with_capacity(rewrites.len());
     for rewrite in rewrites {
         let original = match fs::read(&rewrite.path) {
@@ -646,7 +623,7 @@ pub(crate) fn stage_file_updates(
     Ok(updates)
 }
 
-pub(crate) fn rollback_staged_file_updates(
+fn rollback_staged_file_updates(
     updates: &mut [StagedFileUpdate],
     fail_restore_for_index: Option<usize>,
 ) -> Result<(), String> {
@@ -683,7 +660,7 @@ pub(crate) fn rollback_staged_file_updates(
 /// Replacements are all staged before the first file changes. If any commit
 /// fails, every already-applied replacement is restored from its same-folder
 /// backup before the error reaches the caller.
-pub(crate) fn apply_staged_file_updates(
+fn apply_staged_file_updates(
     updates: &mut [StagedFileUpdate],
     fail_before_index: Option<usize>,
     fail_restore_for_index: Option<usize>,
@@ -716,7 +693,7 @@ pub(crate) fn apply_staged_file_updates(
     Ok(())
 }
 
-pub(crate) fn rename_file_safely(source: &Path, destination: &Path) -> Result<(), String> {
+fn rename_file_safely(source: &Path, destination: &Path) -> Result<(), String> {
     if source == destination {
         return Ok(());
     }
@@ -737,7 +714,7 @@ pub(crate) fn rename_file_safely(source: &Path, destination: &Path) -> Result<()
     Ok(())
 }
 
-pub(crate) fn save_note_checked(
+fn save_note_checked(
     note: NoteDocument,
     library: Option<&Path>,
 ) -> Result<NoteDocument, SaveNoteFailure> {
@@ -882,11 +859,7 @@ pub(crate) fn save_note(note: NoteDocument, library_path: String) -> SaveNoteRes
 
 #[cfg(test)]
 #[tauri::command]
-pub(crate) fn rename_note(
-    path: String,
-    name: String,
-    library_path: String,
-) -> Result<NoteDocument, String> {
+fn rename_note(path: String, name: String, library_path: String) -> Result<NoteDocument, String> {
     let library = canonical_library_root(library_path)?;
     let path = existing_library_path(&library, path)?;
     if !is_markdown_path(&path) {
@@ -1067,24 +1040,59 @@ pub(crate) fn move_folder_to_trash(folder: String, library_path: String) -> Resu
 
 #[cfg(test)]
 mod tests {
-    #![allow(unused_imports)]
-
+    use super::{
+        apply_staged_file_updates, body_with_title, create_folder, create_note,
+        delete_note_permanently, duplicate_note, import_markdown_file, move_folder_to_trash,
+        move_note_to_folder, move_note_to_trash, normalize_tags, read_library_note_file,
+        read_note_file, rename_file_safely, rename_folder, rename_note, restore_note_from_trash,
+        save_note, save_note_document, split_front_matter, stage_file_updates, LinkRewrite,
+    };
+    #[cfg(unix)]
+    use crate::library::load_library;
     use crate::{
-        assets::*,
-        capture::*,
-        library::*,
-        model::*,
-        notes::*,
-        paths::*,
+        model::SaveNoteResult,
+        paths::{
+            existing_library_path, library_folder, path_for_title, relative_note_id, safe_file_stem,
+        },
         test_support::{copy_example_library, temporary_library},
     };
     use std::{
         fs,
         path::{Path, PathBuf},
-        thread,
-        time::Duration,
     };
-    use walkdir::WalkDir;
+
+    #[test]
+    fn metadata_and_portable_filenames_handle_edge_cases() {
+        assert_eq!(
+            normalize_tags(vec![
+                " Work ".into(),
+                "work".into(),
+                "".into(),
+                "\u{00e9}".repeat(65),
+                "Planning".into(),
+            ]),
+            ["Work", "Planning"]
+        );
+        assert_eq!(safe_file_stem("  plan: launch?  "), "plan- launch-");
+        assert_eq!(safe_file_stem("CON"), "Note-CON");
+        assert_eq!(safe_file_stem("con.txt"), "Note-con.txt");
+        assert_eq!(safe_file_stem("e\u{301}"), "\u{00e9}");
+        assert_eq!(safe_file_stem("A\u{0000}B"), "A-B");
+        assert_eq!(safe_file_stem("..."), "Untitled");
+        let long_name = safe_file_stem(&"\u{00e9}".repeat(200));
+        assert!(long_name.len() <= 240);
+        assert!(long_name.is_char_boundary(long_name.len()));
+        assert_eq!(
+            body_with_title("Intro only\n", "Named"),
+            "# Named\n\nIntro only\n"
+        );
+        assert_eq!(body_with_title("# Old\n\nBody", "New"), "# New\n\nBody");
+
+        let raw = "---\r\ntags: [one, two]\r\n---\r\n\r\n# Windows newlines\r\n";
+        let (front, body) = split_front_matter(raw);
+        assert_eq!(front.tags.unwrap(), ["one", "two"]);
+        assert_eq!(body, "# Windows newlines\n");
+    }
 
     #[test]
     fn parses_multiple_tags_and_excludes_separator_blank_line() {
@@ -1153,11 +1161,23 @@ mod tests {
                 .join("Project archive.md")
                 .exists());
 
-            let indexed = load_library(library_path)?;
-            assert_eq!(indexed.len(), 2);
-            assert!(indexed
-                .iter()
-                .any(|item| item.title == "Project plan" && item.tags == ["work", "planning"]));
+            let indexed = fs::read_dir(&library)
+                .map_err(|error| error.to_string())?
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry.path().is_file()
+                        && entry
+                            .path()
+                            .extension()
+                            .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+                })
+                .count();
+            assert_eq!(indexed, 2);
+            let library_root = fs::canonicalize(&library).map_err(|error| error.to_string())?;
+            let project =
+                read_library_note_file(&library_root, &library_root.join("Project plan.md"))?;
+            assert_eq!(project.title, "Project plan");
+            assert_eq!(project.tags, ["work", "planning"]);
             Ok(())
         })();
 
@@ -1223,14 +1243,8 @@ mod tests {
                 "{}",
                 saved.path
             );
-            assert_eq!(
-                load_folders(library_path.clone())?,
-                vec!["Work", "Work/Planning"]
-            );
-            assert_eq!(
-                load_library(library_path.clone())?[0].folder,
-                "Work/Planning"
-            );
+            assert!(library.join("Work").is_dir());
+            assert!(library.join("Work").join("Planning").is_dir());
 
             let renamed_folder = rename_folder(
                 "Work/Planning".into(),
@@ -1258,16 +1272,19 @@ mod tests {
                 .ends_with(Path::new("Triage").join("Triage item.md")));
 
             move_note_to_trash(saved.path, library_path.clone())?;
-            assert!(library
+            let trashed_path = library
                 .join(".markdown-notes")
                 .join("trash")
                 .join("Work")
                 .join("Roadmap")
-                .join("Sprint.md")
-                .exists());
-            let deleted = load_trash(library_path.clone())?;
-            assert_eq!(deleted.len(), 1);
-            let restored = restore_note_from_trash(deleted[0].path.clone(), library_path.clone())?;
+                .join("Sprint.md");
+            assert!(trashed_path.exists());
+            let trashed_path =
+                fs::canonicalize(&trashed_path).map_err(|error| error.to_string())?;
+            let restored = restore_note_from_trash(
+                trashed_path.to_string_lossy().to_string(),
+                library_path.clone(),
+            )?;
             assert!(
                 PathBuf::from(&restored.path)
                     .ends_with(Path::new("Work").join("Roadmap").join("Sprint.md")),
@@ -1275,9 +1292,14 @@ mod tests {
                 restored.path
             );
             move_note_to_trash(restored.path, library_path.clone())?;
-            let deleted_again = load_trash(library_path.clone())?;
-            delete_note_permanently(deleted_again[0].path.clone(), library_path.clone())?;
-            assert!(load_trash(library_path.clone())?.is_empty());
+            assert!(trashed_path.exists());
+            let trashed_path =
+                fs::canonicalize(&trashed_path).map_err(|error| error.to_string())?;
+            delete_note_permanently(
+                trashed_path.to_string_lossy().to_string(),
+                library_path.clone(),
+            )?;
+            assert!(!trashed_path.exists());
 
             create_folder(library_path.clone(), "Archive/Completed".into())?;
             let mut archived = create_note(library_path.clone(), Some("Archive/Completed".into()))?;
@@ -1656,8 +1678,13 @@ mod tests {
 
             fs::write(library.join("Deleted note.md"), "# Existing deletion\n")
                 .map_err(|error| error.to_string())?;
-            let trashed = load_trash(library_path.clone())?;
-            let restored = restore_note_from_trash(trashed[0].path.clone(), library_path)?;
+            let trashed = library
+                .join(".markdown-notes")
+                .join("trash")
+                .join("Deleted note.md");
+            let trashed = fs::canonicalize(trashed).map_err(|error| error.to_string())?;
+            let restored =
+                restore_note_from_trash(trashed.to_string_lossy().to_string(), library_path)?;
             assert!(restored.path.ends_with("Deleted note-1.md"));
             Ok(())
         })();

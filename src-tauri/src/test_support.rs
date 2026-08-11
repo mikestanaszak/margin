@@ -5,7 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub(crate) static TEMP_LIBRARY_COUNTER: AtomicU64 = AtomicU64::new(0);
+static TEMP_LIBRARY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn temporary_library() -> PathBuf {
     std::env::temp_dir().join(format!(
@@ -18,7 +18,7 @@ pub(crate) fn temporary_library() -> PathBuf {
     ))
 }
 
-pub(crate) fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
+fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
     fs::create_dir_all(destination).map_err(|error| error.to_string())?;
     for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;

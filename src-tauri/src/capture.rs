@@ -132,24 +132,15 @@ pub(crate) fn import_daily_note_to_new_note(
 
 #[cfg(test)]
 mod tests {
-    #![allow(unused_imports)]
-
+    use super::{append_quick_note, import_daily_note, import_daily_note_to_new_note};
     use crate::{
-        assets::*,
-        capture::*,
-        library::*,
-        model::*,
-        notes::*,
-        paths::*,
-        test_support::{copy_example_library, temporary_library},
+        notes::{create_note, save_note_document},
+        test_support::temporary_library,
     };
     use std::{
         fs,
         path::{Path, PathBuf},
-        thread,
-        time::Duration,
     };
-    use walkdir::WalkDir;
 
     #[test]
     fn quick_captures_append_to_daily_note_and_import_to_a_log() {

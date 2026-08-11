@@ -74,7 +74,7 @@ pub(crate) fn existing_library_path(
     Ok(canonical)
 }
 
-pub(crate) fn library_path_for_relative(library: &Path, relative: &str) -> Result<PathBuf, String> {
+fn library_path_for_relative(library: &Path, relative: &str) -> Result<PathBuf, String> {
     let candidate = Path::new(relative.trim());
     if candidate.as_os_str().is_empty() {
         return Ok(library.to_path_buf());
@@ -141,9 +141,9 @@ pub(crate) fn unique_path(parent: &Path, stem: &str) -> PathBuf {
     }
 }
 
-pub(crate) const MAX_FILE_STEM_BYTES: usize = 240;
+const MAX_FILE_STEM_BYTES: usize = 240;
 
-pub(crate) fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value.to_string();
     }
@@ -236,60 +236,5 @@ pub(crate) fn unique_directory_path(requested: &Path) -> Result<PathBuf, String>
             return Ok(candidate);
         }
         number += 1;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #![allow(unused_imports)]
-
-    use crate::{
-        assets::*,
-        capture::*,
-        library::*,
-        model::*,
-        notes::*,
-        paths::*,
-        test_support::{copy_example_library, temporary_library},
-    };
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-        thread,
-        time::Duration,
-    };
-    use walkdir::WalkDir;
-
-    #[test]
-    fn metadata_and_portable_filenames_handle_edge_cases() {
-        assert_eq!(
-            normalize_tags(vec![
-                " Work ".into(),
-                "work".into(),
-                "".into(),
-                "é".repeat(65),
-                "Planning".into(),
-            ]),
-            ["Work", "Planning"]
-        );
-        assert_eq!(safe_file_stem("  plan: launch?  "), "plan- launch-");
-        assert_eq!(safe_file_stem("CON"), "Note-CON");
-        assert_eq!(safe_file_stem("con.txt"), "Note-con.txt");
-        assert_eq!(safe_file_stem("e\u{301}"), "\u{00e9}");
-        assert_eq!(safe_file_stem("A\u{0000}B"), "A-B");
-        assert_eq!(safe_file_stem("..."), "Untitled");
-        let long_name = safe_file_stem(&"\u{00e9}".repeat(200));
-        assert!(long_name.len() <= 240);
-        assert!(long_name.is_char_boundary(long_name.len()));
-        assert_eq!(
-            body_with_title("Intro only\n", "Named"),
-            "# Named\n\nIntro only\n"
-        );
-        assert_eq!(body_with_title("# Old\n\nBody", "New"), "# New\n\nBody");
-
-        let raw = "---\r\ntags: [one, two]\r\n---\r\n\r\n# Windows newlines\r\n";
-        let (front, body) = split_front_matter(raw);
-        assert_eq!(front.tags.unwrap(), ["one", "two"]);
-        assert_eq!(body, "# Windows newlines\n");
     }
 }

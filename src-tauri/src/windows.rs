@@ -25,7 +25,7 @@ struct CaptureShortcutState {
 /// modifying the user's source file.
 struct OpenedMarkdownFiles(Mutex<Vec<String>>);
 
-pub(crate) fn markdown_file_paths<I>(paths: I) -> Vec<String>
+fn markdown_file_paths<I>(paths: I) -> Vec<String>
 where
     I: IntoIterator<Item = PathBuf>,
 {
@@ -45,7 +45,7 @@ where
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn queue_opened_markdown_files(app: &AppHandle, paths: Vec<String>) {
+fn queue_opened_markdown_files(app: &AppHandle, paths: Vec<String>) {
     if paths.is_empty() {
         return;
     }
@@ -80,7 +80,7 @@ pub(crate) fn default_capture_shortcut() -> Shortcut {
     Shortcut::new(Some(modifiers), Code::Space)
 }
 
-pub(crate) fn show_capture_window(app: &AppHandle) -> Result<(), String> {
+fn show_capture_window(app: &AppHandle) -> Result<(), String> {
     let capture = app
         .get_webview_window("capture")
         .ok_or("Quick capture window is unavailable")?;
@@ -105,7 +105,7 @@ pub(crate) fn show_capture_window(app: &AppHandle) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn show_main_window(app: &AppHandle) -> Result<(), String> {
+fn show_main_window(app: &AppHandle) -> Result<(), String> {
     let main = app
         .get_webview_window("main")
         .ok_or("Margin window is unavailable")?;
@@ -114,7 +114,7 @@ pub(crate) fn show_main_window(app: &AppHandle) -> Result<(), String> {
     main.set_focus().map_err(|error| error.to_string())
 }
 
-pub(crate) fn selected_library_file(app: &AppHandle) -> Result<PathBuf, String> {
+fn selected_library_file(app: &AppHandle) -> Result<PathBuf, String> {
     let directory = app
         .path()
         .app_data_dir()

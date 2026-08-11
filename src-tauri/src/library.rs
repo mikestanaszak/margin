@@ -38,11 +38,7 @@ impl LibraryIndex {
         Self(Mutex::new(None))
     }
 
-    pub(crate) fn snapshot(
-        &self,
-        library_path: &str,
-        force: bool,
-    ) -> Result<LibrarySnapshot, String> {
+    fn snapshot(&self, library_path: &str, force: bool) -> Result<LibrarySnapshot, String> {
         let requested = PathBuf::from(library_path);
         let library = fs::canonicalize(&requested)
             .map_err(|error| format!("Could not open the selected library: {error}"))?;
@@ -67,7 +63,7 @@ impl LibraryIndex {
     }
 }
 
-pub(crate) fn build_library_snapshot(library: &Path) -> LibrarySnapshot {
+fn build_library_snapshot(library: &Path) -> LibrarySnapshot {
     let Ok(library) = fs::canonicalize(library) else {
         return LibrarySnapshot {
             notes: Vec::new(),
@@ -106,7 +102,7 @@ fn index_library(library: &Path) -> Result<IndexedLibrary, String> {
     })
 }
 
-pub(crate) fn note_summary(note: NoteDocument, library: &Path) -> NoteSummary {
+fn note_summary(note: NoteDocument, library: &Path) -> NoteSummary {
     let folder = folder_for_path(library, Path::new(&note.path));
     NoteSummary {
         id: note.id.unwrap_or_else(|| {
@@ -132,18 +128,14 @@ pub(crate) fn note_summary(note: NoteDocument, library: &Path) -> NoteSummary {
     }
 }
 
-pub(crate) fn push_index_warning(
-    warnings: &mut Vec<IndexWarning>,
-    path: &Path,
-    kind: IndexWarningKind,
-) {
+fn push_index_warning(warnings: &mut Vec<IndexWarning>, path: &Path, kind: IndexWarningKind) {
     warnings.push(IndexWarning {
         path: path.to_string_lossy().to_string(),
         kind,
     });
 }
 
-pub(crate) fn collect_library_entry(
+fn collect_library_entry(
     library: &Path,
     entry: Result<walkdir::DirEntry, walkdir::Error>,
     notes: &mut Vec<NoteSummary>,
@@ -184,9 +176,7 @@ pub(crate) fn collect_library_entry(
     }
 }
 
-pub(crate) fn load_library_contents(
-    library: &Path,
-) -> (Vec<NoteSummary>, Vec<String>, Vec<IndexWarning>) {
+fn load_library_contents(library: &Path) -> (Vec<NoteSummary>, Vec<String>, Vec<IndexWarning>) {
     let mut notes = Vec::new();
     let mut folders = Vec::new();
     let mut warnings = Vec::new();
@@ -221,7 +211,7 @@ pub(crate) fn load_library_snapshot(
     library_index.snapshot(&library_path, force.unwrap_or(false))
 }
 
-pub(crate) fn wiki_targets(text: &str) -> Vec<&str> {
+fn wiki_targets(text: &str) -> Vec<&str> {
     let mut targets = Vec::new();
     let mut remaining = text;
     while let Some(start) = remaining.find("[[") {
@@ -264,7 +254,7 @@ pub(crate) fn find_backlinks(
     ))
 }
 
-pub(crate) fn search_snapshot(snapshot: &LibrarySnapshot, query: &str) -> Vec<NoteSummary> {
+fn search_snapshot(snapshot: &LibrarySnapshot, query: &str) -> Vec<NoteSummary> {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return Vec::new();
@@ -277,7 +267,7 @@ pub(crate) fn search_snapshot(snapshot: &LibrarySnapshot, query: &str) -> Vec<No
         .collect()
 }
 
-pub(crate) fn backlinks_for_snapshot(
+fn backlinks_for_snapshot(
     snapshot: &LibrarySnapshot,
     note_path: &str,
     title: &str,
@@ -296,10 +286,7 @@ pub(crate) fn backlinks_for_snapshot(
         .collect()
 }
 
-pub(crate) fn load_trash_contents(
-    library: &Path,
-    warnings: &mut Vec<IndexWarning>,
-) -> Vec<NoteSummary> {
+fn load_trash_contents(library: &Path, warnings: &mut Vec<IndexWarning>) -> Vec<NoteSummary> {
     let trash = library.join(".markdown-notes").join("trash");
     if !trash.exists() {
         return Vec::new();
@@ -342,23 +329,15 @@ pub(crate) fn load_trash_contents(
 
 #[cfg(test)]
 mod tests {
-    #![allow(unused_imports)]
-
+    use super::{
+        backlinks_for_snapshot, build_library_snapshot, collect_library_entry, load_library,
+        search_snapshot, LibraryIndex,
+    };
     use crate::{
-        assets::*,
-        capture::*,
-        library::*,
-        model::*,
-        notes::*,
-        paths::*,
+        model::IndexWarningKind,
         test_support::{copy_example_library, temporary_library},
     };
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-        thread,
-        time::Duration,
-    };
+    use std::{fs, thread, time::Duration};
     use walkdir::WalkDir;
 
     #[test]
@@ -484,9 +463,9 @@ mod tests {
     #[test]
     fn example_library_indexes_realistic_portable_markdown() {
         let library = copy_example_library().unwrap();
-        let library_path = library.to_string_lossy().to_string();
         let result = (|| -> Result<(), String> {
-            let notes = load_library(library_path.clone())?;
+            let snapshot = build_library_snapshot(&library);
+            let notes = &snapshot.notes;
             assert_eq!(notes.len(), 8);
             assert!(!notes.iter().any(|note| note.title == "Deleted note"));
 
@@ -512,9 +491,9 @@ mod tests {
                 .excerpt
                 .contains("intentionally has no level-one heading"));
 
-            assert_eq!(load_trash(library_path.clone())?.len(), 1);
+            assert_eq!(snapshot.trash.len(), 1);
             assert_eq!(
-                load_folders(library_path)?,
+                snapshot.folders,
                 vec![
                     "assets",
                     "Daily",
