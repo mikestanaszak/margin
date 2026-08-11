@@ -1,6 +1,9 @@
 use crate::assets::is_managed_note_asset_directory;
 use crate::model::{IndexWarning, IndexWarningKind, LibrarySnapshot, NoteDocument, NoteSummary};
-use crate::notes::{note_excerpt, read_library_note_file_for_index};
+use crate::notes::{
+    note_excerpt, note_ids_match, read_library_note_file_for_index,
+    resolve_relative_markdown_target,
+};
 #[cfg(test)]
 use crate::paths::canonical_library_root;
 use crate::paths::{folder_for_path, is_markdown_path, relative_note_id};
@@ -133,8 +136,7 @@ fn note_summary(note: NoteDocument, library: &Path) -> NoteSummary {
                 .unwrap_or(""),
             note.tags.join(" "),
             note.body
-        )
-        .to_lowercase(),
+        ),
         excerpt: note_excerpt(&note.body),
         path: note.path,
         title: note.title,
@@ -227,7 +229,13 @@ pub(crate) fn load_library_snapshot(
     library_index.snapshot(&library_path, force.unwrap_or(false))
 }
 
-fn wiki_targets(text: &str) -> Vec<&str> {
+#[derive(Debug, PartialEq, Eq)]
+enum LinkTarget {
+    Wiki(String),
+    Markdown(String),
+}
+
+fn link_targets(text: &str) -> Vec<LinkTarget> {
     let mut targets = Vec::new();
     let mut remaining = text;
     while let Some(start) = remaining.find("[[") {
@@ -237,9 +245,38 @@ fn wiki_targets(text: &str) -> Vec<&str> {
         };
         let target = after_start[..end].split('|').next().unwrap_or("").trim();
         if !target.is_empty() {
-            targets.push(target);
+            targets.push(LinkTarget::Wiki(target.to_string()));
         }
         remaining = &after_start[end + 2..];
+    }
+
+    let mut fenced = false;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+
+        let mut cursor = 0;
+        while let Some(marker_offset) = line[cursor..].find("](") {
+            let marker = cursor + marker_offset;
+            let target_start = marker + 2;
+            let Some(close_offset) = line[target_start..].find(')') else {
+                break;
+            };
+            let target_end = target_start + close_offset;
+            if line[..marker].matches('`').count() % 2 == 0 {
+                let target = &line[target_start..target_end];
+                if !target.is_empty() {
+                    targets.push(LinkTarget::Markdown(target.to_string()));
+                }
+            }
+            cursor = target_end + 1;
+        }
     }
     targets
 }
@@ -320,7 +357,7 @@ fn search_snapshot(
                 250
             } else if tags.iter().any(|tag| tag.contains(&query)) {
                 200
-            } else if note.searchable_text.contains(&query) {
+            } else if note.searchable_text.to_lowercase().contains(&query) {
                 100
             } else {
                 return None;
@@ -346,15 +383,41 @@ fn backlinks_for_snapshot(
     note_path: &str,
     title: &str,
 ) -> Vec<NoteSummary> {
-    let target = title.to_lowercase();
+    fn unique_title_target<'a>(snapshot: &'a LibrarySnapshot, title: &str) -> Option<&'a str> {
+        let title = title.to_lowercase();
+        let mut matches = snapshot
+            .notes
+            .iter()
+            .filter(|note| note.title.to_lowercase() == title);
+        let target = matches.next()?;
+        matches.next().is_none().then_some(target.id.as_str())
+    }
+
+    let target_id = snapshot
+        .notes
+        .iter()
+        .find(|note| note_ids_match(&note.path, note_path) || note_ids_match(&note.id, note_path))
+        .map(|note| note.id.as_str())
+        .or_else(|| unique_title_target(snapshot, title));
+    let Some(target_id) = target_id else {
+        return Vec::new();
+    };
+
     snapshot
         .notes
         .iter()
         .filter(|item| {
-            item.path != note_path
-                && wiki_targets(&item.searchable_text)
+            !note_ids_match(&item.id, target_id)
+                && link_targets(&item.searchable_text)
                     .iter()
-                    .any(|link| link.to_lowercase() == target)
+                    .any(|link| match link {
+                        LinkTarget::Wiki(target) => unique_title_target(snapshot, target)
+                            .is_some_and(|resolved| note_ids_match(resolved, target_id)),
+                        LinkTarget::Markdown(target) => {
+                            resolve_relative_markdown_target(&item.id, target)
+                                .is_some_and(|resolved| note_ids_match(&resolved, target_id))
+                        }
+                    })
         })
         .cloned()
         .collect()
@@ -427,7 +490,7 @@ mod tests {
             title: title.to_string(),
             tags: tags.iter().map(|tag| (*tag).to_string()).collect(),
             updated,
-            searchable_text: format!("{title} {path} {} {body}", tags.join(" ")).to_lowercase(),
+            searchable_text: format!("{title} {path} {} {body}", tags.join(" ")),
             excerpt: body.to_string(),
             folder: String::new(),
         }
@@ -682,7 +745,10 @@ mod tests {
                 .find(|note| note.title == "Welcome to Margin")
                 .ok_or("Welcome fixture was not indexed")?;
             assert_eq!(welcome.tags, ["welcome", "Demo"]);
-            assert!(welcome.searchable_text.contains("localfirst = true"));
+            assert!(welcome
+                .searchable_text
+                .to_lowercase()
+                .contains("localfirst = true"));
 
             let unicode = notes
                 .iter()
@@ -734,6 +800,7 @@ mod tests {
         assert_eq!(indexed[0].title, "After");
         assert!(indexed[0]
             .searchable_text
+            .to_lowercase()
             .contains("changed outside margin"));
 
         fs::remove_dir_all(&library).ok();
@@ -816,5 +883,129 @@ mod tests {
         })();
         fs::remove_dir_all(&library).ok();
         result.unwrap();
+    }
+
+    #[test]
+    fn backlinks_include_resolved_markdown_and_wiki_links() {
+        let snapshot = LibrarySnapshot {
+            notes: vec![
+                searchable_note("Work/Alpha.md", "Alpha", &[], "Target note", 10),
+                searchable_note(
+                    "Reference/Markdown.md",
+                    "Markdown reference",
+                    &[],
+                    "See [Alpha](../Work/Alpha.md).",
+                    20,
+                ),
+                searchable_note(
+                    "Reference/Wiki.md",
+                    "Wiki reference",
+                    &[],
+                    "See [[Alpha]].",
+                    30,
+                ),
+                searchable_note(
+                    "Reference/PlatformCase.md",
+                    "Platform-case reference",
+                    &[],
+                    "See [Alpha](../work/alpha.md).",
+                    35,
+                ),
+                searchable_note(
+                    "Reference/Unsafe.md",
+                    "Unsafe references",
+                    &[],
+                    "[external](https://example.com/Work/Alpha.md)\n\
+                     [anchor](../Work/Alpha.md#part)\n\
+                     [absolute](/Work/Alpha.md)\n\
+                     [escaped](../../Work/Alpha.md)\n\
+                     [missing](../Work/Missing.md)",
+                    40,
+                ),
+                searchable_note("One/Duplicate.md", "Duplicate", &[], "Target one", 50),
+                searchable_note("Two/Duplicate.md", "Duplicate", &[], "Target two", 60),
+                searchable_note(
+                    "Reference/Ambiguous.md",
+                    "Ambiguous reference",
+                    &[],
+                    "See [[Duplicate]].",
+                    70,
+                ),
+                searchable_note(
+                    "Work/Alpha Note.md",
+                    "Alpha Note",
+                    &[],
+                    "Encoded target",
+                    80,
+                ),
+                searchable_note(
+                    "Reference/Encoded.md",
+                    "Encoded reference",
+                    &[],
+                    "See [Alpha Note](../Work/Alpha%20Note.md).",
+                    90,
+                ),
+                searchable_note(
+                    "Reference/DoubleEncoded.md",
+                    "Double-encoded reference",
+                    &[],
+                    "See [Alpha Note](../Work/Alpha%2520Note.md).",
+                    100,
+                ),
+                searchable_note(
+                    "Reference/mailto:Alpha.md",
+                    "Mail-shaped filename",
+                    &[],
+                    "Portable edge case",
+                    110,
+                ),
+                searchable_note(
+                    "Reference/Mail.md",
+                    "Mail link",
+                    &[],
+                    "See [mail](mailto:Alpha.md).",
+                    120,
+                ),
+            ],
+            folders: Vec::new(),
+            trash: Vec::new(),
+            warnings: Vec::new(),
+        };
+
+        let backlinks = backlinks_for_snapshot(&snapshot, "Work/Alpha.md", "Alpha");
+        let titles = backlinks
+            .iter()
+            .map(|note| note.title.as_str())
+            .collect::<Vec<_>>();
+        if cfg!(any(target_os = "windows", target_os = "macos")) {
+            assert_eq!(
+                titles,
+                [
+                    "Markdown reference",
+                    "Wiki reference",
+                    "Platform-case reference"
+                ]
+            );
+        } else {
+            assert_eq!(titles, ["Markdown reference", "Wiki reference"]);
+        }
+
+        assert!(backlinks_for_snapshot(&snapshot, "One/Duplicate.md", "Duplicate").is_empty());
+
+        let encoded = backlinks_for_snapshot(&snapshot, "Work/Alpha Note.md", "Alpha Note");
+        assert_eq!(
+            encoded
+                .iter()
+                .map(|note| note.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Encoded reference"]
+        );
+
+        assert!(backlinks_for_snapshot(
+            &snapshot,
+            "Reference/mailto:Alpha.md",
+            "Mail-shaped filename"
+        )
+        .is_empty());
     }
 }

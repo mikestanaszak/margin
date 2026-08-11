@@ -441,6 +441,111 @@ fn normalize_relative_path(path: &Path) -> PathBuf {
     normalized
 }
 
+fn has_safe_relative_markdown_syntax(target: &str) -> bool {
+    fn has_uri_scheme(path: &str) -> bool {
+        let Some(separator) = path.find(':') else {
+            return false;
+        };
+        let scheme = &path[..separator];
+        scheme
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphabetic)
+            && scheme
+                .as_bytes()
+                .iter()
+                .all(|value| value.is_ascii_alphanumeric() || matches!(value, b'+' | b'-' | b'.'))
+    }
+
+    let path = target.trim();
+    !path.is_empty()
+        && path == target
+        && !path.contains(['#', '?'])
+        && !path.starts_with(['/', '\\'])
+        && !path.starts_with('<')
+        && !path.contains("://")
+        && !has_uri_scheme(path)
+        && path.get(1..2) != Some(":")
+}
+
+fn decode_percent_encoded_path_once(target: &str) -> Option<String> {
+    fn hex_value(value: u8) -> Option<u8> {
+        match value {
+            b'0'..=b'9' => Some(value - b'0'),
+            b'a'..=b'f' => Some(value - b'a' + 10),
+            b'A'..=b'F' => Some(value - b'A' + 10),
+            _ => None,
+        }
+    }
+
+    let bytes = target.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'%'
+            && cursor + 2 < bytes.len()
+            && hex_value(bytes[cursor + 1]).is_some()
+            && hex_value(bytes[cursor + 2]).is_some()
+        {
+            decoded.push(hex_value(bytes[cursor + 1])? * 16 + hex_value(bytes[cursor + 2])?);
+            cursor += 3;
+        } else {
+            decoded.push(bytes[cursor]);
+            cursor += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+/// Resolves a portable relative Markdown target against a canonical note ID.
+/// Percent escapes are decoded once, and a path that climbs above the library
+/// root is rejected instead of being lexically folded back into the library.
+pub(crate) fn resolve_relative_markdown_target(source_id: &str, target: &str) -> Option<String> {
+    if !has_safe_relative_markdown_syntax(target) {
+        return None;
+    }
+    let target = decode_percent_encoded_path_once(target)?;
+    if !is_rewritable_relative_markdown_target(&target) {
+        return None;
+    }
+
+    let source = Path::new(source_id);
+    if !is_markdown_path(source) {
+        return None;
+    }
+    let mut resolved = PathBuf::new();
+    for component in source
+        .parent()?
+        .components()
+        .chain(Path::new(&target).components())
+    {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !resolved.pop() {
+                    return None;
+                }
+            }
+            std::path::Component::Normal(value) => resolved.push(value),
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => return None,
+        }
+    }
+    is_markdown_path(&resolved).then(|| resolved.to_string_lossy().replace('\\', "/"))
+}
+
+pub(crate) fn note_ids_match(left: &str, right: &str) -> bool {
+    let left = left.replace('\\', "/");
+    let right = right.replace('\\', "/");
+    if cfg!(any(target_os = "windows", target_os = "macos")) {
+        use unicode_normalization::UnicodeNormalization;
+        let left = left.nfc().flat_map(char::to_lowercase).collect::<String>();
+        let right = right.nfc().flat_map(char::to_lowercase).collect::<String>();
+        left == right
+    } else {
+        left == right
+    }
+}
+
 fn relative_markdown_path(from_file: &Path, target: &Path) -> Option<String> {
     let from = from_file.parent()?;
     let from_parts: Vec<_> = from
@@ -476,18 +581,7 @@ fn relative_markdown_path(from_file: &Path, target: &Path) -> Option<String> {
 }
 
 fn is_rewritable_relative_markdown_target(target: &str) -> bool {
-    let path = target.trim();
-    if path.is_empty()
-        || path != target
-        || path.contains(['#', '?'])
-        || path.starts_with(['/', '\\'])
-        || path.starts_with('<')
-        || path.contains("://")
-        || path.get(1..2) == Some(":")
-    {
-        return false;
-    }
-    is_markdown_path(Path::new(path))
+    has_safe_relative_markdown_syntax(target) && is_markdown_path(Path::new(target))
 }
 
 fn rewrite_markdown_links(body: &str, source: &Path, old_path: &Path, new_path: &Path) -> String {
