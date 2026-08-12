@@ -79,6 +79,7 @@ type Filter = {
 type Conflict = { disk: NoteDocument; mine: NoteDocument; path: string };
 type FailedSaveRecovery = {
   draft: NoteDocument;
+  libraryPath: string;
   message: string;
 };
 type AppUpdate = NonNullable<Awaited<ReturnType<typeof check>>>;
@@ -345,6 +346,7 @@ export function App() {
   const refreshGeneration = useRef(0);
   const refreshCoordinator = useRef<ReturnType<typeof createRefreshCoordinator> | null>(null);
   const saveQueues = useRef(new Map<string, Promise<boolean>>());
+  const latestSaveDrafts = useRef(new Map<string, NoteDocument>());
   const failedSaveRecoveriesRef = useRef(
     new Map<string, FailedSaveRecovery>(),
   );
@@ -353,6 +355,7 @@ export function App() {
   >(async () => false);
   const lastReportedDirty = useRef<boolean | null>(null);
   const latestQuitRequestId = useRef(0);
+  const activeQuitRequestId = useRef<number | null>(null);
   const quitFlushTail = useRef(Promise.resolve());
   const internallyMovedPath = useRef<string | null>(null);
   const registeredCaptureShortcut = useRef(defaultShortcuts.quickCapture);
@@ -366,6 +369,22 @@ export function App() {
       setFailedSaveRecoveries(next);
     },
     [],
+  );
+  const queueKeyForPath = useCallback((path: string) => {
+    const aliasedPath = savedPathAliases.current.get(path) ?? path;
+    return (
+      saveQueueKeys.current.get(path) ??
+      saveQueueKeys.current.get(aliasedPath) ??
+      aliasedPath
+    );
+  }, []);
+  const rememberLatestDraft = useCallback(
+    (draft: NoteDocument) => {
+      const ownedDraft = { ...draft, tags: [...draft.tags] };
+      latestSaveDrafts.current.set(queueKeyForPath(ownedDraft.path), ownedDraft);
+      return ownedDraft;
+    },
+    [queueKeyForPath],
   );
 
   const checkForUpdates = async (manual = false) => {
@@ -659,6 +678,7 @@ export function App() {
           return;
         baseline.current = loaded;
         noteBaselines.current.set(loaded.path, loaded);
+        rememberLatestDraft(loaded);
         dispatchNoteSession({ type: "loadSucceeded", note: loaded });
       } catch (error) {
         if (generation === noteLoadGeneration.current) {
@@ -670,7 +690,7 @@ export function App() {
         }
       }
     })();
-  }, [activePath]);
+  }, [activePath, rememberLatestDraft]);
   useEffect(() => {
     if (!note || !hasUnsavedChanges(note, baseline.current)) return;
     const timer = window.setTimeout(() => void enqueueSave(note), 700);
@@ -899,8 +919,12 @@ export function App() {
       setStatus(`Could not rename folder: ${String(error)}`);
     }
   };
-  const saveNote = async (draft: NoteDocument, queueKey: string) => {
-    if (!library || !pathIsInLibrary(draft.path, library)) return true;
+  const saveNote = async (
+    draft: NoteDocument,
+    queueKey: string,
+    saveLibrary: string | null,
+  ) => {
+    if (!saveLibrary || !pathIsInLibrary(draft.path, saveLibrary)) return true;
     const originalPath = draft.path;
     const previousPath =
       savedPathAliases.current.get(originalPath) ?? originalPath;
@@ -929,7 +953,7 @@ export function App() {
         dispatchNoteSession({ type: "saveRequested" });
         setStatus("Saving…");
       }
-      const result = await native.saveNote(noteToSave, library);
+      const result = await native.saveNote(noteToSave, saveLibrary);
       const isStillActive = saveBelongsToActiveNote();
       if (result.status === "conflict") {
         setFailedSaveRecovery(queueKey, null);
@@ -945,11 +969,13 @@ export function App() {
       }
       if (result.status === "error") {
         const recoveryDraft =
-          isStillActive && noteRef.current?.path === originalPath
+          latestSaveDrafts.current.get(queueKey) ??
+          (isStillActive && noteRef.current?.path === originalPath
             ? noteRef.current
-            : noteToSave;
+            : noteToSave);
         setFailedSaveRecovery(queueKey, {
           draft: recoveryDraft,
+          libraryPath: saveLibrary,
           message: result.message,
         });
         if (isStillActive) {
@@ -1004,9 +1030,11 @@ export function App() {
       return true;
     } catch (error) {
       const recoveryDraft =
-        noteRef.current?.path === originalPath ? noteRef.current : noteToSave;
+        latestSaveDrafts.current.get(queueKey) ??
+        (noteRef.current?.path === originalPath ? noteRef.current : noteToSave);
       setFailedSaveRecovery(queueKey, {
         draft: recoveryDraft,
+        libraryPath: saveLibrary,
         message: String(error),
       });
       if (activePathRef.current === draft.path) {
@@ -1019,14 +1047,16 @@ export function App() {
       return false;
     }
   };
-  const enqueueSave = (draft: NoteDocument) => {
-    const queuedDraft = { ...draft, tags: [...draft.tags] };
-    const queueKey =
-      saveQueueKeys.current.get(queuedDraft.path) ?? queuedDraft.path;
+  const enqueueSave = (
+    draft: NoteDocument,
+    saveLibrary = libraryRef.current,
+  ) => {
+    const queuedDraft = rememberLatestDraft(draft);
+    const queueKey = queueKeyForPath(queuedDraft.path);
     const previous = saveQueues.current.get(queueKey) ?? Promise.resolve();
     const queued = previous
       .catch(() => undefined)
-      .then(() => saveNote(queuedDraft, queueKey));
+      .then(() => saveNote(queuedDraft, queueKey, saveLibrary));
     setPendingSaveCount((count) => count + 1);
     saveQueues.current.set(queueKey, queued);
     void queued.finally(() => {
@@ -1331,9 +1361,15 @@ export function App() {
       onChange={(body) => {
         const current = noteRef.current;
         if (!isManagedNote || current?.path !== note.path) return;
+        const draft = rememberLatestDraft({
+          ...current,
+          body,
+          title: titleFromBody(body),
+        });
+        noteRef.current = draft;
         dispatchNoteSession({
           type: "edited",
-          draft: { ...current, body, title: titleFromBody(body) },
+          draft,
         });
       }}
       onBlur={() => isManagedNote && void enqueueSave(note)}
@@ -1350,11 +1386,16 @@ export function App() {
   const togglePreviewTask = useCallback((index: number, checked: boolean) => {
     const current = noteRef.current;
     if (!current) return;
+    const draft = rememberLatestDraft({
+      ...current,
+      body: toggleTask(current.body, index, checked),
+    });
+    noteRef.current = draft;
     dispatchNoteSession({
       type: "edited",
-      draft: { ...current, body: toggleTask(current.body, index, checked) },
+      draft,
     });
-  }, []);
+  }, [rememberLatestDraft]);
   const showPreview = mode !== "edit";
   const notePreview = note && showPreview ? (
     <MemoizedMarkdownPreview
@@ -1391,7 +1432,8 @@ export function App() {
   }, [nativeDirty]);
   useEffect(() => {
     let disposed = false;
-    let unlisten: (() => void) | undefined;
+    let unlistenRequest: (() => void) | undefined;
+    let unlistenCancellation: (() => void) | undefined;
     void listen<{ requestId: number }>("margin://request-quit", (event) => {
       const requestId = event.payload.requestId;
       if (
@@ -1401,13 +1443,18 @@ export function App() {
       )
         return;
       latestQuitRequestId.current = requestId;
+      activeQuitRequestId.current = requestId;
       quitFlushTail.current = quitFlushTail.current
         .catch(() => undefined)
         .then(async () => {
-          if (disposed || requestId !== latestQuitRequestId.current) return;
+          const requestIsActive = () =>
+            !disposed &&
+            requestId === latestQuitRequestId.current &&
+            requestId === activeQuitRequestId.current;
+          if (!requestIsActive()) return;
 
           let saved = true;
-          while (saved) {
+          while (saved && requestIsActive()) {
             const currentNote = noteRef.current;
             const currentLibrary = libraryRef.current;
             if (
@@ -1419,21 +1466,17 @@ export function App() {
               saved = (await enqueueSaveRef.current(currentNote)) && saved;
             }
 
-            while (saveQueues.current.size > 0) {
+            while (requestIsActive() && saveQueues.current.size > 0) {
               const pending = [...new Set(saveQueues.current.values())];
               const results = await Promise.all(
                 pending.map((queue) => queue.catch(() => false)),
               );
+              if (!requestIsActive()) break;
               saved = results.every(Boolean) && saved;
               await Promise.resolve();
             }
 
-            if (
-              disposed ||
-              requestId !== latestQuitRequestId.current ||
-              !saved
-            )
-              break;
+            if (!requestIsActive() || !saved) break;
             const latestNote = noteRef.current;
             const latestLibrary = libraryRef.current;
             const latestIsDirty = Boolean(
@@ -1445,24 +1488,40 @@ export function App() {
             if (!latestIsDirty && saveQueues.current.size === 0) break;
           }
 
-          if (disposed || requestId !== latestQuitRequestId.current) return;
+          if (!requestIsActive()) return;
           saved = saved && failedSaveRecoveriesRef.current.size === 0;
+          activeQuitRequestId.current = null;
           await native
             .completeQuitRequest(requestId, saved)
             .catch(() => undefined);
         });
     }).then((removeListener) => {
       if (disposed) removeListener();
-      else unlisten = removeListener;
+      else unlistenRequest = removeListener;
+    });
+    void listen<{ requestId: number }>("margin://cancel-quit", (event) => {
+      const requestId = event.payload.requestId;
+      if (
+        Number.isSafeInteger(requestId) &&
+        requestId > 0 &&
+        activeQuitRequestId.current === requestId
+      )
+        activeQuitRequestId.current = null;
+    }).then((removeListener) => {
+      if (disposed) removeListener();
+      else unlistenCancellation = removeListener;
     });
     return () => {
       disposed = true;
-      unlisten?.();
+      activeQuitRequestId.current = null;
+      unlistenRequest?.();
+      unlistenCancellation?.();
     };
   }, []);
   const openNote = useCallback((selected: NoteSummary) => {
+    if (noteRef.current) rememberLatestDraft(noteRef.current);
     setActivePath(selected.path);
-  }, []);
+  }, [rememberLatestDraft]);
   const toggleNoteFavorite = useCallback((selected: NoteSummary) => {
     setFavorites((value) =>
       value.includes(selected.path)
@@ -1826,19 +1885,22 @@ export function App() {
             onClose={() => setTableEditorIndex(null)}
             onApply={(headers, rows) => {
               const current = noteRef.current;
-              if (current?.path === note.path)
+              if (current?.path === note.path) {
+                const draft = rememberLatestDraft({
+                  ...current,
+                  body: replaceMarkdownTable(
+                    current.body,
+                    tableEditorIndex,
+                    headers,
+                    rows,
+                  ),
+                });
+                noteRef.current = draft;
                 dispatchNoteSession({
                   type: "edited",
-                  draft: {
-                    ...current,
-                    body: replaceMarkdownTable(
-                      current.body,
-                      tableEditorIndex,
-                      headers,
-                      rows,
-                    ),
-                  },
+                  draft,
                 });
+              }
               setTableEditorIndex(null);
             }}
           />
@@ -1974,7 +2036,12 @@ export function App() {
                 className="primary"
                 type="button"
                 aria-label={`Retry saving ${failedSaveRecovery.draft.title}`}
-                onClick={() => void enqueueSave(failedSaveRecovery.draft)}
+                onClick={() =>
+                  void enqueueSave(
+                    failedSaveRecovery.draft,
+                    failedSaveRecovery.libraryPath,
+                  )
+                }
               >
                 Retry save
               </button>

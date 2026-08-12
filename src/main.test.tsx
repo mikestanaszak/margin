@@ -29,6 +29,12 @@ const { eventHandlers, listen } = vi.hoisted(() => {
 vi.mock("@tauri-apps/api/event", () => ({
   listen,
 }));
+const { open } = vi.hoisted(() => ({
+  open: vi.fn((): Promise<string | undefined> => Promise.resolve(undefined)),
+}));
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open,
+}));
 vi.mock("@tauri-apps/plugin-updater", () => ({
   check: vi.fn(() => Promise.resolve(null)),
 }));
@@ -986,6 +992,8 @@ describe("save-aware quit", () => {
 
   const restoreDefaultInvoke = () => {
     eventHandlers.clear();
+    open.mockReset();
+    open.mockResolvedValue(undefined);
     invoke.mockClear();
     invoke.mockImplementation((command: string) =>
       Promise.resolve(
@@ -1235,6 +1243,122 @@ describe("save-aware quit", () => {
     }
   });
 
+  it("stops quit-save convergence after timeout cancellation and allows a newer request", async () => {
+    let resolveFirst: (value: unknown) => void = () => undefined;
+    let resolveSecond: (value: unknown) => void = () => undefined;
+    const firstSave = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondSave = new Promise((resolve) => {
+      resolveSecond = resolve;
+    });
+    let saveCall = 0;
+    invoke.mockImplementation(
+      ((command: string, args?: unknown) => {
+        const payload = args as { path?: string } | undefined;
+        if (command === "load_selected_library")
+          return Promise.resolve("C:/Notes");
+        if (command === "load_library_snapshot")
+          return Promise.resolve({
+            notes: [notes[0]],
+            folders: ["Work"],
+            trash: [],
+            warnings: [],
+          });
+        if (command === "read_note")
+          return Promise.resolve(documents.get(payload?.path || ""));
+        if (command === "save_note") {
+          saveCall += 1;
+          return saveCall === 1 ? firstSave : secondSave;
+        }
+        if (
+          command === "take_opened_markdown_files" ||
+          command === "find_backlinks"
+        )
+          return Promise.resolve([]);
+        return Promise.resolve(undefined);
+      }) as never,
+    );
+
+    try {
+      render(<App />);
+      const projectButton = (await screen.findAllByRole("button", {
+        name: /Project Alpha/,
+      })).find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(projectButton!);
+      fireEvent.click(await screen.findByRole("checkbox"));
+      await waitFor(() =>
+        expect(eventHandlers.has("margin://request-quit")).toBe(true),
+      );
+
+      act(() => {
+        eventHandlers.get("margin://request-quit")?.({
+          payload: { requestId: 81 },
+        });
+      });
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(1),
+      );
+      fireEvent.click(screen.getByRole("checkbox"));
+      act(() => {
+        eventHandlers.get("margin://cancel-quit")?.({
+          payload: { requestId: 81 },
+        });
+      });
+
+      await act(async () => {
+        resolveFirst({
+          status: "saved",
+          note: {
+            ...documents.get(notes[0].path)!,
+            body: "# Project Alpha\n\n- [x] Task",
+            revision: "cancelled-request-save",
+          },
+        });
+        await firstSave;
+        await Promise.resolve();
+      });
+      expect(
+        invoke.mock.calls.filter(([command]) => command === "save_note"),
+      ).toHaveLength(1);
+      expect(invoke).not.toHaveBeenCalledWith("complete_quit_request", {
+        requestId: 81,
+        saved: true,
+      });
+
+      act(() => {
+        eventHandlers.get("margin://request-quit")?.({
+          payload: { requestId: 82 },
+        });
+      });
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(2),
+      );
+      await act(async () => {
+        resolveSecond({
+          status: "saved",
+          note: {
+            ...documents.get(notes[0].path)!,
+            revision: "newer-request-save",
+          },
+        });
+        await secondSave;
+      });
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("complete_quit_request", {
+          requestId: 82,
+          saved: true,
+        }),
+      );
+    } finally {
+      restoreDefaultInvoke();
+    }
+  });
+
   it.each(["conflict", "error"] as const)(
     "reports quit as unsaved and keeps %s recovery visible",
     async (failure) => {
@@ -1311,6 +1435,10 @@ describe("save-aware quit", () => {
   );
 
   it("keeps a failed inactive draft recoverable and rejects a later quit", async () => {
+    const projectWithTwoTasks = {
+      ...documents.get(notes[0].path)!,
+      body: "# Project Alpha\n\n- [ ] First task\n- [ ] Second task",
+    };
     let resolveSave: (value: unknown) => void = () => undefined;
     let resolveRetry: (value: unknown) => void = () => undefined;
     const pendingSave = new Promise((resolve) => {
@@ -1332,7 +1460,11 @@ describe("save-aware quit", () => {
             warnings: [],
           });
         if (command === "read_note")
-          return Promise.resolve(documents.get(payload?.path || ""));
+          return Promise.resolve(
+            payload?.path === notes[0].path
+              ? projectWithTwoTasks
+              : documents.get(payload?.path || ""),
+          );
         if (command === "save_note") {
           saveCall += 1;
           return saveCall === 1 ? pendingSave : retrySave;
@@ -1352,13 +1484,14 @@ describe("save-aware quit", () => {
         name: /Project Alpha/,
       })).find((button) => button.classList.contains("nr-note-main"));
       fireEvent.click(projectButton!);
-      fireEvent.click(await screen.findByRole("checkbox"));
+      fireEvent.click((await screen.findAllByRole("checkbox"))[0]);
       fireEvent.keyDown(window, { key: "s", ctrlKey: true });
       await waitFor(() =>
         expect(
           invoke.mock.calls.filter(([command]) => command === "save_note"),
         ).toHaveLength(1),
       );
+      fireEvent.click(screen.getAllByRole("checkbox")[1]);
 
       const cafeButton = screen
         .getAllByRole("button", { name: /Café ideas/ })
@@ -1408,6 +1541,19 @@ describe("save-aware quit", () => {
         ).toHaveLength(2),
       );
       expect(
+        invoke.mock.calls
+          .filter(([command]) => command === "save_note")
+          .slice(-1)[0],
+      ).toEqual([
+        "save_note",
+        expect.objectContaining({
+          note: expect.objectContaining({
+            path: notes[0].path,
+            body: "# Project Alpha\n\n- [x] First task\n- [x] Second task",
+          }),
+        }),
+      ]);
+      expect(
         screen.getByText("Project Alpha could not be saved: disk full"),
       ).toBeInTheDocument();
 
@@ -1415,8 +1561,8 @@ describe("save-aware quit", () => {
         resolveRetry({
           status: "saved",
           note: {
-            ...documents.get(notes[0].path)!,
-            body: "# Project Alpha\n\n- [x] Task",
+            ...projectWithTwoTasks,
+            body: "# Project Alpha\n\n- [x] First task\n- [x] Second task",
             revision: "background-retry-saved",
           },
         });
@@ -1445,6 +1591,139 @@ describe("save-aware quit", () => {
           requestId: 72,
           saved: true,
         }),
+      );
+    } finally {
+      restoreDefaultInvoke();
+    }
+  });
+
+  it("retries a failed draft against its originating library after switching libraries", async () => {
+    let resolveSave: (value: unknown) => void = () => undefined;
+    let resolveRetry: (value: unknown) => void = () => undefined;
+    const pendingSave = new Promise((resolve) => {
+      resolveSave = resolve;
+    });
+    const retrySave = new Promise((resolve) => {
+      resolveRetry = resolve;
+    });
+    let saveCall = 0;
+    open.mockResolvedValueOnce("D:/Other");
+    invoke.mockImplementation(
+      ((command: string, args?: unknown) => {
+        const payload = args as {
+          path?: string;
+          libraryPath?: string;
+        } | undefined;
+        if (command === "load_selected_library")
+          return Promise.resolve("C:/Notes");
+        if (command === "load_library_snapshot")
+          return Promise.resolve(
+            payload?.libraryPath === "D:/Other"
+              ? { notes: [], folders: [], trash: [], warnings: [] }
+              : {
+                  notes: [notes[0]],
+                  folders: ["Work"],
+                  trash: [],
+                  warnings: [],
+                },
+          );
+        if (command === "read_note")
+          return Promise.resolve(documents.get(payload?.path || ""));
+        if (command === "save_note") {
+          saveCall += 1;
+          return saveCall === 1 ? pendingSave : retrySave;
+        }
+        if (
+          command === "take_opened_markdown_files" ||
+          command === "find_backlinks"
+        )
+          return Promise.resolve([]);
+        return Promise.resolve(undefined);
+      }) as never,
+    );
+
+    try {
+      render(<App />);
+      const projectButton = (await screen.findAllByRole("button", {
+        name: /Project Alpha/,
+      })).find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(projectButton!);
+      fireEvent.click(await screen.findByRole("checkbox"));
+      fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(1),
+      );
+
+      fireEvent.click(screen.getByLabelText("Settings"));
+      const settingsDialog = screen.getByRole("dialog", { name: "Settings" });
+      const changeLibraryButton = Array.from(
+        settingsDialog.querySelectorAll("button"),
+      ).find((button) => button.textContent === "Change library");
+      fireEvent.click(changeLibraryButton!);
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("save_selected_library", {
+          libraryPath: "D:/Other",
+        }),
+      );
+      fireEvent.keyDown(window, { key: "Escape" });
+
+      await act(async () => {
+        resolveSave({ status: "error", message: "old library unavailable" });
+        await pendingSave;
+        await Promise.resolve();
+      });
+      expect(
+        screen.getByText(
+          "Project Alpha could not be saved: old library unavailable",
+        ),
+      ).toBeInTheDocument();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Retry saving Project Alpha" }),
+      );
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(2),
+      );
+      expect(
+        invoke.mock.calls
+          .filter(([command]) => command === "save_note")
+          .slice(-1)[0],
+      ).toEqual([
+        "save_note",
+        expect.objectContaining({
+          libraryPath: "C:/Notes",
+          note: expect.objectContaining({ path: notes[0].path }),
+        }),
+      ]);
+
+      await act(async () => {
+        resolveRetry({
+          status: "saved",
+          note: {
+            ...documents.get(notes[0].path)!,
+            body: "# Project Alpha\n\n- [x] Task",
+            revision: "old-library-retry-saved",
+          },
+        });
+        await retrySave;
+      });
+      await waitFor(() =>
+        expect(
+          screen.queryByText(
+            "Project Alpha could not be saved: old library unavailable",
+          ),
+        ).not.toBeInTheDocument(),
+      );
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls
+            .filter(([command]) => command === "set_dirty_state")
+            .slice(-1)[0],
+        ).toEqual(["set_dirty_state", { dirty: false }]),
       );
     } finally {
       restoreDefaultInvoke();

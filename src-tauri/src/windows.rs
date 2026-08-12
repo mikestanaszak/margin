@@ -41,6 +41,7 @@ enum QuitAction {
     None,
     Exit,
     ShowMain,
+    CancelSave { request_id: u64 },
     RequestSave { request_id: u64 },
     ConfirmForceQuit { request_id: u64 },
 }
@@ -119,7 +120,7 @@ impl QuitCoordinator {
             self.dirty = false;
             QuitAction::Exit
         } else {
-            QuitAction::ShowMain
+            QuitAction::CancelSave { request_id }
         }
     }
 
@@ -243,6 +244,11 @@ fn quit_action(app: &AppHandle, action: QuitAction) -> Result<(), String> {
             Ok(())
         }
         QuitAction::ShowMain => show_main_window(app),
+        QuitAction::CancelSave { request_id } => {
+            app.emit("margin://cancel-quit", QuitRequestPayload { request_id })
+                .map_err(|error| error.to_string())?;
+            show_main_window(app)
+        }
         QuitAction::RequestSave { request_id } => {
             let timeout_app = app.clone();
             thread::spawn(move || {
@@ -622,7 +628,10 @@ mod tests {
             coordinator.timeout(1),
             QuitAction::ConfirmForceQuit { request_id: 1 }
         );
-        assert_eq!(coordinator.confirm_timeout(1, false), QuitAction::ShowMain);
+        assert_eq!(
+            coordinator.confirm_timeout(1, false),
+            QuitAction::CancelSave { request_id: 1 }
+        );
         assert!(coordinator.is_dirty());
 
         assert_eq!(
