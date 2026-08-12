@@ -2,6 +2,27 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## 0.5.0 — 2026-08-11
+
+### Added
+
+- Existing YAML front-matter tags now appear as read-only labels on note cards and in Quick Open.
+- A tray menu provides Show Margin, Quick Capture, and Quit while Margin continues running in the background.
+- Library indexing problems now appear as a concise warning count without preventing healthy notes from loading.
+
+### Improved
+
+- Search and Quick Open now share one native ranked discovery service. Exact and prefix title matches lead filename, path, tag, and body matches; an empty Quick Open shows recently updated notes.
+- Linked from now recognizes both resolved relative Markdown links and wiki links while excluding external, anchored, absolute, ambiguous, and unresolved targets.
+- The dedicated Quick Capture window and in-app fallback now share the same composer, list continuation, Daily template handling, keyboard behavior, and status feedback.
+- Opening another note preserves the current Edit, Split, or Preview mode.
+- Quit now waits for pending note saves. A conflict or save failure returns to the main window with the draft and recovery state intact, and an unresponsive save requires explicit confirmation before discarding a draft.
+
+### Fixed
+
+- The full frontend test command now isolates the cold Mermaid renderer from parallel unit tests for deterministic local and CI runs.
+- Library scans now keep usable notes available when a directory entry, file, UTF-8 document, or front matter cannot be read safely.
+
 ## 0.4.6 — 2026-08-09
 
 ### Fixed
