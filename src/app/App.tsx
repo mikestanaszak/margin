@@ -1039,14 +1039,35 @@ export function App() {
       const saved = result.note;
       setFailedSaveRecovery(queueKey, null);
       const pathChanged = saved.path !== previousPath;
-      savedPathAliases.current.set(originalPath, saved.path);
-      saveQueueKeys.current.set(originalPath, queueKey);
+      const priorAliases = [...savedPathAliases.current];
+      const aliasedPaths = new Set([originalPath, previousPath]);
+      let foundEarlierAlias = true;
+      while (foundEarlierAlias) {
+        foundEarlierAlias = false;
+        for (const [path, target] of priorAliases) {
+          if (!aliasedPaths.has(target) || aliasedPaths.has(path)) continue;
+          aliasedPaths.add(path);
+          foundEarlierAlias = true;
+        }
+      }
+      for (const path of aliasedPaths) {
+        if (path === saved.path) savedPathAliases.current.delete(path);
+        else savedPathAliases.current.set(path, saved.path);
+        saveQueueKeys.current.set(path, queueKey);
+        if (path !== saved.path) noteBaselines.current.delete(path);
+      }
       saveQueueKeys.current.set(saved.path, queueKey);
-      if (originalPath !== saved.path)
-        noteBaselines.current.delete(originalPath);
-      if (previousPath !== saved.path)
-        noteBaselines.current.delete(previousPath);
       noteBaselines.current.set(saved.path, saved);
+      const ownedDraft = latestSaveDrafts.current.get(queueKey);
+      if (ownedDraft)
+        latestSaveDrafts.current.set(queueKey, {
+          ...ownedDraft,
+          path: saved.path,
+          revision: saved.revision,
+          updated: saved.updated,
+          created: saved.created,
+          updated_at: saved.updated_at,
+        });
       if (isStillActive) {
         activePathRef.current = saved.path;
         baseline.current = saved;

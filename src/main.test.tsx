@@ -1746,22 +1746,28 @@ describe("save-aware quit", () => {
     }
   });
 
-  it("rebases a reopened pending draft onto its renamed canonical path", async () => {
+  it("rebases a reopened edit through chained pending renames", async () => {
     const originalPath = notes[0].path;
-    const renamedPath = "C:/Notes/Work/Project Alpha renamed.md";
+    const renamedPathA = "C:/Notes/Work/Project Alpha renamed A.md";
+    const renamedPathB = "C:/Notes/Work/Project Alpha renamed B.md";
     const initialProject = {
       ...documents.get(originalPath)!,
       body: "# Project Alpha\n\n- [ ] First task\n- [ ] Second task",
     };
     const firstSavedProject = {
       ...initialProject,
-      path: renamedPath,
+      path: renamedPathA,
       body: "# Project Alpha\n\n- [x] First task\n- [ ] Second task",
       revision: "first-renamed-save",
     };
     const newestProjectBody =
       "# Project Alpha\n\n- [x] First task\n- [x] Second task";
-    let renamedDisk = firstSavedProject;
+    const secondSavedProject = {
+      ...firstSavedProject,
+      path: renamedPathB,
+      body: newestProjectBody,
+      revision: "second-renamed-save",
+    };
     let resolveFirst: (value: unknown) => void = () => undefined;
     let resolveSecond: (value: unknown) => void = () => undefined;
     let resolveThird: (value: unknown) => void = () => undefined;
@@ -1791,9 +1797,11 @@ describe("save-aware quit", () => {
           return Promise.resolve(
             payload?.path === originalPath
               ? initialProject
-              : payload?.path === renamedPath
-                ? renamedDisk
-                : documents.get(payload?.path || ""),
+              : payload?.path === renamedPathA
+                ? firstSavedProject
+                : payload?.path === renamedPathB
+                  ? secondSavedProject
+                  : documents.get(payload?.path || ""),
           );
         if (command === "save_note") {
           saveCall += 1;
@@ -1850,7 +1858,7 @@ describe("save-aware quit", () => {
         "save_note",
         expect.objectContaining({
           note: expect.objectContaining({
-            path: renamedPath,
+            path: renamedPathA,
             body: newestProjectBody,
           }),
         }),
@@ -1863,30 +1871,16 @@ describe("save-aware quit", () => {
       await screen.findByText("Project Alpha", { selector: ".preview h1" });
       expect(document.querySelector(".note-file span")).toHaveAttribute(
         "title",
-        renamedPath,
+        renamedPathA,
       );
       expect(screen.getAllByRole("checkbox")[0]).toBeChecked();
       expect(screen.getAllByRole("checkbox")[1]).toBeChecked();
 
-      renamedDisk = {
-        ...firstSavedProject,
-        body: newestProjectBody,
-        revision: "newest-renamed-save",
-      };
+      fireEvent.click(screen.getAllByRole("checkbox")[1]);
       await act(async () => {
-        resolveSecond({ status: "saved", note: renamedDisk });
+        resolveSecond({ status: "saved", note: secondSavedProject });
         await secondSave;
       });
-      await waitFor(() =>
-        expect(
-          invoke.mock.calls
-            .filter(([command]) => command === "set_dirty_state")
-            .slice(-1)[0],
-        ).toEqual(["set_dirty_state", { dirty: false }]),
-      );
-
-      fireEvent.click(screen.getAllByRole("checkbox")[1]);
-      fireEvent.keyDown(window, { key: "s", ctrlKey: true });
       await waitFor(() =>
         expect(
           invoke.mock.calls.filter(([command]) => command === "save_note"),
@@ -1900,23 +1894,36 @@ describe("save-aware quit", () => {
         "save_note",
         expect.objectContaining({
           note: expect.objectContaining({
-            path: renamedPath,
+            path: renamedPathB,
             body: firstSavedProject.body,
           }),
         }),
       ]);
+      expect(document.querySelector(".note-file span")).toHaveAttribute(
+        "title",
+        renamedPathB,
+      );
+      expect(screen.getAllByRole("checkbox")[0]).toBeChecked();
+      expect(screen.getAllByRole("checkbox")[1]).not.toBeChecked();
 
       await act(async () => {
         resolveThird({
           status: "saved",
           note: {
-            ...renamedDisk,
+            ...secondSavedProject,
             body: firstSavedProject.body,
             revision: "post-rename-edit-save",
           },
         });
         await thirdSave;
       });
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls
+            .filter(([command]) => command === "set_dirty_state")
+            .slice(-1)[0],
+        ).toEqual(["set_dirty_state", { dirty: false }]),
+      );
     } finally {
       restoreDefaultInvoke();
     }
