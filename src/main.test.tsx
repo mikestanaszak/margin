@@ -553,7 +553,10 @@ describe("navigation structures and safety dialogs", () => {
           path: summary.path,
           title: summary.title,
           tags: summary.tags,
-          body: `# ${summary.title}`,
+          body:
+            summary.path === notes[1].path
+              ? "# Café ideas\nLoaded note B"
+              : `# ${summary.title}`,
           updated: summary.updated,
           revision: `${summary.id}-revision`,
         },
@@ -573,7 +576,7 @@ describe("navigation structures and safety dialogs", () => {
     );
 
     try {
-      const { container } = render(<App />);
+      render(<App />);
       const projectButton = (await screen.findAllByRole("button", { name: /Project Alpha/ })).find(
         (button) => button.classList.contains("nr-note-main"),
       );
@@ -590,11 +593,9 @@ describe("navigation structures and safety dialogs", () => {
         .find((button) => button.classList.contains("nr-note-main"));
       fireEvent.click(cafeButton!);
 
-      await waitFor(() =>
-        expect(
-          container.querySelector(".nr-note-main[aria-current='page']"),
-        ).toHaveTextContent("Café ideas"),
-      );
+      expect(
+        await screen.findByText("Loaded note B", { selector: ".preview p" }),
+      ).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Split view" })).toHaveAttribute(
         "aria-pressed",
         "true",
