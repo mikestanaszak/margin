@@ -1,11 +1,14 @@
 use crate::assets::{allow_asset_directory, allow_opened_markdown_assets};
 use crate::paths::{canonical_library_root, is_markdown_path};
-use std::{fs, path::PathBuf, sync::Mutex};
-#[cfg(target_os = "macos")]
-use tauri::Emitter;
+use serde::Serialize;
+use std::{fs, path::PathBuf, sync::Mutex, thread, time::Duration};
 use tauri::{
-    window::Color, App, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::TrayIconBuilder,
+    window::Color,
+    App, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_global_shortcut::{
     Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutEvent, ShortcutState,
 };
@@ -24,6 +27,117 @@ struct CaptureShortcutState {
 /// these in memory lets a normal file-open launch work without copying or
 /// modifying the user's source file.
 struct OpenedMarkdownFiles(Mutex<Vec<String>>);
+
+const QUIT_TIMEOUT: Duration = Duration::from_secs(8);
+const SHOW_MENU_ID: &str = "margin-show";
+const CAPTURE_MENU_ID: &str = "margin-capture";
+const QUIT_MENU_ID: &str = "margin-quit";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuitAction {
+    None,
+    Exit,
+    ShowMain,
+    RequestSave { request_id: u64 },
+    ConfirmForceQuit { request_id: u64 },
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PendingQuit {
+    request_id: u64,
+    confirmation_open: bool,
+}
+
+#[derive(Debug, Default)]
+struct QuitCoordinator {
+    dirty: bool,
+    next_request_id: u64,
+    pending: Option<PendingQuit>,
+}
+
+impl QuitCoordinator {
+    fn set_dirty(&mut self, dirty: bool) {
+        self.dirty = dirty;
+    }
+
+    fn request_quit(&mut self) -> QuitAction {
+        if self.pending.is_some() {
+            return QuitAction::None;
+        }
+        if !self.dirty {
+            return QuitAction::Exit;
+        }
+        self.next_request_id = self.next_request_id.saturating_add(1).max(1);
+        let request_id = self.next_request_id;
+        self.pending = Some(PendingQuit {
+            request_id,
+            confirmation_open: false,
+        });
+        QuitAction::RequestSave { request_id }
+    }
+
+    fn complete(&mut self, request_id: u64, saved: bool) -> QuitAction {
+        if self
+            .pending
+            .is_none_or(|pending| pending.request_id != request_id)
+        {
+            return QuitAction::None;
+        }
+        self.pending = None;
+        if saved {
+            self.dirty = false;
+            QuitAction::Exit
+        } else {
+            self.dirty = true;
+            QuitAction::ShowMain
+        }
+    }
+
+    fn timeout(&mut self, request_id: u64) -> QuitAction {
+        let Some(pending) = self.pending.as_mut() else {
+            return QuitAction::None;
+        };
+        if pending.request_id != request_id || pending.confirmation_open {
+            return QuitAction::None;
+        }
+        pending.confirmation_open = true;
+        QuitAction::ConfirmForceQuit { request_id }
+    }
+
+    fn confirm_timeout(&mut self, request_id: u64, quit_anyway: bool) -> QuitAction {
+        if self
+            .pending
+            .is_none_or(|pending| pending.request_id != request_id || !pending.confirmation_open)
+        {
+            return QuitAction::None;
+        }
+        self.pending = None;
+        if quit_anyway {
+            self.dirty = false;
+            QuitAction::Exit
+        } else {
+            QuitAction::ShowMain
+        }
+    }
+
+    #[cfg(test)]
+    fn pending_request_id(&self) -> Option<u64> {
+        self.pending.map(|pending| pending.request_id)
+    }
+
+    #[cfg(test)]
+    fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+}
+
+struct QuitState(Mutex<QuitCoordinator>);
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct QuitRequestPayload {
+    request_id: u64,
+}
 
 fn markdown_file_paths<I>(paths: I) -> Vec<String>
 where
@@ -104,7 +218,6 @@ fn show_capture_window(app: &AppHandle) -> Result<(), String> {
     capture.set_focus().map_err(|error| error.to_string())
 }
 
-#[cfg(target_os = "macos")]
 fn show_main_window(app: &AppHandle) -> Result<(), String> {
     let main = app
         .get_webview_window("main")
@@ -112,6 +225,133 @@ fn show_main_window(app: &AppHandle) -> Result<(), String> {
     main.unminimize().map_err(|error| error.to_string())?;
     main.show().map_err(|error| error.to_string())?;
     main.set_focus().map_err(|error| error.to_string())
+}
+
+fn quit_action(app: &AppHandle, action: QuitAction) -> Result<(), String> {
+    match action {
+        QuitAction::None => Ok(()),
+        QuitAction::Exit => {
+            app.exit(0);
+            Ok(())
+        }
+        QuitAction::ShowMain => show_main_window(app),
+        QuitAction::RequestSave { request_id } => {
+            let timeout_app = app.clone();
+            thread::spawn(move || {
+                thread::sleep(QUIT_TIMEOUT);
+                let callback_app = timeout_app.clone();
+                let _ = timeout_app.run_on_main_thread(move || {
+                    let action = callback_app
+                        .state::<QuitState>()
+                        .0
+                        .lock()
+                        .map(|mut coordinator| coordinator.timeout(request_id))
+                        .unwrap_or(QuitAction::ShowMain);
+                    let _ = quit_action(&callback_app, action);
+                });
+            });
+            app.get_webview_window("main")
+                .ok_or("Margin window is unavailable")?
+                .emit("margin://request-quit", QuitRequestPayload { request_id })
+                .map_err(|error| error.to_string())
+        }
+        QuitAction::ConfirmForceQuit { request_id } => {
+            let _ = show_main_window(app);
+            let dialog_app = app.clone();
+            app.dialog()
+                .message(
+                    "Margin could not confirm that your draft finished saving. Cancel to return to your draft, or quit anyway and discard any unsaved changes.",
+                )
+                .title("Saving did not finish")
+                .kind(MessageDialogKind::Warning)
+                .buttons(MessageDialogButtons::OkCancelCustom(
+                    "Quit anyway".into(),
+                    "Cancel".into(),
+                ))
+                // Closing the dialog and its Cancel button both report false;
+                // only the explicit destructive button may exit.
+                .show(move |quit_anyway| {
+                    let action = dialog_app
+                        .state::<QuitState>()
+                        .0
+                        .lock()
+                        .map(|mut coordinator| {
+                            coordinator.confirm_timeout(request_id, quit_anyway)
+                        })
+                        .unwrap_or(QuitAction::ShowMain);
+                    let _ = quit_action(&dialog_app, action);
+                });
+            Ok(())
+        }
+    }
+}
+
+fn request_application_quit(app: &AppHandle) -> Result<(), String> {
+    let action = app
+        .state::<QuitState>()
+        .0
+        .lock()
+        .map_err(|_| "Quit state is unavailable")?
+        .request_quit();
+    quit_action(app, action)
+}
+
+#[tauri::command]
+pub(crate) fn set_dirty_state(app: AppHandle, dirty: bool) -> Result<(), String> {
+    app.state::<QuitState>()
+        .0
+        .lock()
+        .map_err(|_| "Quit state is unavailable")?
+        .set_dirty(dirty);
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn complete_quit_request(
+    app: AppHandle,
+    request_id: u64,
+    saved: bool,
+) -> Result<(), String> {
+    let action = app
+        .state::<QuitState>()
+        .0
+        .lock()
+        .map_err(|_| "Quit state is unavailable")?
+        .complete(request_id, saved);
+    quit_action(&app, action)
+}
+
+fn setup_tray(app: &App) -> Result<(), String> {
+    let show = MenuItem::with_id(app, SHOW_MENU_ID, "Show Margin", true, None::<&str>)
+        .map_err(|error| error.to_string())?;
+    let capture = MenuItem::with_id(app, CAPTURE_MENU_ID, "Quick Capture", true, None::<&str>)
+        .map_err(|error| error.to_string())?;
+    let separator = PredefinedMenuItem::separator(app).map_err(|error| error.to_string())?;
+    let quit = MenuItem::with_id(app, QUIT_MENU_ID, "Quit", true, None::<&str>)
+        .map_err(|error| error.to_string())?;
+    let menu = Menu::with_items(app, &[&show, &capture, &separator, &quit])
+        .map_err(|error| error.to_string())?;
+
+    let mut builder = TrayIconBuilder::with_id("margin-tray")
+        .menu(&menu)
+        .tooltip("Margin")
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            SHOW_MENU_ID => {
+                let _ = show_main_window(app);
+            }
+            CAPTURE_MENU_ID => {
+                let _ = show_capture_window(app);
+            }
+            QUIT_MENU_ID => {
+                let _ = request_application_quit(app);
+            }
+            _ => {}
+        });
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder.build(app).map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn selected_library_file(app: &AppHandle) -> Result<PathBuf, String> {
@@ -229,6 +469,8 @@ pub(crate) fn setup(app: &mut App, default_capture: Shortcut) -> Result<(), Stri
         shortcut: default_capture,
         registered,
     })));
+    app.manage(QuitState(Mutex::new(QuitCoordinator::default())));
+    setup_tray(app)?;
     WebviewWindowBuilder::new(app, "capture", WebviewUrl::App("capture.html".into()))
         .title("Margin Capture")
         .inner_size(496.0, 276.0)
@@ -276,6 +518,22 @@ pub(crate) fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
 }
 
 pub(crate) fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
+    if let tauri::RunEvent::ExitRequested {
+        code: None, api, ..
+    } = &event
+    {
+        let action = app
+            .state::<QuitState>()
+            .0
+            .lock()
+            .map(|mut coordinator| coordinator.request_quit())
+            .unwrap_or(QuitAction::ShowMain);
+        if action != QuitAction::Exit {
+            api.prevent_exit();
+            let _ = quit_action(app, action);
+        }
+        return;
+    }
     #[cfg(target_os = "macos")]
     match event {
         tauri::RunEvent::Reopen { .. } => {
@@ -291,4 +549,79 @@ pub(crate) fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
     }
     #[cfg(not(target_os = "macos"))]
     let _ = (app, event);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{QuitAction, QuitCoordinator};
+
+    #[test]
+    fn quit_coordinator_exits_immediately_when_clean() {
+        let mut coordinator = QuitCoordinator::default();
+
+        assert_eq!(coordinator.request_quit(), QuitAction::Exit);
+        assert_eq!(coordinator.pending_request_id(), None);
+    }
+
+    #[test]
+    fn quit_coordinator_requests_a_save_when_dirty() {
+        let mut coordinator = QuitCoordinator::default();
+        coordinator.set_dirty(true);
+
+        assert_eq!(
+            coordinator.request_quit(),
+            QuitAction::RequestSave { request_id: 1 }
+        );
+        assert_eq!(coordinator.pending_request_id(), Some(1));
+        assert_eq!(coordinator.request_quit(), QuitAction::None);
+    }
+
+    #[test]
+    fn quit_coordinator_exits_after_a_saved_acknowledgement() {
+        let mut coordinator = QuitCoordinator::default();
+        coordinator.set_dirty(true);
+        coordinator.request_quit();
+
+        assert_eq!(coordinator.complete(1, true), QuitAction::Exit);
+        assert!(!coordinator.is_dirty());
+        assert_eq!(coordinator.pending_request_id(), None);
+    }
+
+    #[test]
+    fn quit_coordinator_shows_main_after_a_failed_acknowledgement() {
+        let mut coordinator = QuitCoordinator::default();
+        coordinator.set_dirty(true);
+        coordinator.request_quit();
+
+        assert_eq!(coordinator.complete(1, false), QuitAction::ShowMain);
+        assert!(coordinator.is_dirty());
+        assert_eq!(coordinator.pending_request_id(), None);
+        assert_eq!(coordinator.complete(1, true), QuitAction::None);
+    }
+
+    #[test]
+    fn quit_coordinator_timeout_requires_explicit_force_exit() {
+        let mut coordinator = QuitCoordinator::default();
+        coordinator.set_dirty(true);
+        coordinator.request_quit();
+
+        assert_eq!(coordinator.timeout(7), QuitAction::None);
+        assert_eq!(
+            coordinator.timeout(1),
+            QuitAction::ConfirmForceQuit { request_id: 1 }
+        );
+        assert_eq!(coordinator.confirm_timeout(1, false), QuitAction::ShowMain);
+        assert!(coordinator.is_dirty());
+
+        assert_eq!(
+            coordinator.request_quit(),
+            QuitAction::RequestSave { request_id: 2 }
+        );
+        assert_eq!(
+            coordinator.timeout(2),
+            QuitAction::ConfirmForceQuit { request_id: 2 }
+        );
+        assert_eq!(coordinator.confirm_timeout(2, true), QuitAction::Exit);
+        assert!(!coordinator.is_dirty());
+    }
 }

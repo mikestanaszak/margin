@@ -7,8 +7,27 @@ vi.mock("react-dom/client", () => ({
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ label: "test", hide: vi.fn() }),
 }));
+const { eventHandlers, listen } = vi.hoisted(() => {
+  const eventHandlers = new Map<
+    string,
+    (event: { payload: unknown }) => void
+  >();
+  const listen = vi.fn(
+    async (
+      eventName: string,
+      handler: (event: { payload: unknown }) => void,
+    ) => {
+      eventHandlers.set(eventName, handler);
+      return () => {
+        if (eventHandlers.get(eventName) === handler)
+          eventHandlers.delete(eventName);
+      };
+    },
+  );
+  return { eventHandlers, listen };
+});
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(() => Promise.resolve(() => undefined)),
+  listen,
 }));
 vi.mock("@tauri-apps/plugin-updater", () => ({
   check: vi.fn(() => Promise.resolve(null)),
@@ -947,6 +966,272 @@ describe("navigation structures and safety dialogs", () => {
     expect(screen.getByRole("radio", { name: "Mint" })).toBeChecked();
     expect(screen.getByRole("radio", { name: "Paper" })).toBeInTheDocument();
     expect(screen.getAllByRole("radio")).toHaveLength(4);
+  });
+});
+
+describe("save-aware quit", () => {
+  const documents = new Map(
+    notes.map((summary) => [
+      summary.path,
+      {
+        path: summary.path,
+        title: summary.title,
+        tags: summary.tags,
+        body: `# ${summary.title}\n\n- [ ] Task`,
+        updated: summary.updated,
+        revision: `${summary.id}-revision`,
+      },
+    ]),
+  );
+
+  const restoreDefaultInvoke = () => {
+    eventHandlers.clear();
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "take_opened_markdown_files"
+          ? []
+          : command === "load_selected_library"
+            ? null
+            : undefined,
+      ),
+    );
+  };
+
+  it("enqueues the dirty note and awaits every save queue before completing quit", async () => {
+    let resolveFirst: (value: unknown) => void = () => undefined;
+    let resolveSecond: (value: unknown) => void = () => undefined;
+    const firstSave = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondSave = new Promise((resolve) => {
+      resolveSecond = resolve;
+    });
+    invoke.mockImplementation(
+      ((command: string, args?: unknown) => {
+        const payload = args as { path?: string; note?: { path: string } } | undefined;
+        if (command === "load_selected_library") return Promise.resolve("C:/Notes");
+        if (command === "load_library_snapshot")
+          return Promise.resolve({
+            notes,
+            folders: ["Work", "Personal"],
+            trash: [],
+            warnings: [],
+          });
+        if (command === "read_note")
+          return Promise.resolve(documents.get(payload?.path || ""));
+        if (command === "save_note")
+          return payload?.note?.path === notes[0].path ? firstSave : secondSave;
+        if (
+          command === "take_opened_markdown_files" ||
+          command === "find_backlinks"
+        )
+          return Promise.resolve([]);
+        return Promise.resolve(undefined);
+      }) as never,
+    );
+
+    try {
+      render(<App />);
+      const projectButton = (await screen.findAllByRole("button", {
+        name: /Project Alpha/,
+      })).find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(projectButton!);
+      fireEvent.click(await screen.findByRole("checkbox"));
+      fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith(
+          "save_note",
+          expect.objectContaining({
+            note: expect.objectContaining({ path: notes[0].path }),
+          }),
+        ),
+      );
+
+      const cafeButton = screen
+        .getAllByRole("button", { name: /Café ideas/ })
+        .find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(cafeButton!);
+      await screen.findByText("Café ideas", { selector: ".preview h1" });
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(
+            ([command]) => command === "set_dirty_state",
+          ).slice(-1)[0],
+        ).toEqual(["set_dirty_state", { dirty: true }]),
+      );
+      fireEvent.click(screen.getByRole("checkbox"));
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("set_dirty_state", { dirty: true }),
+      );
+      await waitFor(() =>
+        expect(eventHandlers.has("margin://request-quit")).toBe(true),
+      );
+
+      act(() => {
+        eventHandlers.get("margin://request-quit")?.({
+          payload: { requestId: 41 },
+        });
+      });
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith(
+          "save_note",
+          expect.objectContaining({
+            note: expect.objectContaining({ path: notes[1].path }),
+          }),
+        ),
+      );
+      expect(invoke).not.toHaveBeenCalledWith("complete_quit_request", {
+        requestId: 41,
+        saved: true,
+      });
+
+      await act(async () => {
+        resolveSecond({
+          status: "saved",
+          note: {
+            ...documents.get(notes[1].path)!,
+            body: "# Café ideas\n\n- [x] Task",
+            revision: "cafe-saved",
+          },
+        });
+        await secondSave;
+      });
+      expect(invoke).not.toHaveBeenCalledWith("complete_quit_request", {
+        requestId: 41,
+        saved: true,
+      });
+
+      await act(async () => {
+        resolveFirst({
+          status: "saved",
+          note: {
+            ...documents.get(notes[0].path)!,
+            body: "# Project Alpha\n\n- [x] Task",
+            revision: "project-saved",
+          },
+        });
+        await firstSave;
+      });
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("complete_quit_request", {
+          requestId: 41,
+          saved: true,
+        }),
+      );
+    } finally {
+      restoreDefaultInvoke();
+    }
+  });
+
+  it.each(["conflict", "error"] as const)(
+    "reports quit as unsaved and keeps %s recovery visible",
+    async (failure) => {
+      const disk = {
+        ...documents.get(notes[0].path)!,
+        body: "# Project Alpha\n\nChanged outside Margin",
+        revision: "disk-revision",
+      };
+      invoke.mockImplementation(
+        ((command: string, args?: unknown) => {
+          const payload = args as { path?: string } | undefined;
+          if (command === "load_selected_library")
+            return Promise.resolve("C:/Notes");
+          if (command === "load_library_snapshot")
+            return Promise.resolve({
+              notes: [notes[0]],
+              folders: ["Work"],
+              trash: [],
+              warnings: [],
+            });
+          if (command === "read_note")
+            return Promise.resolve(documents.get(payload?.path || ""));
+          if (command === "save_note")
+            return Promise.resolve(
+              failure === "conflict"
+                ? { status: "conflict", disk }
+                : { status: "error", message: "disk full" },
+            );
+          if (
+            command === "take_opened_markdown_files" ||
+            command === "find_backlinks"
+          )
+            return Promise.resolve([]);
+          return Promise.resolve(undefined);
+        }) as never,
+      );
+
+      try {
+        render(<App />);
+        const projectButton = (await screen.findAllByRole("button", {
+          name: /Project Alpha/,
+        })).find((button) => button.classList.contains("nr-note-main"));
+        fireEvent.click(projectButton!);
+        fireEvent.click(await screen.findByRole("checkbox"));
+        await waitFor(() =>
+          expect(eventHandlers.has("margin://request-quit")).toBe(true),
+        );
+
+        act(() => {
+          eventHandlers.get("margin://request-quit")?.({
+            payload: { requestId: 52 },
+          });
+        });
+
+        await waitFor(() =>
+          expect(invoke).toHaveBeenCalledWith("complete_quit_request", {
+            requestId: 52,
+            saved: false,
+          }),
+        );
+        if (failure === "conflict") {
+          expect(
+            screen.getByText(
+              "Your unsaved edits have not been overwritten. Choose which version to keep.",
+            ),
+          ).toBeInTheDocument();
+        } else {
+          expect(screen.getByText("Save failed: disk full")).toBeInTheDocument();
+        }
+      } finally {
+        restoreDefaultInvoke();
+      }
+    },
+  );
+
+  it("ignores stale and duplicate quit request ids", async () => {
+    try {
+      invoke.mockClear();
+      render(<App />);
+      await waitFor(() =>
+        expect(eventHandlers.has("margin://request-quit")).toBe(true),
+      );
+
+      act(() => {
+        eventHandlers.get("margin://request-quit")?.({
+          payload: { requestId: 8 },
+        });
+        eventHandlers.get("margin://request-quit")?.({
+          payload: { requestId: 8 },
+        });
+        eventHandlers.get("margin://request-quit")?.({
+          payload: { requestId: 7 },
+        });
+      });
+
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("complete_quit_request", {
+          requestId: 8,
+          saved: true,
+        }),
+      );
+      expect(
+        invoke.mock.calls.filter(
+          ([command]) => command === "complete_quit_request",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      restoreDefaultInvoke();
+    }
   });
 });
 

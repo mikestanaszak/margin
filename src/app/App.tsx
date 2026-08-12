@@ -244,6 +244,7 @@ export function App() {
     initialNoteSessionState,
   );
   const note = noteSession.draft;
+  const [pendingSaveCount, setPendingSaveCount] = useState(0);
   const [filter, setFilter] = useState<Filter>({ type: "all" });
   const [query, setQuery] = useState("");
   const [backlinks, setBacklinks] = useState<NoteSummary[]>([]);
@@ -336,7 +337,13 @@ export function App() {
   const noteLoadGeneration = useRef(0);
   const refreshGeneration = useRef(0);
   const refreshCoordinator = useRef<ReturnType<typeof createRefreshCoordinator> | null>(null);
-  const saveQueues = useRef(new Map<string, Promise<void>>());
+  const saveQueues = useRef(new Map<string, Promise<boolean>>());
+  const enqueueSaveRef = useRef<
+    (draft: NoteDocument) => Promise<boolean>
+  >(async () => false);
+  const lastReportedDirty = useRef<boolean | null>(null);
+  const latestQuitRequestId = useRef(0);
+  const quitFlushTail = useRef(Promise.resolve());
   const internallyMovedPath = useRef<string | null>(null);
   const registeredCaptureShortcut = useRef(defaultShortcuts.quickCapture);
   const viewScrollRatios = useRef(new Map<string, number>());
@@ -873,7 +880,7 @@ export function App() {
     }
   };
   const saveNote = async (draft: NoteDocument, queueKey: string) => {
-    if (!library || !pathIsInLibrary(draft.path, library)) return;
+    if (!library || !pathIsInLibrary(draft.path, library)) return true;
     try {
       const originalPath = draft.path;
       const previousPath =
@@ -890,7 +897,7 @@ export function App() {
             ? currentBaseline.revision
             : draft.revision,
       };
-      if (!hasUnsavedChanges(noteToSave, currentBaseline)) return;
+      if (!hasUnsavedChanges(noteToSave, currentBaseline)) return true;
       const saveBelongsToActiveNote = () =>
         activePathRef.current === previousPath ||
         activePathRef.current === originalPath;
@@ -910,7 +917,7 @@ export function App() {
         });
         if (isStillActive)
           setStatus("Save conflict: the note changed on disk");
-        return;
+        return false;
       }
       if (result.status === "error") {
         if (isStillActive) {
@@ -920,7 +927,7 @@ export function App() {
           });
           setStatus(`Save failed: ${result.message}`);
         }
-        return;
+        return false;
       }
       const saved = result.note;
       const pathChanged = saved.path !== previousPath;
@@ -961,6 +968,7 @@ export function App() {
       setNotes((current) => current.map(updateSummary));
       setTrashNotes((current) => current.map(updateSummary));
       if (isStillActive) setStatus("Saved");
+      return true;
     } catch (error) {
       if (activePathRef.current === draft.path) {
         dispatchNoteSession({
@@ -969,6 +977,7 @@ export function App() {
         });
         setStatus(`Save failed: ${String(error)}`);
       }
+      return false;
     }
   };
   const enqueueSave = (draft: NoteDocument) => {
@@ -979,13 +988,16 @@ export function App() {
     const queued = previous
       .catch(() => undefined)
       .then(() => saveNote(queuedDraft, queueKey));
+    setPendingSaveCount((count) => count + 1);
     saveQueues.current.set(queueKey, queued);
     void queued.finally(() => {
       if (saveQueues.current.get(queueKey) === queued)
         saveQueues.current.delete(queueKey);
+      setPendingSaveCount((count) => Math.max(0, count - 1));
     });
     return queued;
   };
+  enqueueSaveRef.current = enqueueSave;
   const duplicateNote = async (source: Pick<NoteSummary, "path">) => {
     if (!library) return;
     try {
@@ -1324,6 +1336,67 @@ export function App() {
   const activeNoteDirty = Boolean(
     note && hasUnsavedChanges(note, baseline.current),
   );
+  const nativeDirty = activeNoteDirty || pendingSaveCount > 0 || Boolean(conflict);
+  useEffect(() => {
+    if (lastReportedDirty.current === nativeDirty) return;
+    lastReportedDirty.current = nativeDirty;
+    void native.setDirtyState(nativeDirty).catch(() => {
+      if (lastReportedDirty.current === nativeDirty)
+        lastReportedDirty.current = null;
+    });
+  }, [nativeDirty]);
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<{ requestId: number }>("margin://request-quit", (event) => {
+      const requestId = event.payload.requestId;
+      if (
+        !Number.isSafeInteger(requestId) ||
+        requestId <= 0 ||
+        requestId <= latestQuitRequestId.current
+      )
+        return;
+      latestQuitRequestId.current = requestId;
+      quitFlushTail.current = quitFlushTail.current
+        .catch(() => undefined)
+        .then(async () => {
+          if (disposed || requestId !== latestQuitRequestId.current) return;
+
+          let saved = true;
+          const currentNote = noteRef.current;
+          const currentLibrary = libraryRef.current;
+          if (
+            currentNote &&
+            currentLibrary &&
+            pathIsInLibrary(currentNote.path, currentLibrary) &&
+            hasUnsavedChanges(currentNote, baseline.current)
+          ) {
+            saved = await enqueueSaveRef.current(currentNote);
+          }
+
+          while (saveQueues.current.size > 0) {
+            const pending = [...new Set(saveQueues.current.values())];
+            const results = await Promise.all(
+              pending.map((queue) => queue.catch(() => false)),
+            );
+            saved = results.every(Boolean) && saved;
+            await Promise.resolve();
+          }
+
+          if (disposed || requestId !== latestQuitRequestId.current) return;
+          await native
+            .completeQuitRequest(requestId, saved)
+            .catch(() => undefined);
+        });
+    }).then((removeListener) => {
+      if (disposed) removeListener();
+      else unlisten = removeListener;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
   const openNote = useCallback((selected: NoteSummary) => {
     setActivePath(selected.path);
   }, []);

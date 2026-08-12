@@ -22,6 +22,10 @@ export const native = {
   showQuickCapture: () => invoke<void>("show_quick_capture"),
   configureQuickCaptureShortcut: (shortcut: string) =>
     invoke<void>("configure_quick_capture_shortcut", { shortcut }),
+  setDirtyState: (dirty: boolean) =>
+    invoke<void>("set_dirty_state", { dirty }),
+  completeQuitRequest: (requestId: number, saved: boolean) =>
+    invoke<void>("complete_quit_request", { requestId, saved }),
   loadSelectedLibrary: () => invoke<string | null>("load_selected_library"),
   saveSelectedLibrary: (libraryPath: string) =>
     invoke<void>("save_selected_library", { libraryPath }),

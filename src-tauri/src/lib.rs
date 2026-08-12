@@ -19,10 +19,10 @@ use notes::{
     restore_note_from_trash, reveal_note_in_file_manager, save_note,
 };
 use windows::{
-    configure_quick_capture_shortcut, default_capture_shortcut, handle_global_shortcut,
-    handle_run_event, handle_window_event, hide_quick_capture, load_selected_library,
-    open_external_url, save_selected_library, setup as setup_windows, show_quick_capture,
-    take_opened_markdown_files,
+    complete_quit_request, configure_quick_capture_shortcut, default_capture_shortcut,
+    handle_global_shortcut, handle_run_event, handle_window_event, hide_quick_capture,
+    load_selected_library, open_external_url, save_selected_library, set_dirty_state,
+    setup as setup_windows, show_quick_capture, take_opened_markdown_files,
 };
 
 pub fn run() {
@@ -72,7 +72,9 @@ pub fn run() {
             save_selected_library,
             load_selected_library,
             configure_quick_capture_shortcut,
-            take_opened_markdown_files
+            take_opened_markdown_files,
+            set_dirty_state,
+            complete_quit_request
         ])
         .build(tauri::generate_context!())
         .expect("error while building Margin")
