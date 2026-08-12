@@ -76,7 +76,12 @@ type Filter = {
   type: "all" | "today" | "favorites" | "trash" | "folder";
   folder?: string;
 };
-type Conflict = { disk: NoteDocument; mine: NoteDocument; path: string };
+type Conflict = {
+  disk: NoteDocument;
+  mine: NoteDocument;
+  path: string;
+  libraryPath?: string;
+};
 type FailedSaveRecovery = {
   draft: NoteDocument;
   libraryPath: string;
@@ -386,6 +391,25 @@ export function App() {
     },
     [queueKeyForPath],
   );
+  const retireOwnedDraft = useCallback(
+    (queueKey: string, candidate: NoteDocument) => {
+      if (latestSaveDrafts.current.get(queueKey) !== candidate) return false;
+      latestSaveDrafts.current.delete(queueKey);
+
+      const retiredPaths = new Set<string>();
+      for (const [path, mappedQueueKey] of saveQueueKeys.current) {
+        if (mappedQueueKey !== queueKey) continue;
+        retiredPaths.add(path);
+        saveQueueKeys.current.delete(path);
+      }
+      for (const [path, savedPath] of savedPathAliases.current) {
+        if (!retiredPaths.has(path) && !retiredPaths.has(savedPath)) continue;
+        savedPathAliases.current.delete(path);
+      }
+      return true;
+    },
+    [],
+  );
 
   const checkForUpdates = async (manual = false) => {
     setUpdateState("checking");
@@ -678,8 +702,21 @@ export function App() {
           return;
         baseline.current = loaded;
         noteBaselines.current.set(loaded.path, loaded);
-        rememberLatestDraft(loaded);
-        dispatchNoteSession({ type: "loadSucceeded", note: loaded });
+        const queueKey = queueKeyForPath(loaded.path);
+        const ownedDraft = latestSaveDrafts.current.get(queueKey);
+        const pendingOwnedDraft = Boolean(
+          ownedDraft &&
+            (saveQueues.current.has(queueKey) ||
+              failedSaveRecoveriesRef.current.has(queueKey) ||
+              hasUnsavedChanges(ownedDraft, loaded)),
+        );
+        dispatchNoteSession({
+          type: "loadSucceeded",
+          note:
+            pendingOwnedDraft && ownedDraft
+              ? { ...ownedDraft, revision: loaded.revision }
+              : loaded,
+        });
       } catch (error) {
         if (generation === noteLoadGeneration.current) {
           dispatchNoteSession({
@@ -690,7 +727,7 @@ export function App() {
         }
       }
     })();
-  }, [activePath, rememberLatestDraft]);
+  }, [activePath, queueKeyForPath]);
   useEffect(() => {
     if (!note || !hasUnsavedChanges(note, baseline.current)) return;
     const timer = window.setTimeout(() => void enqueueSave(note), 700);
@@ -723,6 +760,7 @@ export function App() {
             disk,
             mine: currentNote,
             path: currentNote.path,
+            libraryPath: library,
           });
         else if (disk.revision !== currentBaseline.revision) {
           baseline.current = disk;
@@ -960,8 +998,9 @@ export function App() {
         dispatchNoteSession({
           type: "saveConflicted",
           disk: result.disk,
-          mine: noteToSave,
+          mine: latestSaveDrafts.current.get(queueKey) ?? noteToSave,
           path: previousPath,
+          libraryPath: saveLibrary,
         });
         if (isStillActive)
           setStatus("Save conflict: the note changed on disk");
@@ -1056,7 +1095,37 @@ export function App() {
     const previous = saveQueues.current.get(queueKey) ?? Promise.resolve();
     const queued = previous
       .catch(() => undefined)
-      .then(() => saveNote(queuedDraft, queueKey, saveLibrary));
+      .then(async () => {
+        if (
+          !saveLibrary ||
+          !pathIsInLibrary(queuedDraft.path, saveLibrary)
+        ) {
+          retireOwnedDraft(queueKey, queuedDraft);
+          return true;
+        }
+        let nextDraft = queuedDraft;
+        while (true) {
+          if (!(await saveNote(nextDraft, queueKey, saveLibrary))) return false;
+          const latestDraft = latestSaveDrafts.current.get(queueKey);
+          if (!latestDraft) return true;
+          const latestPath =
+            savedPathAliases.current.get(latestDraft.path) ?? latestDraft.path;
+          const latestBaseline =
+            noteBaselines.current.get(latestPath) ??
+            noteBaselines.current.get(latestDraft.path) ??
+            null;
+          if (
+            !hasUnsavedChanges(
+              { ...latestDraft, path: latestPath },
+              latestBaseline,
+            )
+          ) {
+            retireOwnedDraft(queueKey, latestDraft);
+            return true;
+          }
+          nextDraft = { ...latestDraft, tags: [...latestDraft.tags] };
+        }
+      });
     setPendingSaveCount((count) => count + 1);
     saveQueues.current.set(queueKey, queued);
     void queued.finally(() => {
@@ -1417,6 +1486,40 @@ export function App() {
     note && hasUnsavedChanges(note, baseline.current),
   );
   const failedSaveRecovery = failedSaveRecoveries.values().next().value;
+  useEffect(() => {
+    if (!note) return;
+    const queueKey = queueKeyForPath(note.path);
+    const ownedDraft = latestSaveDrafts.current.get(queueKey);
+    if (
+      !ownedDraft ||
+      saveQueues.current.has(queueKey) ||
+      failedSaveRecoveriesRef.current.has(queueKey)
+    )
+      return;
+    const currentPath = savedPathAliases.current.get(note.path) ?? note.path;
+    const currentBaseline =
+      noteBaselines.current.get(currentPath) ??
+      noteBaselines.current.get(note.path) ??
+      null;
+    if (
+      !hasUnsavedChanges({ ...note, path: currentPath }, currentBaseline) &&
+      !hasUnsavedChanges(
+        {
+          ...ownedDraft,
+          path:
+            savedPathAliases.current.get(ownedDraft.path) ?? ownedDraft.path,
+        },
+        { ...note, path: currentPath },
+      )
+    )
+      retireOwnedDraft(queueKey, ownedDraft);
+  }, [
+    failedSaveRecoveries,
+    note,
+    pendingSaveCount,
+    queueKeyForPath,
+    retireOwnedDraft,
+  ]);
   const nativeDirty =
     activeNoteDirty ||
     pendingSaveCount > 0 ||
@@ -1518,10 +1621,29 @@ export function App() {
       unlistenCancellation?.();
     };
   }, []);
-  const openNote = useCallback((selected: NoteSummary) => {
-    if (noteRef.current) rememberLatestDraft(noteRef.current);
-    setActivePath(selected.path);
-  }, [rememberLatestDraft]);
+  const openNote = useCallback(
+    (selected: NoteSummary) => {
+      const currentNote = noteRef.current;
+      if (currentNote) {
+        const currentPath =
+          savedPathAliases.current.get(currentNote.path) ?? currentNote.path;
+        const currentBaseline =
+          noteBaselines.current.get(currentPath) ??
+          noteBaselines.current.get(currentNote.path) ??
+          null;
+        if (
+          hasUnsavedChanges(
+            { ...currentNote, path: currentPath },
+            currentBaseline,
+          )
+        ) {
+          rememberLatestDraft(currentNote);
+        }
+      }
+      setActivePath(selected.path);
+    },
+    [rememberLatestDraft],
+  );
   const toggleNoteFavorite = useCallback((selected: NoteSummary) => {
     setFavorites((value) =>
       value.includes(selected.path)
@@ -2062,6 +2184,10 @@ export function App() {
               : "empty";
             noteBaselines.current.set(conflict.path, conflict.disk);
             if (choice === "disk") {
+              const queueKey = queueKeyForPath(conflict.path);
+              const ownedDraft = latestSaveDrafts.current.get(queueKey);
+              setFailedSaveRecovery(queueKey, null);
+              if (ownedDraft) retireOwnedDraft(queueKey, ownedDraft);
               if (conflictIsActive) {
                 baseline.current = conflict.disk;
                 dispatchNoteSession({
@@ -2079,7 +2205,10 @@ export function App() {
                 type: "conflictDismissed",
                 phase: conflictIsActive ? "dirty" : currentPhase,
               });
-              void enqueueSave(conflict.mine);
+              void enqueueSave(
+                conflict.mine,
+                conflict.libraryPath ?? libraryRef.current,
+              );
             }
           }}
         />

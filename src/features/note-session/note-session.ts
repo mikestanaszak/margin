@@ -13,6 +13,7 @@ export type NoteSessionConflict = {
   disk: NoteDocument;
   mine: NoteDocument;
   path: string;
+  libraryPath?: string;
 };
 
 export type NoteSessionState = {
@@ -40,6 +41,7 @@ export type NoteSessionAction =
       disk: NoteDocument;
       path: string;
       mine?: NoteDocument;
+      libraryPath?: string;
     }
   | { type: "saveFailed"; message: string }
   | { type: "conflictDismissed"; phase?: NoteSessionPhase };
@@ -115,6 +117,7 @@ export function noteSessionReducer(
               disk: action.disk,
               mine: action.mine ?? state.draft!,
               path: action.path,
+              libraryPath: action.libraryPath,
             }
           : null,
         error: null,

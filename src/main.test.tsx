@@ -891,6 +891,7 @@ describe("navigation structures and safety dialogs", () => {
             note: {
               ...documents.get(notes[0].path)!,
               path: "C:/Notes/Work/Project Alpha renamed.md",
+              body: "# Project Alpha\n\n- [x] Task",
               revision: "saved-revision",
             },
           });
@@ -1243,7 +1244,7 @@ describe("save-aware quit", () => {
     }
   });
 
-  it("stops quit-save convergence after timeout cancellation and allows a newer request", async () => {
+  it("stops quit coordination after cancellation while the save queue converges", async () => {
     let resolveFirst: (value: unknown) => void = () => undefined;
     let resolveSecond: (value: unknown) => void = () => undefined;
     const firstSave = new Promise((resolve) => {
@@ -1320,9 +1321,11 @@ describe("save-aware quit", () => {
         await firstSave;
         await Promise.resolve();
       });
-      expect(
-        invoke.mock.calls.filter(([command]) => command === "save_note"),
-      ).toHaveLength(1);
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(2),
+      );
       expect(invoke).not.toHaveBeenCalledWith("complete_quit_request", {
         requestId: 81,
         saved: true,
@@ -1597,14 +1600,162 @@ describe("save-aware quit", () => {
     }
   });
 
-  it("retries a failed draft against its originating library after switching libraries", async () => {
+  it("continues an inactive save queue to the newest edit after an older save succeeds", async () => {
+    const initialProject = {
+      ...documents.get(notes[0].path)!,
+      body: "# Project Alpha\n\n- [ ] First task\n- [ ] Second task",
+    };
+    const firstSavedProject = {
+      ...initialProject,
+      body: "# Project Alpha\n\n- [x] First task\n- [ ] Second task",
+      revision: "first-background-save",
+    };
+    const newestProject = {
+      ...initialProject,
+      body: "# Project Alpha\n\n- [x] First task\n- [x] Second task",
+      revision: "newest-background-save",
+    };
+    let diskProject = initialProject;
+    let resolveFirst: (value: unknown) => void = () => undefined;
+    let resolveSecond: (value: unknown) => void = () => undefined;
+    const firstSave = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondSave = new Promise((resolve) => {
+      resolveSecond = resolve;
+    });
+    let saveCall = 0;
+    invoke.mockImplementation(
+      ((command: string, args?: unknown) => {
+        const payload = args as { path?: string } | undefined;
+        if (command === "load_selected_library")
+          return Promise.resolve("C:/Notes");
+        if (command === "load_library_snapshot")
+          return Promise.resolve({
+            notes,
+            folders: ["Work", "Personal"],
+            trash: [],
+            warnings: [],
+          });
+        if (command === "read_note")
+          return Promise.resolve(
+            payload?.path === notes[0].path
+              ? diskProject
+              : documents.get(payload?.path || ""),
+          );
+        if (command === "save_note") {
+          saveCall += 1;
+          return saveCall === 1 ? firstSave : secondSave;
+        }
+        if (
+          command === "take_opened_markdown_files" ||
+          command === "find_backlinks"
+        )
+          return Promise.resolve([]);
+        return Promise.resolve(undefined);
+      }) as never,
+    );
+
+    try {
+      render(<App />);
+      const projectButton = (await screen.findAllByRole("button", {
+        name: /Project Alpha/,
+      })).find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(projectButton!);
+      fireEvent.click((await screen.findAllByRole("checkbox"))[0]);
+      fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(1),
+      );
+      fireEvent.click(screen.getAllByRole("checkbox")[1]);
+
+      const cafeButton = screen
+        .getAllByRole("button", { name: /Café ideas/ })
+        .find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(cafeButton!);
+      await screen.findByText("Café ideas", { selector: ".preview h1" });
+
+      diskProject = firstSavedProject;
+      await act(async () => {
+        resolveFirst({ status: "saved", note: firstSavedProject });
+        await firstSave;
+      });
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(2),
+      );
+      expect(
+        invoke.mock.calls
+          .filter(([command]) => command === "save_note")
+          .slice(-1)[0],
+      ).toEqual([
+        "save_note",
+        expect.objectContaining({
+          note: expect.objectContaining({
+            path: notes[0].path,
+            body: newestProject.body,
+          }),
+        }),
+      ]);
+      expect(
+        invoke.mock.calls
+          .filter(([command]) => command === "set_dirty_state")
+          .slice(-1)[0],
+      ).toEqual(["set_dirty_state", { dirty: true }]);
+
+      fireEvent.click(projectButton!);
+      await screen.findByText("Project Alpha", { selector: ".preview h1" });
+      expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+      expect(screen.getAllByRole("checkbox")[0]).toBeChecked();
+      expect(screen.getAllByRole("checkbox")[1]).toBeChecked();
+
+      diskProject = newestProject;
+      await act(async () => {
+        resolveSecond({ status: "saved", note: newestProject });
+        await secondSave;
+      });
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls
+            .filter(([command]) => command === "set_dirty_state")
+            .slice(-1)[0],
+        ).toEqual(["set_dirty_state", { dirty: false }]),
+      );
+
+      const externalAfterClean = {
+        ...newestProject,
+        body: "# Project Alpha\n\nChanged after clean convergence",
+        revision: "external-after-clean",
+      };
+      fireEvent.click(cafeButton!);
+      await screen.findByText("Café ideas", { selector: ".preview h1" });
+      diskProject = externalAfterClean;
+      fireEvent.click(projectButton!);
+      expect(
+        await screen.findByText("Changed after clean convergence", {
+          selector: ".preview p",
+        }),
+      ).toBeInTheDocument();
+    } finally {
+      restoreDefaultInvoke();
+    }
+  });
+
+  it("keeps the originating library when a recovery retry conflicts", async () => {
     let resolveSave: (value: unknown) => void = () => undefined;
-    let resolveRetry: (value: unknown) => void = () => undefined;
+    let resolveRetryConflict: (value: unknown) => void = () => undefined;
+    let resolveKeepMine: (value: unknown) => void = () => undefined;
     const pendingSave = new Promise((resolve) => {
       resolveSave = resolve;
     });
-    const retrySave = new Promise((resolve) => {
-      resolveRetry = resolve;
+    const retryConflict = new Promise((resolve) => {
+      resolveRetryConflict = resolve;
+    });
+    const keepMineSave = new Promise((resolve) => {
+      resolveKeepMine = resolve;
     });
     let saveCall = 0;
     open.mockResolvedValueOnce("D:/Other");
@@ -1631,7 +1782,11 @@ describe("save-aware quit", () => {
           return Promise.resolve(documents.get(payload?.path || ""));
         if (command === "save_note") {
           saveCall += 1;
-          return saveCall === 1 ? pendingSave : retrySave;
+          return saveCall === 1
+            ? pendingSave
+            : saveCall === 2
+              ? retryConflict
+              : keepMineSave;
         }
         if (
           command === "take_opened_markdown_files" ||
@@ -1700,16 +1855,14 @@ describe("save-aware quit", () => {
         }),
       ]);
 
+      const disk = {
+        ...documents.get(notes[0].path)!,
+        body: "# Project Alpha\n\nChanged outside Margin",
+        revision: "old-library-conflict",
+      };
       await act(async () => {
-        resolveRetry({
-          status: "saved",
-          note: {
-            ...documents.get(notes[0].path)!,
-            body: "# Project Alpha\n\n- [x] Task",
-            revision: "old-library-retry-saved",
-          },
-        });
-        await retrySave;
+        resolveRetryConflict({ status: "conflict", disk });
+        await retryConflict;
       });
       await waitFor(() =>
         expect(
@@ -1718,6 +1871,55 @@ describe("save-aware quit", () => {
           ),
         ).not.toBeInTheDocument(),
       );
+      expect(
+        screen.getByText(
+          "Your unsaved edits have not been overwritten. Choose which version to keep.",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        invoke.mock.calls
+          .filter(([command]) => command === "set_dirty_state")
+          .slice(-1)[0],
+      ).toEqual(["set_dirty_state", { dirty: true }]);
+
+      fireEvent.click(screen.getByRole("button", { name: "Keep my edits" }));
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(3),
+      );
+      expect(
+        invoke.mock.calls
+          .filter(([command]) => command === "save_note")
+          .slice(-1)[0],
+      ).toEqual([
+        "save_note",
+        expect.objectContaining({
+          libraryPath: "C:/Notes",
+          note: expect.objectContaining({
+            path: notes[0].path,
+            body: "# Project Alpha\n\n- [x] Task",
+            revision: "old-library-conflict",
+          }),
+        }),
+      ]);
+      expect(
+        invoke.mock.calls
+          .filter(([command]) => command === "set_dirty_state")
+          .slice(-1)[0],
+      ).toEqual(["set_dirty_state", { dirty: true }]);
+
+      await act(async () => {
+        resolveKeepMine({
+          status: "saved",
+          note: {
+            ...documents.get(notes[0].path)!,
+            body: "# Project Alpha\n\n- [x] Task",
+            revision: "old-library-keep-mine-saved",
+          },
+        });
+        await keepMineSave;
+      });
       await waitFor(() =>
         expect(
           invoke.mock.calls
