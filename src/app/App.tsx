@@ -77,6 +77,10 @@ type Filter = {
   folder?: string;
 };
 type Conflict = { disk: NoteDocument; mine: NoteDocument; path: string };
+type FailedSaveRecovery = {
+  draft: NoteDocument;
+  message: string;
+};
 type AppUpdate = NonNullable<Awaited<ReturnType<typeof check>>>;
 export type UpdateState =
   | "idle"
@@ -245,6 +249,9 @@ export function App() {
   );
   const note = noteSession.draft;
   const [pendingSaveCount, setPendingSaveCount] = useState(0);
+  const [failedSaveRecoveries, setFailedSaveRecoveries] = useState<
+    Map<string, FailedSaveRecovery>
+  >(() => new Map());
   const [filter, setFilter] = useState<Filter>({ type: "all" });
   const [query, setQuery] = useState("");
   const [backlinks, setBacklinks] = useState<NoteSummary[]>([]);
@@ -338,6 +345,9 @@ export function App() {
   const refreshGeneration = useRef(0);
   const refreshCoordinator = useRef<ReturnType<typeof createRefreshCoordinator> | null>(null);
   const saveQueues = useRef(new Map<string, Promise<boolean>>());
+  const failedSaveRecoveriesRef = useRef(
+    new Map<string, FailedSaveRecovery>(),
+  );
   const enqueueSaveRef = useRef<
     (draft: NoteDocument) => Promise<boolean>
   >(async () => false);
@@ -347,6 +357,16 @@ export function App() {
   const internallyMovedPath = useRef<string | null>(null);
   const registeredCaptureShortcut = useRef(defaultShortcuts.quickCapture);
   const viewScrollRatios = useRef(new Map<string, number>());
+  const setFailedSaveRecovery = useCallback(
+    (queueKey: string, recovery: FailedSaveRecovery | null) => {
+      const next = new Map(failedSaveRecoveriesRef.current);
+      if (recovery) next.set(queueKey, recovery);
+      else next.delete(queueKey);
+      failedSaveRecoveriesRef.current = next;
+      setFailedSaveRecoveries(next);
+    },
+    [],
+  );
 
   const checkForUpdates = async (manual = false) => {
     setUpdateState("checking");
@@ -881,23 +901,26 @@ export function App() {
   };
   const saveNote = async (draft: NoteDocument, queueKey: string) => {
     if (!library || !pathIsInLibrary(draft.path, library)) return true;
+    const originalPath = draft.path;
+    const previousPath =
+      savedPathAliases.current.get(originalPath) ?? originalPath;
+    const currentBaseline =
+      noteBaselines.current.get(previousPath) ??
+      noteBaselines.current.get(originalPath) ??
+      null;
+    const noteToSave = {
+      ...draft,
+      path: previousPath,
+      revision:
+        currentBaseline?.path === previousPath
+          ? currentBaseline.revision
+          : draft.revision,
+    };
+    if (!hasUnsavedChanges(noteToSave, currentBaseline)) {
+      setFailedSaveRecovery(queueKey, null);
+      return true;
+    }
     try {
-      const originalPath = draft.path;
-      const previousPath =
-        savedPathAliases.current.get(originalPath) ?? originalPath;
-      const currentBaseline =
-        noteBaselines.current.get(previousPath) ??
-        noteBaselines.current.get(originalPath) ??
-        null;
-      const noteToSave = {
-        ...draft,
-        path: previousPath,
-        revision:
-          currentBaseline?.path === previousPath
-            ? currentBaseline.revision
-            : draft.revision,
-      };
-      if (!hasUnsavedChanges(noteToSave, currentBaseline)) return true;
       const saveBelongsToActiveNote = () =>
         activePathRef.current === previousPath ||
         activePathRef.current === originalPath;
@@ -909,6 +932,7 @@ export function App() {
       const result = await native.saveNote(noteToSave, library);
       const isStillActive = saveBelongsToActiveNote();
       if (result.status === "conflict") {
+        setFailedSaveRecovery(queueKey, null);
         dispatchNoteSession({
           type: "saveConflicted",
           disk: result.disk,
@@ -920,6 +944,14 @@ export function App() {
         return false;
       }
       if (result.status === "error") {
+        const recoveryDraft =
+          isStillActive && noteRef.current?.path === originalPath
+            ? noteRef.current
+            : noteToSave;
+        setFailedSaveRecovery(queueKey, {
+          draft: recoveryDraft,
+          message: result.message,
+        });
         if (isStillActive) {
           dispatchNoteSession({
             type: "saveFailed",
@@ -930,6 +962,7 @@ export function App() {
         return false;
       }
       const saved = result.note;
+      setFailedSaveRecovery(queueKey, null);
       const pathChanged = saved.path !== previousPath;
       savedPathAliases.current.set(originalPath, saved.path);
       saveQueueKeys.current.set(originalPath, queueKey);
@@ -970,6 +1003,12 @@ export function App() {
       if (isStillActive) setStatus("Saved");
       return true;
     } catch (error) {
+      const recoveryDraft =
+        noteRef.current?.path === originalPath ? noteRef.current : noteToSave;
+      setFailedSaveRecovery(queueKey, {
+        draft: recoveryDraft,
+        message: String(error),
+      });
       if (activePathRef.current === draft.path) {
         dispatchNoteSession({
           type: "saveFailed",
@@ -1336,7 +1375,12 @@ export function App() {
   const activeNoteDirty = Boolean(
     note && hasUnsavedChanges(note, baseline.current),
   );
-  const nativeDirty = activeNoteDirty || pendingSaveCount > 0 || Boolean(conflict);
+  const failedSaveRecovery = failedSaveRecoveries.values().next().value;
+  const nativeDirty =
+    activeNoteDirty ||
+    pendingSaveCount > 0 ||
+    failedSaveRecoveries.size > 0 ||
+    Boolean(conflict);
   useEffect(() => {
     if (lastReportedDirty.current === nativeDirty) return;
     lastReportedDirty.current = nativeDirty;
@@ -1363,27 +1407,46 @@ export function App() {
           if (disposed || requestId !== latestQuitRequestId.current) return;
 
           let saved = true;
-          const currentNote = noteRef.current;
-          const currentLibrary = libraryRef.current;
-          if (
-            currentNote &&
-            currentLibrary &&
-            pathIsInLibrary(currentNote.path, currentLibrary) &&
-            hasUnsavedChanges(currentNote, baseline.current)
-          ) {
-            saved = await enqueueSaveRef.current(currentNote);
-          }
+          while (saved) {
+            const currentNote = noteRef.current;
+            const currentLibrary = libraryRef.current;
+            if (
+              currentNote &&
+              currentLibrary &&
+              pathIsInLibrary(currentNote.path, currentLibrary) &&
+              hasUnsavedChanges(currentNote, baseline.current)
+            ) {
+              saved = (await enqueueSaveRef.current(currentNote)) && saved;
+            }
 
-          while (saveQueues.current.size > 0) {
-            const pending = [...new Set(saveQueues.current.values())];
-            const results = await Promise.all(
-              pending.map((queue) => queue.catch(() => false)),
+            while (saveQueues.current.size > 0) {
+              const pending = [...new Set(saveQueues.current.values())];
+              const results = await Promise.all(
+                pending.map((queue) => queue.catch(() => false)),
+              );
+              saved = results.every(Boolean) && saved;
+              await Promise.resolve();
+            }
+
+            if (
+              disposed ||
+              requestId !== latestQuitRequestId.current ||
+              !saved
+            )
+              break;
+            const latestNote = noteRef.current;
+            const latestLibrary = libraryRef.current;
+            const latestIsDirty = Boolean(
+              latestNote &&
+                latestLibrary &&
+                pathIsInLibrary(latestNote.path, latestLibrary) &&
+                hasUnsavedChanges(latestNote, baseline.current),
             );
-            saved = results.every(Boolean) && saved;
-            await Promise.resolve();
+            if (!latestIsDirty && saveQueues.current.size === 0) break;
           }
 
           if (disposed || requestId !== latestQuitRequestId.current) return;
+          saved = saved && failedSaveRecoveriesRef.current.size === 0;
           await native
             .completeQuitRequest(requestId, saved)
             .catch(() => undefined);
@@ -1891,6 +1954,33 @@ export function App() {
             setImportDialogOpen(true);
           }}
         />
+      )}
+      {failedSaveRecovery && (
+        <div className="modal-backdrop">
+          <section
+            className="modal conflict"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Unsaved draft for ${failedSaveRecovery.draft.title}`}
+          >
+            <h2>Unsaved draft needs attention</h2>
+            <p>
+              {failedSaveRecovery.draft.title} could not be saved:{" "}
+              {failedSaveRecovery.message}
+            </p>
+            <p>Margin is keeping this draft available until saving succeeds.</p>
+            <div>
+              <button
+                className="primary"
+                type="button"
+                aria-label={`Retry saving ${failedSaveRecovery.draft.title}`}
+                onClick={() => void enqueueSave(failedSaveRecovery.draft)}
+              >
+                Retry save
+              </button>
+            </div>
+          </section>
+        </div>
       )}
       {conflict && (
         <ConflictDialog

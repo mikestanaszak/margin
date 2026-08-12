@@ -986,6 +986,7 @@ describe("save-aware quit", () => {
 
   const restoreDefaultInvoke = () => {
     eventHandlers.clear();
+    invoke.mockClear();
     invoke.mockImplementation((command: string) =>
       Promise.resolve(
         command === "take_opened_markdown_files"
@@ -1123,6 +1124,117 @@ describe("save-aware quit", () => {
     }
   });
 
+  it("saves an edit made while the quit flush is finishing before acknowledging quit", async () => {
+    let resolveFirst: (value: unknown) => void = () => undefined;
+    let resolveSecond: (value: unknown) => void = () => undefined;
+    const firstSave = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondSave = new Promise((resolve) => {
+      resolveSecond = resolve;
+    });
+    let saveCall = 0;
+    invoke.mockImplementation(
+      ((command: string, args?: unknown) => {
+        const payload = args as { path?: string } | undefined;
+        if (command === "load_selected_library") return Promise.resolve("C:/Notes");
+        if (command === "load_library_snapshot")
+          return Promise.resolve({
+            notes: [notes[0]],
+            folders: ["Work"],
+            trash: [],
+            warnings: [],
+          });
+        if (command === "read_note")
+          return Promise.resolve(documents.get(payload?.path || ""));
+        if (command === "save_note") {
+          saveCall += 1;
+          return saveCall === 1 ? firstSave : secondSave;
+        }
+        if (
+          command === "take_opened_markdown_files" ||
+          command === "find_backlinks"
+        )
+          return Promise.resolve([]);
+        return Promise.resolve(undefined);
+      }) as never,
+    );
+
+    try {
+      render(<App />);
+      const projectButton = (await screen.findAllByRole("button", {
+        name: /Project Alpha/,
+      })).find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(projectButton!);
+      fireEvent.click(await screen.findByRole("checkbox"));
+      await waitFor(() =>
+        expect(eventHandlers.has("margin://request-quit")).toBe(true),
+      );
+
+      act(() => {
+        eventHandlers.get("margin://request-quit")?.({
+          payload: { requestId: 61 },
+        });
+      });
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(1),
+      );
+
+      fireEvent.click(screen.getByRole("checkbox"));
+      await act(async () => {
+        resolveFirst({
+          status: "saved",
+          note: {
+            ...documents.get(notes[0].path)!,
+            body: "# Project Alpha\n\n- [x] Task",
+            revision: "first-quit-save",
+          },
+        });
+        await firstSave;
+      });
+
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(2),
+      );
+      expect(invoke).not.toHaveBeenCalledWith("complete_quit_request", {
+        requestId: 61,
+        saved: true,
+      });
+      expect(invoke).toHaveBeenLastCalledWith(
+        "save_note",
+        expect.objectContaining({
+          note: expect.objectContaining({
+            path: notes[0].path,
+            body: "# Project Alpha\n\n- [ ] Task",
+          }),
+        }),
+      );
+
+      await act(async () => {
+        resolveSecond({
+          status: "saved",
+          note: {
+            ...documents.get(notes[0].path)!,
+            revision: "second-quit-save",
+          },
+        });
+        await secondSave;
+      });
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("complete_quit_request", {
+          requestId: 61,
+          saved: true,
+        }),
+      );
+    } finally {
+      restoreDefaultInvoke();
+    }
+  });
+
   it.each(["conflict", "error"] as const)(
     "reports quit as unsaved and keeps %s recovery visible",
     async (failure) => {
@@ -1197,6 +1309,147 @@ describe("save-aware quit", () => {
       }
     },
   );
+
+  it("keeps a failed inactive draft recoverable and rejects a later quit", async () => {
+    let resolveSave: (value: unknown) => void = () => undefined;
+    let resolveRetry: (value: unknown) => void = () => undefined;
+    const pendingSave = new Promise((resolve) => {
+      resolveSave = resolve;
+    });
+    const retrySave = new Promise((resolve) => {
+      resolveRetry = resolve;
+    });
+    let saveCall = 0;
+    invoke.mockImplementation(
+      ((command: string, args?: unknown) => {
+        const payload = args as { path?: string } | undefined;
+        if (command === "load_selected_library") return Promise.resolve("C:/Notes");
+        if (command === "load_library_snapshot")
+          return Promise.resolve({
+            notes,
+            folders: ["Work", "Personal"],
+            trash: [],
+            warnings: [],
+          });
+        if (command === "read_note")
+          return Promise.resolve(documents.get(payload?.path || ""));
+        if (command === "save_note") {
+          saveCall += 1;
+          return saveCall === 1 ? pendingSave : retrySave;
+        }
+        if (
+          command === "take_opened_markdown_files" ||
+          command === "find_backlinks"
+        )
+          return Promise.resolve([]);
+        return Promise.resolve(undefined);
+      }) as never,
+    );
+
+    try {
+      render(<App />);
+      const projectButton = (await screen.findAllByRole("button", {
+        name: /Project Alpha/,
+      })).find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(projectButton!);
+      fireEvent.click(await screen.findByRole("checkbox"));
+      fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(1),
+      );
+
+      const cafeButton = screen
+        .getAllByRole("button", { name: /Café ideas/ })
+        .find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(cafeButton!);
+      await screen.findByText("Café ideas", { selector: ".preview h1" });
+      await act(async () => {
+        resolveSave({ status: "error", message: "disk full" });
+        await pendingSave;
+        await Promise.resolve();
+      });
+
+      expect(
+        invoke.mock.calls
+          .filter(([command]) => command === "set_dirty_state")
+          .slice(-1)[0],
+      ).toEqual(["set_dirty_state", { dirty: true }]);
+      expect(
+        screen.getByText("Project Alpha could not be saved: disk full"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Retry saving Project Alpha" }),
+      ).toBeInTheDocument();
+
+      act(() => {
+        eventHandlers.get("margin://request-quit")?.({
+          payload: { requestId: 71 },
+        });
+      });
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("complete_quit_request", {
+          requestId: 71,
+          saved: false,
+        }),
+      );
+      expect(invoke).not.toHaveBeenCalledWith("complete_quit_request", {
+        requestId: 71,
+        saved: true,
+      });
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Retry saving Project Alpha" }),
+      );
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(2),
+      );
+      expect(
+        screen.getByText("Project Alpha could not be saved: disk full"),
+      ).toBeInTheDocument();
+
+      await act(async () => {
+        resolveRetry({
+          status: "saved",
+          note: {
+            ...documents.get(notes[0].path)!,
+            body: "# Project Alpha\n\n- [x] Task",
+            revision: "background-retry-saved",
+          },
+        });
+        await retrySave;
+      });
+      await waitFor(() =>
+        expect(
+          screen.queryByText("Project Alpha could not be saved: disk full"),
+        ).not.toBeInTheDocument(),
+      );
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls
+            .filter(([command]) => command === "set_dirty_state")
+            .slice(-1)[0],
+        ).toEqual(["set_dirty_state", { dirty: false }]),
+      );
+
+      act(() => {
+        eventHandlers.get("margin://request-quit")?.({
+          payload: { requestId: 72 },
+        });
+      });
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("complete_quit_request", {
+          requestId: 72,
+          saved: true,
+        }),
+      );
+    } finally {
+      restoreDefaultInvoke();
+    }
+  });
 
   it("ignores stale and duplicate quit request ids", async () => {
     try {

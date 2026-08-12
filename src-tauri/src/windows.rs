@@ -8,7 +8,9 @@ use tauri::{
     window::Color,
     App, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tauri_plugin_dialog::{
+    DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult,
+};
 use tauri_plugin_global_shortcut::{
     Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutEvent, ShortcutState,
 };
@@ -32,6 +34,7 @@ const QUIT_TIMEOUT: Duration = Duration::from_secs(8);
 const SHOW_MENU_ID: &str = "margin-show";
 const CAPTURE_MENU_ID: &str = "margin-capture";
 const QUIT_MENU_ID: &str = "margin-quit";
+const QUIT_ANYWAY_LABEL: &str = "Quit anyway";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum QuitAction {
@@ -137,6 +140,11 @@ struct QuitState(Mutex<QuitCoordinator>);
 #[serde(rename_all = "camelCase")]
 struct QuitRequestPayload {
     request_id: u64,
+}
+
+fn dialog_result_forces_quit(result: &MessageDialogResult) -> bool {
+    matches!(result, MessageDialogResult::No)
+        || matches!(result, MessageDialogResult::Custom(label) if label == QUIT_ANYWAY_LABEL)
 }
 
 fn markdown_file_paths<I>(paths: I) -> Vec<String>
@@ -264,13 +272,16 @@ fn quit_action(app: &AppHandle, action: QuitAction) -> Result<(), String> {
                 )
                 .title("Saving did not finish")
                 .kind(MessageDialogKind::Warning)
-                .buttons(MessageDialogButtons::OkCancelCustom(
-                    "Quit anyway".into(),
+                .buttons(MessageDialogButtons::YesNoCancelCustom(
                     "Cancel".into(),
+                    QUIT_ANYWAY_LABEL.into(),
+                    "Keep editing".into(),
                 ))
-                // Closing the dialog and its Cancel button both report false;
-                // only the explicit destructive button may exit.
-                .show(move |quit_anyway| {
+                // The first button is the platform default and is deliberately safe.
+                // Dismissal and both safe choices map to false; only the separately
+                // labelled destructive choice may exit.
+                .show_with_result(move |result| {
+                    let quit_anyway = dialog_result_forces_quit(&result);
                     let action = dialog_app
                         .state::<QuitState>()
                         .0
@@ -553,7 +564,8 @@ pub(crate) fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
 
 #[cfg(test)]
 mod tests {
-    use super::{QuitAction, QuitCoordinator};
+    use super::{dialog_result_forces_quit, QuitAction, QuitCoordinator};
+    use tauri_plugin_dialog::MessageDialogResult;
 
     #[test]
     fn quit_coordinator_exits_immediately_when_clean() {
@@ -623,5 +635,22 @@ mod tests {
         );
         assert_eq!(coordinator.confirm_timeout(2, true), QuitAction::Exit);
         assert!(!coordinator.is_dirty());
+    }
+
+    #[test]
+    fn timeout_dialog_requires_the_explicit_quit_anyway_result() {
+        for safe_result in [
+            MessageDialogResult::Ok,
+            MessageDialogResult::Yes,
+            MessageDialogResult::Cancel,
+            MessageDialogResult::Custom("Cancel".into()),
+            MessageDialogResult::Custom("Keep editing".into()),
+        ] {
+            assert!(!dialog_result_forces_quit(&safe_result));
+        }
+        assert!(dialog_result_forces_quit(&MessageDialogResult::No));
+        assert!(dialog_result_forces_quit(&MessageDialogResult::Custom(
+            "Quit anyway".into()
+        )));
     }
 }
