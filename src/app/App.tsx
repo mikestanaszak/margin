@@ -710,12 +710,22 @@ export function App() {
               failedSaveRecoveriesRef.current.has(queueKey) ||
               hasUnsavedChanges(ownedDraft, loaded)),
         );
+        const restoredDraft =
+          pendingOwnedDraft && ownedDraft
+            ? {
+                ...ownedDraft,
+                path: loaded.path,
+                revision: loaded.revision,
+                updated: loaded.updated,
+                created: loaded.created,
+                updated_at: loaded.updated_at,
+              }
+            : null;
+        if (restoredDraft)
+          latestSaveDrafts.current.set(queueKey, restoredDraft);
         dispatchNoteSession({
           type: "loadSucceeded",
-          note:
-            pendingOwnedDraft && ownedDraft
-              ? { ...ownedDraft, revision: loaded.revision }
-              : loaded,
+          note: restoredDraft ?? loaded,
         });
       } catch (error) {
         if (generation === noteLoadGeneration.current) {
@@ -1032,7 +1042,10 @@ export function App() {
       savedPathAliases.current.set(originalPath, saved.path);
       saveQueueKeys.current.set(originalPath, queueKey);
       saveQueueKeys.current.set(saved.path, queueKey);
-      noteBaselines.current.set(originalPath, saved);
+      if (originalPath !== saved.path)
+        noteBaselines.current.delete(originalPath);
+      if (previousPath !== saved.path)
+        noteBaselines.current.delete(previousPath);
       noteBaselines.current.set(saved.path, saved);
       if (isStillActive) {
         activePathRef.current = saved.path;

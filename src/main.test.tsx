@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("react-dom/client", () => ({
   createRoot: () => ({ render: vi.fn() }),
@@ -1007,6 +1007,8 @@ describe("save-aware quit", () => {
     );
   };
 
+  beforeEach(restoreDefaultInvoke);
+
   it("enqueues the dirty note and awaits every save queue before completing quit", async () => {
     let resolveFirst: (value: unknown) => void = () => undefined;
     let resolveSecond: (value: unknown) => void = () => undefined;
@@ -1739,6 +1741,182 @@ describe("save-aware quit", () => {
           selector: ".preview p",
         }),
       ).toBeInTheDocument();
+    } finally {
+      restoreDefaultInvoke();
+    }
+  });
+
+  it("rebases a reopened pending draft onto its renamed canonical path", async () => {
+    const originalPath = notes[0].path;
+    const renamedPath = "C:/Notes/Work/Project Alpha renamed.md";
+    const initialProject = {
+      ...documents.get(originalPath)!,
+      body: "# Project Alpha\n\n- [ ] First task\n- [ ] Second task",
+    };
+    const firstSavedProject = {
+      ...initialProject,
+      path: renamedPath,
+      body: "# Project Alpha\n\n- [x] First task\n- [ ] Second task",
+      revision: "first-renamed-save",
+    };
+    const newestProjectBody =
+      "# Project Alpha\n\n- [x] First task\n- [x] Second task";
+    let renamedDisk = firstSavedProject;
+    let resolveFirst: (value: unknown) => void = () => undefined;
+    let resolveSecond: (value: unknown) => void = () => undefined;
+    let resolveThird: (value: unknown) => void = () => undefined;
+    const firstSave = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondSave = new Promise((resolve) => {
+      resolveSecond = resolve;
+    });
+    const thirdSave = new Promise((resolve) => {
+      resolveThird = resolve;
+    });
+    let saveCall = 0;
+    invoke.mockImplementation(
+      ((command: string, args?: unknown) => {
+        const payload = args as { path?: string } | undefined;
+        if (command === "load_selected_library")
+          return Promise.resolve("C:/Notes");
+        if (command === "load_library_snapshot")
+          return Promise.resolve({
+            notes,
+            folders: ["Work", "Personal"],
+            trash: [],
+            warnings: [],
+          });
+        if (command === "read_note")
+          return Promise.resolve(
+            payload?.path === originalPath
+              ? initialProject
+              : payload?.path === renamedPath
+                ? renamedDisk
+                : documents.get(payload?.path || ""),
+          );
+        if (command === "save_note") {
+          saveCall += 1;
+          return saveCall === 1
+            ? firstSave
+            : saveCall === 2
+              ? secondSave
+              : thirdSave;
+        }
+        if (
+          command === "take_opened_markdown_files" ||
+          command === "find_backlinks"
+        )
+          return Promise.resolve([]);
+        return Promise.resolve(undefined);
+      }) as never,
+    );
+
+    try {
+      render(<App />);
+      const originalButton = (await screen.findAllByRole("button", {
+        name: /Project Alpha/,
+      })).find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(originalButton!);
+      fireEvent.click((await screen.findAllByRole("checkbox"))[0]);
+      fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(1),
+      );
+      fireEvent.click(screen.getAllByRole("checkbox")[1]);
+
+      const cafeButton = screen
+        .getAllByRole("button", { name: /Caf.* ideas/ })
+        .find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(cafeButton!);
+      await screen.findByText(notes[1].title, { selector: ".preview h1" });
+
+      await act(async () => {
+        resolveFirst({ status: "saved", note: firstSavedProject });
+        await firstSave;
+      });
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(2),
+      );
+      expect(
+        invoke.mock.calls
+          .filter(([command]) => command === "save_note")
+          .slice(-1)[0],
+      ).toEqual([
+        "save_note",
+        expect.objectContaining({
+          note: expect.objectContaining({
+            path: renamedPath,
+            body: newestProjectBody,
+          }),
+        }),
+      ]);
+
+      const renamedButton = screen
+        .getAllByRole("button", { name: /Project Alpha/ })
+        .find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(renamedButton!);
+      await screen.findByText("Project Alpha", { selector: ".preview h1" });
+      expect(document.querySelector(".note-file span")).toHaveAttribute(
+        "title",
+        renamedPath,
+      );
+      expect(screen.getAllByRole("checkbox")[0]).toBeChecked();
+      expect(screen.getAllByRole("checkbox")[1]).toBeChecked();
+
+      renamedDisk = {
+        ...firstSavedProject,
+        body: newestProjectBody,
+        revision: "newest-renamed-save",
+      };
+      await act(async () => {
+        resolveSecond({ status: "saved", note: renamedDisk });
+        await secondSave;
+      });
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls
+            .filter(([command]) => command === "set_dirty_state")
+            .slice(-1)[0],
+        ).toEqual(["set_dirty_state", { dirty: false }]),
+      );
+
+      fireEvent.click(screen.getAllByRole("checkbox")[1]);
+      fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+      await waitFor(() =>
+        expect(
+          invoke.mock.calls.filter(([command]) => command === "save_note"),
+        ).toHaveLength(3),
+      );
+      expect(
+        invoke.mock.calls
+          .filter(([command]) => command === "save_note")
+          .slice(-1)[0],
+      ).toEqual([
+        "save_note",
+        expect.objectContaining({
+          note: expect.objectContaining({
+            path: renamedPath,
+            body: firstSavedProject.body,
+          }),
+        }),
+      ]);
+
+      await act(async () => {
+        resolveThird({
+          status: "saved",
+          note: {
+            ...renamedDisk,
+            body: firstSavedProject.body,
+            revision: "post-rename-edit-save",
+          },
+        });
+        await thirdSave;
+      });
     } finally {
       restoreDefaultInvoke();
     }
