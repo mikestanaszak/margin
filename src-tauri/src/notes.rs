@@ -442,6 +442,29 @@ pub(crate) struct ScannedLink {
 /// Scans Markdown body text once for links that are visible to readers.
 /// Targets inside fenced or inline code are intentionally excluded.
 pub(crate) fn scan_markdown_links(body: &str) -> Vec<ScannedLink> {
+    fn fence_marker(line: &str) -> Option<(u8, usize, &str)> {
+        let line = line.trim_end_matches(['\r', '\n']);
+        let indentation = line
+            .as_bytes()
+            .iter()
+            .take_while(|byte| **byte == b' ')
+            .count();
+        if indentation > 3 {
+            return None;
+        }
+        let content = &line[indentation..];
+        let marker = *content.as_bytes().first()?;
+        if !matches!(marker, b'`' | b'~') {
+            return None;
+        }
+        let run = content
+            .as_bytes()
+            .iter()
+            .take_while(|byte| **byte == marker)
+            .count();
+        (run >= 3).then_some((marker, run, &content[run..]))
+    }
+
     fn is_inside_inline_code(line: &str, offset: usize) -> bool {
         let bytes = line.as_bytes();
         let mut cursor = 0;
@@ -466,17 +489,28 @@ pub(crate) fn scan_markdown_links(body: &str) -> Vec<ScannedLink> {
     }
 
     let mut links = Vec::new();
-    let mut fenced = false;
+    let mut fence = None;
     let mut line_start = 0;
 
     for line in body.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            fenced = !fenced;
+        if let Some((open_marker, open_length)) = fence {
+            if let Some((marker, length, suffix)) = fence_marker(line) {
+                if marker == open_marker
+                    && length >= open_length
+                    && suffix.trim_matches([' ', '\t']).is_empty()
+                {
+                    fence = None;
+                }
+            }
             line_start += line.len();
             continue;
         }
-        if fenced {
+
+        if let Some((marker, length, suffix)) = fence_marker(line) {
+            let valid_opener = marker == b'~' || !suffix.contains('`');
+            if valid_opener {
+                fence = Some((marker, length));
+            }
             line_start += line.len();
             continue;
         }
@@ -1268,6 +1302,45 @@ mod tests {
             "```md\n[[First-line fenced]]\n[First-line](First-line.md)\n```\n"
         )
         .is_empty());
+    }
+
+    #[test]
+    fn markdown_link_scanner_matches_fence_marker_and_opener_length() {
+        let links = scan_markdown_links(
+            "````md\n\
+             ```\n\
+             [[Hidden short close]]\n\
+             [Hidden short](Hidden-short.md)\n\
+             ````\n\
+             [[Visible after four]] [Visible four](Visible-four.md)\n\
+             ```md\n\
+             ~~~\n\
+             [[Hidden tilde close]]\n\
+             [Hidden tilde](Hidden-tilde.md)\n\
+             ```\n\
+             [[Visible after backtick]] [Visible backtick](Visible-backtick.md)\n\
+             ~~~md\n\
+             ```\n\
+             [[Hidden backtick close]]\n\
+             [Hidden backtick](Hidden-backtick.md)\n\
+             ~~~\n\
+             [[Visible after tilde]] [Visible tilde](Visible-tilde.md)\n",
+        );
+
+        assert_eq!(
+            links
+                .into_iter()
+                .map(|link| link.target)
+                .collect::<Vec<_>>(),
+            [
+                LinkTarget::Wiki("Visible after four".into()),
+                LinkTarget::Markdown("Visible-four.md".into()),
+                LinkTarget::Wiki("Visible after backtick".into()),
+                LinkTarget::Markdown("Visible-backtick.md".into()),
+                LinkTarget::Wiki("Visible after tilde".into()),
+                LinkTarget::Markdown("Visible-tilde.md".into()),
+            ]
+        );
     }
 
     #[test]
