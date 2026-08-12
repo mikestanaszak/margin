@@ -545,6 +545,73 @@ describe("ranked discovery presentation", () => {
 });
 
 describe("navigation structures and safety dialogs", () => {
+  it("preserves view mode between notes", async () => {
+    const documents = new Map(
+      notes.map((summary) => [
+        summary.path,
+        {
+          path: summary.path,
+          title: summary.title,
+          tags: summary.tags,
+          body: `# ${summary.title}`,
+          updated: summary.updated,
+          revision: `${summary.id}-revision`,
+        },
+      ]),
+    );
+    invoke.mockImplementation(
+      ((command: string, args?: unknown) => {
+        const payload = args as { path?: string } | undefined;
+        if (command === "load_selected_library") return Promise.resolve("C:/Notes");
+        if (command === "load_library_snapshot")
+          return Promise.resolve({ notes, folders: ["Work", "Personal"], trash: [], warnings: [] });
+        if (command === "read_note") return Promise.resolve(documents.get(payload?.path || ""));
+        if (command === "take_opened_markdown_files" || command === "find_backlinks")
+          return Promise.resolve([]);
+        return Promise.resolve(undefined);
+      }) as never,
+    );
+
+    try {
+      const { container } = render(<App />);
+      const projectButton = (await screen.findAllByRole("button", { name: /Project Alpha/ })).find(
+        (button) => button.classList.contains("nr-note-main"),
+      );
+      expect(projectButton).toBeDefined();
+      fireEvent.click(projectButton!);
+      fireEvent.click(await screen.findByRole("button", { name: "Split view" }));
+      expect(screen.getByRole("button", { name: "Split view" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+
+      const cafeButton = screen
+        .getAllByRole("button", { name: /Café ideas/ })
+        .find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(cafeButton!);
+
+      await waitFor(() =>
+        expect(
+          container.querySelector(".nr-note-main[aria-current='page']"),
+        ).toHaveTextContent("Café ideas"),
+      );
+      expect(screen.getByRole("button", { name: "Split view" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    } finally {
+      invoke.mockImplementation((command: string) =>
+        Promise.resolve(
+          command === "take_opened_markdown_files"
+            ? []
+            : command === "load_selected_library"
+              ? null
+              : undefined,
+        ),
+      );
+    }
+  });
+
   it("builds a heading hierarchy and identifies the active ancestors", () => {
     const items = [
       { index: 0, level: 1, title: "Title" },

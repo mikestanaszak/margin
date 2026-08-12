@@ -633,7 +633,6 @@ export function App() {
         baseline.current = loaded;
         noteBaselines.current.set(loaded.path, loaded);
         dispatchNoteSession({ type: "loadSucceeded", note: loaded });
-        setMode("preview");
       } catch (error) {
         if (generation === noteLoadGeneration.current) {
           dispatchNoteSession({
