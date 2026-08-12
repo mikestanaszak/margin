@@ -426,6 +426,118 @@ fn markdown_body_offset(content: &str) -> usize {
     0
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LinkTarget {
+    Wiki(String),
+    Markdown(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ScannedLink {
+    pub(crate) target: LinkTarget,
+    pub(crate) target_start: usize,
+    pub(crate) target_end: usize,
+}
+
+/// Scans Markdown body text once for links that are visible to readers.
+/// Targets inside fenced or inline code are intentionally excluded.
+pub(crate) fn scan_markdown_links(body: &str) -> Vec<ScannedLink> {
+    fn is_inside_inline_code(line: &str, offset: usize) -> bool {
+        let bytes = line.as_bytes();
+        let mut cursor = 0;
+        let mut delimiter = None;
+        while cursor < offset {
+            if bytes[cursor] != b'`' {
+                cursor += 1;
+                continue;
+            }
+            let start = cursor;
+            while cursor < offset && bytes[cursor] == b'`' {
+                cursor += 1;
+            }
+            let run = cursor - start;
+            match delimiter {
+                Some(open) if open == run => delimiter = None,
+                None => delimiter = Some(run),
+                _ => {}
+            }
+        }
+        delimiter.is_some()
+    }
+
+    let mut links = Vec::new();
+    let mut fenced = false;
+    let mut line_start = 0;
+
+    for line in body.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
+            line_start += line.len();
+            continue;
+        }
+        if fenced {
+            line_start += line.len();
+            continue;
+        }
+
+        let mut cursor = 0;
+        while let Some(start_offset) = line[cursor..].find("[[") {
+            let start = cursor + start_offset;
+            let after_start = &line[start + 2..];
+            let Some(end_offset) = after_start.find("]]") else {
+                break;
+            };
+            let end = start + 2 + end_offset;
+            if !is_inside_inline_code(line, start) {
+                let target = line[start + 2..end].split('|').next().unwrap_or("").trim();
+                if !target.is_empty() {
+                    links.push(ScannedLink {
+                        target: LinkTarget::Wiki(target.to_string()),
+                        target_start: line_start + start + 2,
+                        target_end: line_start + end,
+                    });
+                }
+            }
+            cursor = end + 2;
+        }
+
+        cursor = 0;
+        while let Some(marker_offset) = line[cursor..].find("](") {
+            let marker = cursor + marker_offset;
+            let target_start = marker + 2;
+            let Some(close_offset) = line[target_start..].find(')') else {
+                break;
+            };
+            let target_end = target_start + close_offset;
+            let opening = line[cursor..marker]
+                .rfind('[')
+                .map(|offset| cursor + offset);
+            if let Some(opening) = opening {
+                let nested_opening = opening > 0 && line.as_bytes()[opening - 1] == b'[';
+                let closed_label = line[opening + 1..marker].contains(']');
+                let inline_code = is_inside_inline_code(line, opening);
+                if !nested_opening && !closed_label && !inline_code {
+                    let target = &line[target_start..target_end];
+                    if !target.is_empty() {
+                        links.push(ScannedLink {
+                            target: LinkTarget::Markdown(target.to_string()),
+                            target_start: line_start + target_start,
+                            target_end: line_start + target_end,
+                        });
+                    }
+                }
+            }
+            cursor = target_end + 1;
+        }
+
+        line_start += line.len();
+    }
+
+    links.sort_by_key(|link| link.target_start);
+    links
+}
+
 fn normalize_relative_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -591,50 +703,22 @@ fn rewrite_markdown_links(body: &str, source: &Path, old_path: &Path, new_path: 
     };
     let old_path = normalize_relative_path(old_path);
     let mut output = String::with_capacity(body.len());
-    let mut fenced = false;
+    let mut cursor = 0;
 
-    for line in body.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            fenced = !fenced;
-            output.push_str(line);
+    for link in scan_markdown_links(body) {
+        let LinkTarget::Markdown(target) = link.target else {
             continue;
-        }
-        if fenced {
-            output.push_str(line);
-            continue;
-        }
-
-        let mut cursor = 0;
-        while let Some(marker_offset) = line[cursor..].find("](") {
-            let marker = cursor + marker_offset;
-            let target_start = marker + 2;
-            let Some(close_offset) = line[target_start..].find(')') else {
-                break;
-            };
-            let target_end = target_start + close_offset;
-            // Do not alter examples inside inline code. This check is purposely
-            // conservative: an unmatched backtick means we leave the link alone.
-            if line[..marker].matches('`').count() % 2 != 0 {
-                output.push_str(&line[cursor..target_end + 1]);
-                cursor = target_end + 1;
-                continue;
+        };
+        let resolved = normalize_relative_path(&source_parent.join(&target));
+        if is_rewritable_relative_markdown_target(&target) && resolved == old_path {
+            if let Some(replacement) = relative_markdown_path(source, new_path) {
+                output.push_str(&body[cursor..link.target_start]);
+                output.push_str(&replacement);
+                cursor = link.target_end;
             }
-            let target = &line[target_start..target_end];
-            let resolved = normalize_relative_path(&source_parent.join(target));
-            if is_rewritable_relative_markdown_target(target) && resolved == old_path {
-                if let Some(replacement) = relative_markdown_path(source, new_path) {
-                    output.push_str(&line[cursor..target_start]);
-                    output.push_str(&replacement);
-                    cursor = target_end;
-                    continue;
-                }
-            }
-            output.push_str(&line[cursor..target_end]);
-            cursor = target_end;
         }
-        output.push_str(&line[cursor..]);
     }
+    output.push_str(&body[cursor..]);
     output
 }
 
@@ -1138,8 +1222,9 @@ mod tests {
         apply_staged_file_updates, body_with_title, create_folder, create_note,
         delete_note_permanently, duplicate_note, import_markdown_file, move_folder_to_trash,
         move_note_to_folder, move_note_to_trash, normalize_tags, read_library_note_file,
-        read_note_file, rename_file_safely, rename_folder, rename_note, restore_note_from_trash,
-        save_note, save_note_document, split_front_matter, stage_file_updates, LinkRewrite,
+        read_note_file, rename_file_safely, rename_folder, rename_note,
+        resolve_relative_markdown_target, restore_note_from_trash, save_note, save_note_document,
+        scan_markdown_links, split_front_matter, stage_file_updates, LinkRewrite, LinkTarget,
     };
     #[cfg(unix)]
     use crate::library::load_library;
@@ -1154,6 +1239,52 @@ mod tests {
         fs,
         path::{Path, PathBuf},
     };
+
+    #[test]
+    fn markdown_link_scanner_requires_well_formed_links_and_skips_code() {
+        let links = scan_markdown_links(
+            "See [[Alpha]] and [Beta](../Work/Beta.md).\n\
+             A malformed marker ](../Work/Malformed.md) is not a link.\n\
+             `[[Inline wiki]]` and `[Inline](../Work/Inline.md)` are code.\n\
+             ``[[Double wiki]] [Double](../Work/Double.md)`` is code.\n\
+             ```md\n\
+             [[Fenced wiki]]\n\
+             [Fenced](../Work/Fenced.md)\n\
+             ```\n",
+        );
+
+        assert_eq!(
+            links
+                .into_iter()
+                .map(|link| link.target)
+                .collect::<Vec<_>>(),
+            [
+                LinkTarget::Wiki("Alpha".into()),
+                LinkTarget::Markdown("../Work/Beta.md".into())
+            ]
+        );
+
+        assert!(scan_markdown_links(
+            "```md\n[[First-line fenced]]\n[First-line](First-line.md)\n```\n"
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn relative_markdown_resolver_rejects_non_local_targets() {
+        for target in [
+            "../Work/Alpha.md?view=preview",
+            "\\\\server\\share\\Alpha.md",
+            "C:\\Work\\Alpha.md",
+            "custom+scheme:Alpha.md",
+        ] {
+            assert_eq!(
+                resolve_relative_markdown_target("Reference/Links.md", target),
+                None,
+                "{target} must not resolve as a local note"
+            );
+        }
+    }
 
     #[test]
     fn metadata_and_portable_filenames_handle_edge_cases() {
@@ -1428,7 +1559,7 @@ mod tests {
                 "---\ntags: [project]\n---\n\n# Old title\n\n[self](Old title.md)\n",
             )
             .map_err(|error| error.to_string())?;
-            let links_source = "---\r\nlink: ../Projects/Old title.md\r\n---\r\n\r\n# Links\r\n\r\n[relative](../Projects/Old title.md)\r\n[external](https://example.com/Old title.md)\r\n[anchor](../Projects/Old title.md#part)\r\n[absolute](/Projects/Old title.md)\r\n[missing](../Projects/Missing.md)\r\n`[code](../Projects/Old title.md)`\r\n";
+            let links_source = "---\r\nlink: ../Projects/Old title.md\r\n---\r\n\r\n# Links\r\n\r\n[relative](../Projects/Old title.md)\r\n[external](https://example.com/Old title.md)\r\n[anchor](../Projects/Old title.md#part)\r\n[absolute](/Projects/Old title.md)\r\n[missing](../Projects/Missing.md)\r\n](../Projects/Old title.md)\r\n`[code](../Projects/Old title.md)`\r\n";
             fs::write(&links_path, links_source).map_err(|error| error.to_string())?;
 
             let canonical_old_path =
@@ -1452,6 +1583,9 @@ mod tests {
             assert!(links.contains("[anchor](../Projects/Old title.md#part)"));
             assert!(links.contains("[absolute](/Projects/Old title.md)"));
             assert!(links.contains("[missing](../Projects/Missing.md)"));
+            assert!(links
+                .lines()
+                .any(|line| line == "](../Projects/Old title.md)"));
             assert!(links.contains("`[code](../Projects/Old title.md)`"));
             Ok(())
         })();

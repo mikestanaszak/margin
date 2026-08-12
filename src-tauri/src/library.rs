@@ -2,7 +2,7 @@ use crate::assets::is_managed_note_asset_directory;
 use crate::model::{IndexWarning, IndexWarningKind, LibrarySnapshot, NoteDocument, NoteSummary};
 use crate::notes::{
     note_excerpt, note_ids_match, read_library_note_file_for_index,
-    resolve_relative_markdown_target,
+    resolve_relative_markdown_target, scan_markdown_links, LinkTarget,
 };
 #[cfg(test)]
 use crate::paths::canonical_library_root;
@@ -10,6 +10,7 @@ use crate::paths::{folder_for_path, is_markdown_path, relative_note_id};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -30,9 +31,39 @@ pub(crate) struct LibraryIndex(Mutex<Option<IndexedLibrary>>);
 struct IndexedLibrary {
     path: PathBuf,
     snapshot: LibrarySnapshot,
+    links: LinkIndex,
     dirty: Arc<AtomicBool>,
     reconciled_at: Instant,
     _watcher: RecommendedWatcher,
+}
+
+#[derive(Clone, Default)]
+struct LinkIndex(HashMap<String, Vec<LinkTarget>>);
+
+#[derive(Clone)]
+struct IndexedNoteLinks {
+    note_id: String,
+    targets: Vec<LinkTarget>,
+}
+
+struct IndexedLibraryData {
+    snapshot: LibrarySnapshot,
+    links: LinkIndex,
+}
+
+impl LinkIndex {
+    fn from_notes(links: Vec<IndexedNoteLinks>) -> Self {
+        Self(
+            links
+                .into_iter()
+                .map(|links| (links.note_id, links.targets))
+                .collect(),
+        )
+    }
+
+    fn targets_for(&self, note_id: &str) -> &[LinkTarget] {
+        self.0.get(note_id).map(Vec::as_slice).unwrap_or_default()
+    }
 }
 
 const INDEX_RECONCILIATION_INTERVAL: Duration = Duration::from_secs(45);
@@ -57,7 +88,12 @@ impl LibraryIndex {
         Self(Mutex::new(None))
     }
 
-    fn snapshot(&self, library_path: &str, force: bool) -> Result<LibrarySnapshot, String> {
+    fn with_index<T>(
+        &self,
+        library_path: &str,
+        force: bool,
+        operation: impl FnOnce(&IndexedLibrary) -> T,
+    ) -> Result<T, String> {
         let requested = PathBuf::from(library_path);
         let library = fs::canonicalize(&requested)
             .map_err(|error| format!("Could not open the selected library: {error}"))?;
@@ -75,29 +111,57 @@ impl LibraryIndex {
             || current.dirty.swap(false, Ordering::AcqRel)
             || current.reconciled_at.elapsed() >= INDEX_RECONCILIATION_INTERVAL;
         if should_rebuild {
-            current.snapshot = build_library_snapshot(&current.path);
+            let data = build_library_index_data(&current.path);
+            current.snapshot = data.snapshot;
+            current.links = data.links;
             current.reconciled_at = Instant::now();
         }
-        Ok(current.snapshot.clone())
+        Ok(operation(current))
+    }
+
+    fn snapshot(&self, library_path: &str, force: bool) -> Result<LibrarySnapshot, String> {
+        self.with_index(library_path, force, |current| current.snapshot.clone())
+    }
+
+    fn backlinks(
+        &self,
+        library_path: &str,
+        note_path: &str,
+        title: &str,
+    ) -> Result<Vec<NoteSummary>, String> {
+        self.with_index(library_path, false, |current| {
+            backlinks_for_snapshot(&current.snapshot, &current.links, note_path, title)
+        })
     }
 }
 
-fn build_library_snapshot(library: &Path) -> LibrarySnapshot {
+fn build_library_index_data(library: &Path) -> IndexedLibraryData {
     let Ok(library) = fs::canonicalize(library) else {
-        return LibrarySnapshot {
-            notes: Vec::new(),
-            folders: Vec::new(),
-            trash: Vec::new(),
-            warnings: Vec::new(),
+        return IndexedLibraryData {
+            snapshot: LibrarySnapshot {
+                notes: Vec::new(),
+                folders: Vec::new(),
+                trash: Vec::new(),
+                warnings: Vec::new(),
+            },
+            links: LinkIndex::default(),
         };
     };
-    let (notes, folders, mut warnings) = load_library_contents(&library);
-    LibrarySnapshot {
-        notes,
-        folders,
-        trash: load_trash_contents(&library, &mut warnings),
-        warnings,
+    let (notes, folders, mut warnings, links) = load_library_contents(&library);
+    IndexedLibraryData {
+        snapshot: LibrarySnapshot {
+            notes,
+            folders,
+            trash: load_trash_contents(&library, &mut warnings),
+            warnings,
+        },
+        links: LinkIndex::from_notes(links),
     }
+}
+
+#[cfg(test)]
+fn build_library_snapshot(library: &Path) -> LibrarySnapshot {
+    build_library_index_data(library).snapshot
 }
 
 fn index_library(library: &Path) -> Result<IndexedLibrary, String> {
@@ -112,21 +176,48 @@ fn index_library(library: &Path) -> Result<IndexedLibrary, String> {
     watcher
         .watch(library, RecursiveMode::Recursive)
         .map_err(|error| format!("Could not watch the selected library: {error}"))?;
+    let data = build_library_index_data(library);
     Ok(IndexedLibrary {
         path: library.to_path_buf(),
-        snapshot: build_library_snapshot(library),
+        snapshot: data.snapshot,
+        links: data.links,
         dirty,
         reconciled_at: Instant::now(),
         _watcher: watcher,
     })
 }
 
-fn note_summary(note: NoteDocument, library: &Path) -> NoteSummary {
+fn note_summary(note: NoteDocument, library: &Path) -> (NoteSummary, IndexedNoteLinks) {
     let folder = folder_for_path(library, Path::new(&note.path));
-    NoteSummary {
-        id: note.id.unwrap_or_else(|| {
-            relative_note_id(library, Path::new(&note.path)).unwrap_or_default()
-        }),
+    let id = note
+        .id
+        .clone()
+        .unwrap_or_else(|| relative_note_id(library, Path::new(&note.path)).unwrap_or_default());
+    let mut skipped_title = false;
+    let link_body = note
+        .body
+        .split_inclusive('\n')
+        .filter(|line| {
+            let is_canonical_title = !skipped_title
+                && line
+                    .trim_end_matches(['\r', '\n'])
+                    .strip_prefix("# ")
+                    .is_some_and(|title| title.trim() == note.title);
+            if is_canonical_title {
+                skipped_title = true;
+            }
+            !is_canonical_title
+        })
+        .collect::<String>();
+    let links = IndexedNoteLinks {
+        note_id: id.clone(),
+        targets: scan_markdown_links(&link_body)
+            .into_iter()
+            .map(|link| link.target)
+            .collect(),
+    };
+    let summary = NoteSummary {
+        id,
         searchable_text: format!(
             "{} {} {} {}",
             note.title,
@@ -136,14 +227,16 @@ fn note_summary(note: NoteDocument, library: &Path) -> NoteSummary {
                 .unwrap_or(""),
             note.tags.join(" "),
             note.body
-        ),
+        )
+        .to_lowercase(),
         excerpt: note_excerpt(&note.body),
         path: note.path,
         title: note.title,
         tags: note.tags,
         updated: note.updated,
         folder,
-    }
+    };
+    (summary, links)
 }
 
 fn push_index_warning(warnings: &mut Vec<IndexWarning>, path: &Path, kind: IndexWarningKind) {
@@ -159,6 +252,7 @@ fn collect_library_entry(
     notes: &mut Vec<NoteSummary>,
     folders: &mut Vec<String>,
     warnings: &mut Vec<IndexWarning>,
+    links: &mut Vec<IndexedNoteLinks>,
 ) {
     let entry = match entry {
         Ok(entry) => entry,
@@ -184,7 +278,9 @@ fn collect_library_entry(
     } else if entry.file_type().is_file() && is_markdown_path(entry.path()) {
         match read_library_note_file_for_index(library, entry.path()) {
             Ok((note, warning)) => {
-                notes.push(note_summary(note, library));
+                let (summary, note_links) = note_summary(note, library);
+                notes.push(summary);
+                links.push(note_links);
                 if let Some(kind) = warning {
                     push_index_warning(warnings, entry.path(), kind);
                 }
@@ -194,10 +290,18 @@ fn collect_library_entry(
     }
 }
 
-fn load_library_contents(library: &Path) -> (Vec<NoteSummary>, Vec<String>, Vec<IndexWarning>) {
+fn load_library_contents(
+    library: &Path,
+) -> (
+    Vec<NoteSummary>,
+    Vec<String>,
+    Vec<IndexWarning>,
+    Vec<IndexedNoteLinks>,
+) {
     let mut notes = Vec::new();
     let mut folders = Vec::new();
     let mut warnings = Vec::new();
+    let mut links = Vec::new();
     for entry in WalkDir::new(library)
         .min_depth(1)
         .follow_links(false)
@@ -206,11 +310,18 @@ fn load_library_contents(library: &Path) -> (Vec<NoteSummary>, Vec<String>, Vec<
             entry.file_name() != ".markdown-notes" && !is_managed_note_asset_directory(entry.path())
         })
     {
-        collect_library_entry(library, entry, &mut notes, &mut folders, &mut warnings);
+        collect_library_entry(
+            library,
+            entry,
+            &mut notes,
+            &mut folders,
+            &mut warnings,
+            &mut links,
+        );
     }
     notes.sort_by_key(|note| std::cmp::Reverse(note.updated));
     folders.sort_by_key(|folder| folder.to_lowercase());
-    (notes, folders, warnings)
+    (notes, folders, warnings, links)
 }
 
 #[cfg(test)]
@@ -227,58 +338,6 @@ pub(crate) fn load_library_snapshot(
     force: Option<bool>,
 ) -> Result<LibrarySnapshot, String> {
     library_index.snapshot(&library_path, force.unwrap_or(false))
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum LinkTarget {
-    Wiki(String),
-    Markdown(String),
-}
-
-fn link_targets(text: &str) -> Vec<LinkTarget> {
-    let mut targets = Vec::new();
-    let mut remaining = text;
-    while let Some(start) = remaining.find("[[") {
-        let after_start = &remaining[start + 2..];
-        let Some(end) = after_start.find("]]") else {
-            break;
-        };
-        let target = after_start[..end].split('|').next().unwrap_or("").trim();
-        if !target.is_empty() {
-            targets.push(LinkTarget::Wiki(target.to_string()));
-        }
-        remaining = &after_start[end + 2..];
-    }
-
-    let mut fenced = false;
-    for line in text.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            fenced = !fenced;
-            continue;
-        }
-        if fenced {
-            continue;
-        }
-
-        let mut cursor = 0;
-        while let Some(marker_offset) = line[cursor..].find("](") {
-            let marker = cursor + marker_offset;
-            let target_start = marker + 2;
-            let Some(close_offset) = line[target_start..].find(')') else {
-                break;
-            };
-            let target_end = target_start + close_offset;
-            if line[..marker].matches('`').count() % 2 == 0 {
-                let target = &line[target_start..target_end];
-                if !target.is_empty() {
-                    targets.push(LinkTarget::Markdown(target.to_string()));
-                }
-            }
-            cursor = target_end + 1;
-        }
-    }
-    targets
 }
 
 #[tauri::command]
@@ -302,11 +361,7 @@ pub(crate) fn find_backlinks(
     note_path: String,
     title: String,
 ) -> Result<Vec<NoteSummary>, String> {
-    Ok(backlinks_for_snapshot(
-        &library_index.snapshot(&library_path, false)?,
-        &note_path,
-        &title,
-    ))
+    library_index.backlinks(&library_path, &note_path, &title)
 }
 
 fn search_snapshot(
@@ -357,7 +412,7 @@ fn search_snapshot(
                 250
             } else if tags.iter().any(|tag| tag.contains(&query)) {
                 200
-            } else if note.searchable_text.to_lowercase().contains(&query) {
+            } else if note.searchable_text.contains(&query) {
                 100
             } else {
                 return None;
@@ -380,6 +435,7 @@ fn search_snapshot(
 
 fn backlinks_for_snapshot(
     snapshot: &LibrarySnapshot,
+    links: &LinkIndex,
     note_path: &str,
     title: &str,
 ) -> Vec<NoteSummary> {
@@ -408,16 +464,14 @@ fn backlinks_for_snapshot(
         .iter()
         .filter(|item| {
             !note_ids_match(&item.id, target_id)
-                && link_targets(&item.searchable_text)
-                    .iter()
-                    .any(|link| match link {
-                        LinkTarget::Wiki(target) => unique_title_target(snapshot, target)
-                            .is_some_and(|resolved| note_ids_match(resolved, target_id)),
-                        LinkTarget::Markdown(target) => {
-                            resolve_relative_markdown_target(&item.id, target)
-                                .is_some_and(|resolved| note_ids_match(&resolved, target_id))
-                        }
-                    })
+                && links.targets_for(&item.id).iter().any(|link| match link {
+                    LinkTarget::Wiki(target) => unique_title_target(snapshot, target)
+                        .is_some_and(|resolved| note_ids_match(resolved, target_id)),
+                    LinkTarget::Markdown(target) => {
+                        resolve_relative_markdown_target(&item.id, target)
+                            .is_some_and(|resolved| note_ids_match(&resolved, target_id))
+                    }
+                })
         })
         .cloned()
         .collect()
@@ -449,9 +503,10 @@ fn load_trash_contents(library: &Path, warnings: &mut Vec<IndexWarning>) -> Vec<
         }
         match read_library_note_file_for_index(library, entry.path()) {
             Ok((note, warning)) => {
+                let (summary, _) = note_summary(note, library);
                 notes.push(NoteSummary {
                     folder: "Trash".into(),
-                    ..note_summary(note, library)
+                    ..summary
                 });
                 if let Some(kind) = warning {
                     push_index_warning(warnings, entry.path(), kind);
@@ -467,11 +522,13 @@ fn load_trash_contents(library: &Path, warnings: &mut Vec<IndexWarning>) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::{
-        backlinks_for_snapshot, build_library_snapshot, collect_library_entry, load_library,
-        search_snapshot, LibraryIndex, SearchScope,
+        backlinks_for_snapshot, build_library_index_data, build_library_snapshot,
+        collect_library_entry, load_library, search_snapshot, IndexedNoteLinks, LibraryIndex,
+        LinkIndex, SearchScope,
     };
     use crate::{
         model::{IndexWarningKind, LibrarySnapshot, NoteSummary},
+        notes::scan_markdown_links,
         test_support::{copy_example_library, temporary_library},
     };
     use std::{fs, thread, time::Duration};
@@ -490,10 +547,27 @@ mod tests {
             title: title.to_string(),
             tags: tags.iter().map(|tag| (*tag).to_string()).collect(),
             updated,
-            searchable_text: format!("{title} {path} {} {body}", tags.join(" ")),
+            searchable_text: format!("{title} {path} {} {body}", tags.join(" ")).to_lowercase(),
             excerpt: body.to_string(),
             folder: String::new(),
         }
+    }
+
+    fn link_index_for_snapshot(snapshot: &LibrarySnapshot) -> LinkIndex {
+        LinkIndex(
+            snapshot
+                .notes
+                .iter()
+                .map(|note| IndexedNoteLinks {
+                    note_id: note.id.clone(),
+                    targets: scan_markdown_links(&note.excerpt)
+                        .into_iter()
+                        .map(|link| link.target)
+                        .collect(),
+                })
+                .map(|links| (links.note_id, links.targets))
+                .collect(),
+        )
     }
 
     #[test]
@@ -671,7 +745,15 @@ mod tests {
         let mut notes = Vec::new();
         let mut folders = Vec::new();
         let mut warnings = Vec::new();
-        collect_library_entry(&library, entry, &mut notes, &mut folders, &mut warnings);
+        let mut links = Vec::new();
+        collect_library_entry(
+            &library,
+            entry,
+            &mut notes,
+            &mut folders,
+            &mut warnings,
+            &mut links,
+        );
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].kind, IndexWarningKind::Walk);
         assert!(warnings[0].path.ends_with("Removed"));
@@ -859,8 +941,9 @@ mod tests {
                 "# Reference\n\nSee [[Project]] for the next milestone.",
             )
             .map_err(|error| error.to_string())?;
-            let snapshot = build_library_snapshot(&library);
-            let search_results = search_snapshot(&snapshot, "alpine", SearchScope::Notes);
+            let data = build_library_index_data(&library);
+            let snapshot = &data.snapshot;
+            let search_results = search_snapshot(snapshot, "alpine", SearchScope::Notes);
             assert_eq!(search_results.len(), 1);
             let project = snapshot
                 .notes
@@ -868,10 +951,11 @@ mod tests {
                 .find(|note| note.title == "Project")
                 .ok_or("Project was not indexed")?;
             assert_eq!(
-                backlinks_for_snapshot(&snapshot, &project.path, &project.title)[0].title,
+                backlinks_for_snapshot(snapshot, &data.links, &project.path, &project.title)[0]
+                    .title,
                 "Reference"
             );
-            let payload = serde_json::to_value(&snapshot).map_err(|error| error.to_string())?;
+            let payload = serde_json::to_value(snapshot).map_err(|error| error.to_string())?;
             assert!(!payload.to_string().contains("alpine architecture"));
             assert!(!payload.to_string().contains("searchable_text"));
             let search_payload =
@@ -966,13 +1050,28 @@ mod tests {
                     "See [mail](mailto:Alpha.md).",
                     120,
                 ),
+                searchable_note(
+                    "Reference/[[Alpha]].md",
+                    "Metadata [[Alpha]]",
+                    &["[tag](../Work/Alpha.md)"],
+                    "No links in this body.",
+                    130,
+                ),
+                searchable_note(
+                    "Reference/FirstLineFence.md",
+                    "First-line fence",
+                    &[],
+                    "```md\n[[Alpha]]\n[Alpha](../Work/Alpha.md)\n```\n",
+                    140,
+                ),
             ],
             folders: Vec::new(),
             trash: Vec::new(),
             warnings: Vec::new(),
         };
 
-        let backlinks = backlinks_for_snapshot(&snapshot, "Work/Alpha.md", "Alpha");
+        let links = link_index_for_snapshot(&snapshot);
+        let backlinks = backlinks_for_snapshot(&snapshot, &links, "Work/Alpha.md", "Alpha");
         let titles = backlinks
             .iter()
             .map(|note| note.title.as_str())
@@ -990,9 +1089,11 @@ mod tests {
             assert_eq!(titles, ["Markdown reference", "Wiki reference"]);
         }
 
-        assert!(backlinks_for_snapshot(&snapshot, "One/Duplicate.md", "Duplicate").is_empty());
+        assert!(
+            backlinks_for_snapshot(&snapshot, &links, "One/Duplicate.md", "Duplicate").is_empty()
+        );
 
-        let encoded = backlinks_for_snapshot(&snapshot, "Work/Alpha Note.md", "Alpha Note");
+        let encoded = backlinks_for_snapshot(&snapshot, &links, "Work/Alpha Note.md", "Alpha Note");
         assert_eq!(
             encoded
                 .iter()
@@ -1003,9 +1104,55 @@ mod tests {
 
         assert!(backlinks_for_snapshot(
             &snapshot,
+            &links,
             "Reference/mailto:Alpha.md",
             "Mail-shaped filename"
         )
         .is_empty());
+    }
+
+    #[test]
+    fn backlink_index_extracts_only_visible_original_note_bodies() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let result = (|| -> Result<(), String> {
+            fs::write(library.join("Alpha.md"), "# Alpha\n\nTarget note.\n")
+                .map_err(|error| error.to_string())?;
+            fs::write(
+                library.join("Metadata [[Alpha]].md"),
+                "---\ntags:\n  - \"[tag](Alpha.md)\"\n---\n\n# Metadata [[Alpha]]\n\nNo links in this body.\n",
+            )
+            .map_err(|error| error.to_string())?;
+            fs::write(
+                library.join("First-line fence.md"),
+                "```md\n[[Alpha]]\n[Alpha](Alpha.md)\n```\n",
+            )
+            .map_err(|error| error.to_string())?;
+            fs::write(
+                library.join("Body link.md"),
+                "# Body link\n\nSee [Alpha](Alpha.md).\n",
+            )
+            .map_err(|error| error.to_string())?;
+
+            let data = build_library_index_data(&library);
+            let alpha = data
+                .snapshot
+                .notes
+                .iter()
+                .find(|note| note.title == "Alpha")
+                .ok_or("Alpha was not indexed")?;
+            let backlinks =
+                backlinks_for_snapshot(&data.snapshot, &data.links, &alpha.path, &alpha.title);
+            assert_eq!(
+                backlinks
+                    .iter()
+                    .map(|note| note.title.as_str())
+                    .collect::<Vec<_>>(),
+                ["Body link"]
+            );
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
     }
 }
