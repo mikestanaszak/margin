@@ -23,19 +23,22 @@ function enterCapture(text: string) {
 describe("CaptureComposer save results", () => {
   it("cancels a scheduled capture action when its shell unmounts", () => {
     vi.useFakeTimers();
-    const action = vi.fn();
-    function DelayOwner() {
-      const { schedule } = useCancelableDelay();
-      return <button onClick={() => schedule(action, 1000)}>Schedule</button>;
+    try {
+      const action = vi.fn();
+      function DelayOwner() {
+        const { schedule } = useCancelableDelay();
+        return <button onClick={() => schedule(action, 1000)}>Schedule</button>;
+      }
+
+      const view = render(<DelayOwner />);
+      fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
+      view.unmount();
+      vi.advanceTimersByTime(1000);
+
+      expect(action).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
     }
-
-    const view = render(<DelayOwner />);
-    fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
-    view.unmount();
-    vi.advanceTimersByTime(1000);
-
-    expect(action).not.toHaveBeenCalled();
-    vi.useRealTimers();
   });
 
   it("announces capture feedback as a live status", () => {

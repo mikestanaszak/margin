@@ -1089,6 +1089,95 @@ describe("navigation structures and safety dialogs", () => {
     }
   });
 
+  it("ignores a fallback save that finishes after close and reopen", async () => {
+    const previousShortcuts = localStorage.getItem("markdown-notes.shortcuts");
+    localStorage.setItem("markdown-notes.shortcuts", "{}");
+    let resolveAppend: (value: unknown) => void = () => undefined;
+    const append = new Promise((resolve) => {
+      resolveAppend = resolve;
+    });
+    invoke.mockReset();
+    invoke.mockImplementation(
+      ((command: string) => {
+        if (command === "load_selected_library")
+          return Promise.resolve("C:/Notes");
+        if (command === "load_library_snapshot")
+          return Promise.resolve({
+            notes: [],
+            folders: [],
+            trash: [],
+            warnings: [],
+          });
+        if (command === "take_opened_markdown_files") return Promise.resolve([]);
+        if (command === "show_quick_capture")
+          return Promise.reject(new Error("native window unavailable"));
+        if (command === "append_quick_note") return append;
+        return Promise.resolve(undefined);
+      }) as never,
+    );
+
+    const view = render(<App />);
+    try {
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("load_library_snapshot", {
+          libraryPath: "C:/Notes",
+          force: false,
+        }),
+      );
+      fireEvent.keyDown(window, {
+        key: " ",
+        code: "Space",
+        ctrlKey: true,
+        altKey: true,
+        shiftKey: true,
+      });
+      const oldInput = await screen.findByPlaceholderText("Start typing…");
+      vi.useFakeTimers();
+      fireEvent.change(oldInput, { target: { value: "Old capture" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save capture" }));
+      expect(screen.getByText("Saving…")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Close quick capture" }));
+      fireEvent.keyDown(window, {
+        key: " ",
+        code: "Space",
+        ctrlKey: true,
+        altKey: true,
+        shiftKey: true,
+      });
+      await act(async () => undefined);
+      const newInput = screen.getByPlaceholderText("Start typing…");
+      fireEvent.change(newInput, { target: { value: "New capture" } });
+
+      await act(async () => {
+        resolveAppend({
+          id: "daily/2026-08-11",
+          path: "C:/Notes/Daily/2026-08-11.md",
+          title: "2026-08-11",
+          tags: [],
+          body: "",
+          updated: 1,
+          revision: "saved",
+        });
+      });
+
+      expect(newInput).toHaveValue("New capture");
+      expect(screen.getByText("Adds to today’s Daily note")).toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(1000));
+      expect(screen.getByPlaceholderText("Start typing…")).toBeInTheDocument();
+      expect(
+        invoke.mock.calls.filter(([command]) => command === "append_quick_note"),
+      ).toHaveLength(1);
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+      if (previousShortcuts === null)
+        localStorage.removeItem("markdown-notes.shortcuts");
+      else localStorage.setItem("markdown-notes.shortcuts", previousShortcuts);
+      invoke.mockReset();
+    }
+  });
+
   it("keeps fallback text and shows the native save failure", async () => {
     const previousShortcuts = localStorage.getItem("markdown-notes.shortcuts");
     localStorage.setItem("markdown-notes.shortcuts", "{}");

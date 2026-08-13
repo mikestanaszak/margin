@@ -238,6 +238,13 @@ function createRefreshCoordinator(
 }
 
 export function App() {
+  const quickCaptureSession = useRef(0);
+  useEffect(
+    () => () => {
+      quickCaptureSession.current += 1;
+    },
+    [],
+  );
   const {
     cancel: cancelQuickCaptureClose,
     schedule: scheduleQuickCaptureClose,
@@ -581,12 +588,14 @@ export function App() {
   }, [outlinePaneWidth]);
   const showQuickCapture = () => {
     void native.showQuickCapture().catch(() => {
+      quickCaptureSession.current += 1;
       cancelQuickCaptureClose();
       setQuickCaptureFeedback("Adds to today’s Daily note");
       setQuickCaptureOpen(true);
     });
   };
   const closeQuickCapture = () => {
+    quickCaptureSession.current += 1;
     cancelQuickCaptureClose();
     setQuickCaptureOpen(false);
   };
@@ -1307,6 +1316,7 @@ export function App() {
     }
   };
   const saveQuickCapture = async (text: string) => {
+    const session = quickCaptureSession.current;
     if (!library) {
       setQuickCaptureFeedback("Choose your notes folder before saving.");
       await selectLibrary();
@@ -1324,21 +1334,27 @@ export function App() {
         expandTemplate(template),
       );
     } catch (error) {
+      if (session !== quickCaptureSession.current) return false;
       const failure = `Could not save quick note: ${String(error)}`;
       setQuickCaptureFeedback(failure);
       setStatus(failure);
       return false;
     }
+    if (session !== quickCaptureSession.current) return false;
     const savedStatus = `Saved to Daily/${fileStem(daily.path)}.md`;
     setQuickCaptureFeedback(savedStatus);
     setStatus(savedStatus);
     scheduleQuickCaptureClose(
-      () => setQuickCaptureOpen(false),
+      () => {
+        if (session === quickCaptureSession.current)
+          setQuickCaptureOpen(false);
+      },
       captureSuccessDelayMs,
     );
-    void refresh().catch((error) =>
-      setStatus(`Could not read library: ${String(error)}`),
-    );
+    void refresh().catch((error) => {
+      if (session === quickCaptureSession.current)
+        setStatus(`Could not read library: ${String(error)}`);
+    });
     return true;
   };
   const importDailyNote = async (target: NoteSummary) => {
@@ -2038,6 +2054,7 @@ export function App() {
       )}
       {quickCaptureOpen && (
         <QuickCaptureDialog
+          session={quickCaptureSession.current}
           shortcut={formatShortcut(shortcuts.quickCapture)}
           status={quickCaptureFeedback}
           onClose={closeQuickCapture}
@@ -2607,11 +2624,13 @@ function FolderDialog({
   );
 }
 function QuickCaptureDialog({
+  session = 0,
   shortcut,
   status,
   onClose,
   onSave,
 }: {
+  session?: number;
   shortcut: string;
   status: string;
   onClose: () => void;
@@ -2620,6 +2639,7 @@ function QuickCaptureDialog({
   return (
     <div className="modal-backdrop quick-capture-backdrop">
       <CaptureComposer
+        session={session}
         shortcut={shortcut}
         status={status}
         disabled={false}

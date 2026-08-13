@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -52,6 +52,8 @@ function expandTemplate(template: NoteTemplate, date = todayTitle()) {
 }
 
 export function CaptureWindow() {
+  const captureSession = useRef(0);
+  const [session, setSession] = useState(0);
   const [library, setLibrary] = useState<string | null>(null);
   const [libraryReady, setLibraryReady] = useState(false);
   const [status, setStatus] = useState("");
@@ -61,8 +63,14 @@ export function CaptureWindow() {
     schedule: scheduleSuccessHide,
   } = useCancelableDelay();
 
-  const hide = useCallback(() => {
+  const invalidateSession = useCallback(() => {
+    captureSession.current += 1;
+    setSession(captureSession.current);
     cancelSuccessHide();
+  }, [cancelSuccessHide]);
+
+  const hide = useCallback(() => {
+    invalidateSession();
     void (async () => {
       try {
         await native.hideQuickCapture();
@@ -72,7 +80,7 @@ export function CaptureWindow() {
           .catch(() => undefined);
       }
     })();
-  }, [cancelSuccessHide]);
+  }, [invalidateSession]);
 
   useEffect(() => {
     void native
@@ -84,7 +92,8 @@ export function CaptureWindow() {
 
   useEffect(() => {
     const syncTemplates = () => {
-      cancelSuccessHide();
+      invalidateSession();
+      setStatus("");
       setTemplates(loadTemplates());
     };
     const suppressWebviewMenu = (event: MouseEvent) => event.preventDefault();
@@ -93,14 +102,16 @@ export function CaptureWindow() {
     window.addEventListener("focus", syncTemplates);
     window.addEventListener("contextmenu", suppressWebviewMenu);
     return () => {
+      captureSession.current += 1;
       window.removeEventListener("focus", syncTemplates);
       window.removeEventListener("contextmenu", suppressWebviewMenu);
       document.documentElement.classList.remove("capture-window-html");
       document.body.classList.remove("capture-window-body");
     };
-  }, [cancelSuccessHide, hide]);
+  }, [invalidateSession]);
 
   const save = async (text: string): Promise<boolean> => {
+    const startedInSession = captureSession.current;
     if (!libraryReady) {
       setStatus("Loading your notes folder…");
       return false;
@@ -119,10 +130,14 @@ export function CaptureWindow() {
             defaultDailyTemplate,
         ),
       );
+      if (startedInSession !== captureSession.current) return false;
       setStatus("Saved to today’s Daily note");
-      scheduleSuccessHide(hide, captureSuccessDelayMs);
+      scheduleSuccessHide(() => {
+        if (startedInSession === captureSession.current) hide();
+      }, captureSuccessDelayMs);
       return true;
     } catch (error) {
+      if (startedInSession !== captureSession.current) return false;
       setStatus(`Could not save: ${String(error)}`);
       return false;
     }
@@ -131,6 +146,7 @@ export function CaptureWindow() {
   return (
     <main className="capture-window">
       <CaptureComposer
+        session={session}
         shortcut={shortcut}
         status={
           status ||

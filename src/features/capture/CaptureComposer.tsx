@@ -7,6 +7,7 @@ export type CaptureComposerProps = {
   shortcut: string;
   status: string;
   disabled: boolean;
+  session?: number;
   onClose: () => void;
   onSave: (text: string) => boolean | Promise<boolean>;
 };
@@ -40,19 +41,39 @@ export function CaptureComposer({
   shortcut,
   status,
   disabled,
+  session = 0,
   onClose,
   onSave,
 }: CaptureComposerProps) {
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
+  const saveOperation = useRef(0);
+
+  const invalidateSave = useCallback(() => {
+    saveOperation.current += 1;
+    setSaving(false);
+  }, []);
+
+  const close = useCallback(() => {
+    invalidateSave();
+    onClose();
+  }, [invalidateSave, onClose]);
+
+  useEffect(() => invalidateSave(), [invalidateSave, session]);
+  useEffect(
+    () => () => {
+      saveOperation.current += 1;
+    },
+    [],
+  );
 
   useEffect(() => {
     const focus = () => window.setTimeout(() => input.current?.focus(), 40);
     const dismissOnEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        close();
       }
     };
     focus();
@@ -62,18 +83,20 @@ export function CaptureComposer({
       window.removeEventListener("focus", focus);
       window.removeEventListener("keydown", dismissOnEscape);
     };
-  }, [onClose]);
+  }, [close]);
 
   const save = async () => {
     if (!text.trim() || disabled || saving) return;
+    const operation = ++saveOperation.current;
     setSaving(true);
     try {
-      if (await onSave(text)) setText("");
+      if ((await onSave(text)) && saveOperation.current === operation)
+        setText("");
     } catch {
       // The caller owns the user-facing error status. Keep the draft available
       // even if an unexpected rejection escapes that boundary.
     } finally {
-      setSaving(false);
+      if (saveOperation.current === operation) setSaving(false);
     }
   };
 
@@ -94,7 +117,7 @@ export function CaptureComposer({
           type="button"
           className="capture-close"
           aria-label="Close quick capture"
-          onClick={onClose}
+          onClick={close}
         >
           ×
         </button>
@@ -145,7 +168,7 @@ export function CaptureComposer({
         </span>
       </footer>
       <div className="capture-actions">
-        <button type="button" className="capture-cancel" onClick={onClose}>
+        <button type="button" className="capture-cancel" onClick={close}>
           Cancel
         </button>
         <button
