@@ -16,17 +16,21 @@ function readText(relativePath: string) {
 describe("desktop security configuration", () => {
   it("does not register superseded snapshot commands", () => {
     const source = readText("src-tauri/src/lib.rs");
-    const start = source.indexOf("tauri::generate_handler![");
-    const end = source.indexOf("])\n", start);
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(start);
-    const handler = source.slice(start, end + 2);
 
-    for (const command of ["load_library,", "load_folders,", "load_trash,", "rename_note,"]) {
-      expect(handler).not.toContain(command);
+    for (const checkoutSource of [source, source.replace(/\r?\n/g, "\r\n")]) {
+      const normalizedSource = checkoutSource.replace(/\r\n/g, "\n");
+      const start = normalizedSource.indexOf("tauri::generate_handler![");
+      const end = normalizedSource.indexOf("])\n", start);
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(end).toBeGreaterThan(start);
+      const handler = normalizedSource.slice(start, end + 2);
+
+      for (const command of ["load_library,", "load_folders,", "load_trash,", "rename_note,"]) {
+        expect(handler).not.toContain(command);
+      }
+
+      expect(handler).toContain("load_library_snapshot,");
     }
-
-    expect(handler).toContain("load_library_snapshot,");
   });
 
   it("keeps development sources and global file globs out of production", () => {
