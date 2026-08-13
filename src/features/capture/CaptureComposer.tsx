@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { isMac } from "../../platform";
 import { captureMarkdownEdit } from "./capture-markdown";
 import "./capture.css";
@@ -12,6 +12,29 @@ export type CaptureComposerProps = {
 };
 
 export const captureSuccessDelayMs = 1000;
+
+export function useCancelableDelay() {
+  const timer = useRef<number | null>(null);
+  const cancel = useCallback(() => {
+    if (timer.current === null) return;
+    window.clearTimeout(timer.current);
+    timer.current = null;
+  }, []);
+  const schedule = useCallback(
+    (action: () => void, delayMs: number) => {
+      cancel();
+      timer.current = window.setTimeout(() => {
+        timer.current = null;
+        action();
+      }, delayMs);
+    },
+    [cancel],
+  );
+
+  useEffect(() => cancel, [cancel]);
+
+  return { cancel, schedule };
+}
 
 export function CaptureComposer({
   shortcut,

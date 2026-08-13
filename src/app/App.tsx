@@ -27,6 +27,7 @@ import {
 import {
   CaptureComposer,
   captureSuccessDelayMs,
+  useCancelableDelay,
 } from "../features/capture/CaptureComposer";
 import {
   CascadingFolderOptions,
@@ -237,6 +238,10 @@ function createRefreshCoordinator(
 }
 
 export function App() {
+  const {
+    cancel: cancelQuickCaptureClose,
+    schedule: scheduleQuickCaptureClose,
+  } = useCancelableDelay();
   const [library, setLibrary] = useState<string | null>(null);
   const [libraryInitialized, setLibraryInitialized] = useState(false);
   const [libraryPaneWidth, setLibraryPaneWidth] = useState(() =>
@@ -576,9 +581,14 @@ export function App() {
   }, [outlinePaneWidth]);
   const showQuickCapture = () => {
     void native.showQuickCapture().catch(() => {
+      cancelQuickCaptureClose();
       setQuickCaptureFeedback("Adds to today’s Daily note");
       setQuickCaptureOpen(true);
     });
+  };
+  const closeQuickCapture = () => {
+    cancelQuickCaptureClose();
+    setQuickCaptureOpen(false);
   };
   useEffect(() => {
     let disposed = false;
@@ -1322,7 +1332,7 @@ export function App() {
     const savedStatus = `Saved to Daily/${fileStem(daily.path)}.md`;
     setQuickCaptureFeedback(savedStatus);
     setStatus(savedStatus);
-    window.setTimeout(
+    scheduleQuickCaptureClose(
       () => setQuickCaptureOpen(false),
       captureSuccessDelayMs,
     );
@@ -2030,7 +2040,7 @@ export function App() {
         <QuickCaptureDialog
           shortcut={formatShortcut(shortcuts.quickCapture)}
           status={quickCaptureFeedback}
-          onClose={() => setQuickCaptureOpen(false)}
+          onClose={closeQuickCapture}
           onSave={saveQuickCapture}
         />
       )}

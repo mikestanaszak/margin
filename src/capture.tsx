@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   CaptureComposer,
   captureSuccessDelayMs,
+  useCancelableDelay,
 } from "./features/capture/CaptureComposer";
 import { isMac } from "./platform";
 import { native } from "./services/native";
@@ -55,8 +56,13 @@ export function CaptureWindow() {
   const [libraryReady, setLibraryReady] = useState(false);
   const [status, setStatus] = useState("");
   const [templates, setTemplates] = useState<NoteTemplate[]>(loadTemplates);
+  const {
+    cancel: cancelSuccessHide,
+    schedule: scheduleSuccessHide,
+  } = useCancelableDelay();
 
   const hide = useCallback(() => {
+    cancelSuccessHide();
     void (async () => {
       try {
         await native.hideQuickCapture();
@@ -66,7 +72,7 @@ export function CaptureWindow() {
           .catch(() => undefined);
       }
     })();
-  }, []);
+  }, [cancelSuccessHide]);
 
   useEffect(() => {
     void native
@@ -77,7 +83,10 @@ export function CaptureWindow() {
   }, []);
 
   useEffect(() => {
-    const syncTemplates = () => setTemplates(loadTemplates());
+    const syncTemplates = () => {
+      cancelSuccessHide();
+      setTemplates(loadTemplates());
+    };
     const suppressWebviewMenu = (event: MouseEvent) => event.preventDefault();
     document.documentElement.classList.add("capture-window-html");
     document.body.classList.add("capture-window-body");
@@ -89,7 +98,7 @@ export function CaptureWindow() {
       document.documentElement.classList.remove("capture-window-html");
       document.body.classList.remove("capture-window-body");
     };
-  }, [hide]);
+  }, [cancelSuccessHide, hide]);
 
   const save = async (text: string): Promise<boolean> => {
     if (!libraryReady) {
@@ -111,7 +120,7 @@ export function CaptureWindow() {
         ),
       );
       setStatus("Saved to today’s Daily note");
-      window.setTimeout(hide, captureSuccessDelayMs);
+      scheduleSuccessHide(hide, captureSuccessDelayMs);
       return true;
     } catch (error) {
       setStatus(`Could not save: ${String(error)}`);
