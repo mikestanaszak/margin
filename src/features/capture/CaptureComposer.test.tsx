@@ -20,6 +20,30 @@ function enterCapture(text: string) {
 }
 
 describe("CaptureComposer save results", () => {
+  it("announces capture feedback as a live status", () => {
+    const { rerender } = render(
+      <CaptureComposer
+        {...defaultProps}
+        status="Adds to today’s Daily note"
+        onSave={vi.fn().mockResolvedValue(true)}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Adds to today’s Daily note",
+    );
+    rerender(
+      <CaptureComposer
+        {...defaultProps}
+        status="Saved to today’s Daily note"
+        onSave={vi.fn().mockResolvedValue(true)}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Saved to today’s Daily note",
+    );
+  });
+
   it("retains the draft when a save returns false", async () => {
     const unsuccessfulSave = vi.fn().mockResolvedValue(false);
     render(<CaptureComposer {...defaultProps} onSave={unsuccessfulSave} />);

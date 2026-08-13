@@ -24,7 +24,10 @@ import {
   ResizableSplit,
   ViewModeControl,
 } from "../components";
-import { CaptureComposer } from "../features/capture/CaptureComposer";
+import {
+  CaptureComposer,
+  captureSuccessDelayMs,
+} from "../features/capture/CaptureComposer";
 import {
   CascadingFolderOptions,
   CascadingNoteOptions,
@@ -1299,28 +1302,34 @@ export function App() {
       await selectLibrary();
       return false;
     }
+    const template =
+      templates.find((item) => item.id === "daily") ||
+      templates[0] ||
+      defaultTemplates[0];
+    let daily: NoteDocument;
     try {
-      const template =
-        templates.find((item) => item.id === "daily") ||
-        templates[0] ||
-        defaultTemplates[0];
-      const daily = await native.appendQuickNote(
+      daily = await native.appendQuickNote(
         library,
         text,
         expandTemplate(template),
       );
-      await refresh();
-      const savedStatus = `Saved to Daily/${fileStem(daily.path)}.md`;
-      setQuickCaptureFeedback(savedStatus);
-      setStatus(savedStatus);
-      window.setTimeout(() => setQuickCaptureOpen(false), 160);
-      return true;
     } catch (error) {
       const failure = `Could not save quick note: ${String(error)}`;
       setQuickCaptureFeedback(failure);
       setStatus(failure);
       return false;
     }
+    const savedStatus = `Saved to Daily/${fileStem(daily.path)}.md`;
+    setQuickCaptureFeedback(savedStatus);
+    setStatus(savedStatus);
+    window.setTimeout(
+      () => setQuickCaptureOpen(false),
+      captureSuccessDelayMs,
+    );
+    void refresh().catch((error) =>
+      setStatus(`Could not read library: ${String(error)}`),
+    );
+    return true;
   };
   const importDailyNote = async (target: NoteSummary) => {
     if (!note || !library) return;

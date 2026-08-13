@@ -914,9 +914,10 @@ describe("navigation structures and safety dialogs", () => {
     }
   });
 
-  it("shows fallback save progress and closes after success", async () => {
+  it("treats an appended fallback capture as saved when refresh fails", async () => {
     const previousShortcuts = localStorage.getItem("markdown-notes.shortcuts");
     localStorage.setItem("markdown-notes.shortcuts", "{}");
+    let snapshotCall = 0;
     let resolveAppend: (value: unknown) => void = () => undefined;
     const append = new Promise((resolve) => {
       resolveAppend = resolve;
@@ -927,12 +928,14 @@ describe("navigation structures and safety dialogs", () => {
         if (command === "load_selected_library")
           return Promise.resolve("C:/Notes");
         if (command === "load_library_snapshot")
-          return Promise.resolve({
-            notes: [],
-            folders: [],
-            trash: [],
-            warnings: [],
-          });
+          return ++snapshotCall === 1
+            ? Promise.resolve({
+                notes: [],
+                folders: [],
+                trash: [],
+                warnings: [],
+              })
+            : Promise.reject(new Error("refresh unavailable"));
         if (command === "take_opened_markdown_files") return Promise.resolve([]);
         if (command === "show_quick_capture")
           return Promise.reject(new Error("native window unavailable"));
@@ -958,9 +961,10 @@ describe("navigation structures and safety dialogs", () => {
       });
       const input = await screen.findByPlaceholderText("Start typing…");
       expect(screen.getByText("Adds to today’s Daily note")).toBeInTheDocument();
+      vi.useFakeTimers();
       fireEvent.change(input, { target: { value: "Fallback thought" } });
       fireEvent.click(screen.getByRole("button", { name: "Save capture" }));
-      expect(await screen.findByText("Saving…")).toBeInTheDocument();
+      expect(screen.getByText("Saving…")).toBeInTheDocument();
 
       await act(async () => {
         resolveAppend({
@@ -975,15 +979,26 @@ describe("navigation structures and safety dialogs", () => {
       });
 
       expect(
-        await screen.findByText("Saved to Daily/2026-08-11.md"),
+        screen.getByText("Saved to Daily/2026-08-11.md"),
       ).toBeInTheDocument();
-      await waitFor(() =>
-        expect(
-          screen.queryByPlaceholderText("Start typing…"),
-        ).not.toBeInTheDocument(),
-      );
+      expect(input).toHaveValue("");
+      expect(snapshotCall).toBe(2);
+      expect(
+        screen.queryByText(/Could not save quick note/),
+      ).not.toBeInTheDocument();
+      expect(
+        invoke.mock.calls.filter(([command]) => command === "append_quick_note"),
+      ).toHaveLength(1);
+
+      act(() => vi.advanceTimersByTime(999));
+      expect(screen.getByPlaceholderText("Start typing…")).toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(1));
+      expect(
+        screen.queryByPlaceholderText("Start typing…"),
+      ).not.toBeInTheDocument();
     } finally {
       view.unmount();
+      vi.useRealTimers();
       if (previousShortcuts === null)
         localStorage.removeItem("markdown-notes.shortcuts");
       else localStorage.setItem("markdown-notes.shortcuts", previousShortcuts);

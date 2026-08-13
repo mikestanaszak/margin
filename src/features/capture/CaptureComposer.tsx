@@ -11,6 +11,8 @@ export type CaptureComposerProps = {
   onSave: (text: string) => boolean | Promise<boolean>;
 };
 
+export const captureSuccessDelayMs = 1000;
+
 export function CaptureComposer({
   shortcut,
   status,
@@ -109,7 +111,9 @@ export function CaptureComposer({
         />
       </div>
       <footer>
-        <span className="capture-status">{saving ? "Saving…" : status}</span>
+        <span className="capture-status" role="status">
+          {saving ? "Saving…" : status}
+        </span>
         <span className="capture-hint">
           <kbd>{shortcut}</kbd>
           <span>opens</span>

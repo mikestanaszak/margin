@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { CaptureComposer } from "./features/capture/CaptureComposer";
+import {
+  CaptureComposer,
+  captureSuccessDelayMs,
+} from "./features/capture/CaptureComposer";
 import { isMac } from "./platform";
 import { native } from "./services/native";
 import "./styles.css";
@@ -108,7 +111,7 @@ export function CaptureWindow() {
         ),
       );
       setStatus("Saved to today’s Daily note");
-      window.setTimeout(hide, 160);
+      window.setTimeout(hide, captureSuccessDelayMs);
       return true;
     } catch (error) {
       setStatus(`Could not save: ${String(error)}`);
