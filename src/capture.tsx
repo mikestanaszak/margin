@@ -67,14 +67,16 @@ export function CaptureWindow() {
     captureSession.current += 1;
     setSession(captureSession.current);
     cancelSuccessHide();
+    return captureSession.current;
   }, [cancelSuccessHide]);
 
   const hide = useCallback(() => {
-    invalidateSession();
+    const closedSession = invalidateSession();
     void (async () => {
       try {
         await native.hideQuickCapture();
       } catch {
+        if (closedSession !== captureSession.current) return;
         await getCurrentWindow()
           .hide()
           .catch(() => undefined);
