@@ -1,7 +1,7 @@
 {
   "name": "margin",
   "private": true,
-  "version": "0.4.6",
+  "version": "0.5.0",
   "description": "A calm, local-first Markdown workspace.",
   "homepage": "https://github.com/mikestanaszak/margin#readme",
   "repository": {
@@ -18,14 +18,18 @@
     "local-first"
   ],
   "type": "module",
+  "packageManager": "pnpm@10.15.1",
   "scripts": {
     "dev": "vite",
     "dev:desktop": "tauri dev",
     "start": "pnpm run dev:desktop",
     "build": "tsc -b && vite build",
-    "test": "vitest run",
+    "test": "pnpm test:unit && pnpm test:integration",
+    "test:unit": "vitest run --exclude src/MermaidDiagram.integration.test.tsx --exclude scripts/bundle-boundaries.test.ts",
+    "test:integration": "vitest run src/MermaidDiagram.integration.test.tsx --maxWorkers=1 --minWorkers=1",
+    "test:bundle": "pnpm build && vitest run scripts/bundle-boundaries.test.ts",
     "test:watch": "vitest",
-    "test:all": "pnpm test && cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:all": "pnpm test && pnpm test:bundle && cargo test --manifest-path src-tauri/Cargo.toml",
     "tauri": "tauri"
   },
   "dependencies": {

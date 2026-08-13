@@ -4,10 +4,12 @@ vi.mock("react-dom/client", () => ({
 }));
 import {
   extractOutlineItems,
+} from "../src/features/preview/Outline";
+import {
   noteListVirtualizationThreshold,
   shouldVirtualizeNoteList,
   virtualNoteRowHeight,
-} from "../src/main";
+} from "../src/features/library/NoteList";
 import {
   createLargeLibraryFixture,
   createLongNoteFixture,

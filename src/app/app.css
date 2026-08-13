@@ -1,0 +1,76 @@
+/* Application composition only. Feature presentation lives beside its feature. */
+.app-shell {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--library-pane-width, 232px) var(--note-pane-width, 296px) minmax(420px, 1fr);
+  grid-template-rows: 58px minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.app-topbar {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: var(--library-pane-width, 232px) var(--note-pane-width, 296px) minmax(0, 1fr);
+  align-items: center;
+  min-width: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.top-brand { display: flex; align-items: center; gap: 9px; height: 100%; padding: 0 20px; color: var(--text); border-right: 1px solid var(--border); font-size: 15px; font-weight: 750; letter-spacing: -0.02em; }
+.brand-mark, .welcome-icon { color: var(--accent); font-size: 21px; }
+.top-search { display: flex; align-items: center; gap: 8px; height: 34px; margin: 0 14px; padding: 0 9px; color: var(--faint); background: var(--surface-soft); border: 1px solid var(--border); border-radius: 8px; }
+.top-search input { width: 100%; min-width: 0; color: var(--text); background: transparent; border: 0; outline: 0; font-size: 12px; }
+.top-search kbd { color: var(--faint); font-size: 10px; white-space: nowrap; }
+.topbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; padding: 0 20px; }
+.icon-button { width: 30px; height: 30px; padding: 0; color: var(--muted); background: transparent; border: 0; border-radius: 7px; font-size: 16px; }
+.icon-button:hover { color: var(--accent-strong); background: var(--accent-soft); }
+
+.workspace { grid-row: 2; display: flex; min-width: 0; min-height: 0; flex-direction: column; background: var(--surface); }
+.workspace-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 58px; padding: 10px 24px; border-bottom: 1px solid var(--border); }
+.title-stack { min-width: 0; }
+.note-title { width: min(400px, 38vw); padding: 0; margin: 0; overflow: hidden; color: var(--text); font-size: 16px; font-weight: 750; letter-spacing: -0.025em; text-overflow: ellipsis; white-space: nowrap; }
+.note-file { display: flex; align-items: center; gap: 9px; min-width: 0; margin-top: 3px; }
+.note-file span { overflow: hidden; color: var(--faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.note-file span[role="status"] { color: var(--muted); }
+.actions { display: flex; align-items: center; gap: 4px; }
+.actions > button { padding: 6px 7px; color: var(--muted); background: transparent; border: 0; border-radius: 6px; font-size: 12px; }
+.actions > button:hover { color: var(--text); background: var(--surface-soft); }
+.actions .danger, .actions .permanent-delete { color: var(--danger); }
+.actions .active-pin, .actions .active-outline { color: var(--accent-strong); background: var(--accent-soft); font-weight: 700; }
+.actions .permanent-delete { padding-inline: 8px; margin-left: 3px; border-left: 1px solid var(--border); }
+.actions .permanent-delete:hover { background: color-mix(in srgb, var(--danger) 11%, transparent); }
+.editor-tools { display: flex; justify-content: flex-start; min-height: 36px; padding: 5px 24px; border-bottom: 1px solid var(--border); }
+.insert-table, .insert-image { padding: 4px 8px; color: var(--muted); background: transparent; border: 1px solid var(--border); border-radius: 6px; font-size: 11px; }
+.insert-table:hover, .insert-image:hover { color: var(--accent-strong); background: var(--surface-soft); }
+.workspace-main, .note-content { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.note-content.split { overflow: hidden; }
+.note-content.split > .nr-resizable-split { flex: 1; min-width: 0; }
+.markdown-editor { position: relative; flex: 1; min-width: 0; min-height: 0; color: var(--text); background: var(--surface); font-size: 15px; }
+.markdown-editor-toolbar { position: absolute; z-index: 4; display: flex; align-items: center; gap: 2px; padding: 4px; color: var(--text); background: var(--surface-soft); border: 1px solid var(--border); border-radius: 9px; box-shadow: var(--shadow); }
+.markdown-editor-toolbar button { min-width: 28px; min-height: 28px; padding: 3px 7px; color: inherit; background: transparent; border: 0; border-radius: 5px; font-size: 12px; font-weight: 700; }
+.markdown-editor-toolbar button:hover { color: var(--accent-strong); background: var(--accent-soft); }
+.markdown-editor-toolbar span { width: 1px; height: 18px; margin: 0 2px; background: var(--border); }
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.compare pre { max-height: 180px; padding: 8px; overflow: auto; white-space: pre-wrap; background: var(--surface-soft); border: 1px solid var(--border); font-size: 11px; }
+.sidebar-resizer { position: absolute; z-index: 8; top: 58px; bottom: 0; width: 10px; cursor: col-resize; touch-action: none; transform: translateX(-50%); }
+.sidebar-resizer::before { position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: var(--accent); content: ""; opacity: 0; transition: opacity 120ms ease; }
+.sidebar-resizer:hover::before, .sidebar-resizer:focus-visible::before { opacity: 0.78; }
+.library-pane-resizer { left: var(--library-pane-width, 232px); }
+.note-pane-resizer { left: calc(var(--library-pane-width, 232px) + var(--note-pane-width, 296px)); }
+.app-shell.sidebar-hidden { grid-template-columns: 0 var(--note-pane-width, 296px) minmax(420px, 1fr); }
+.sidebar-hidden .top-brand { padding: 0; overflow: hidden; border: 0; opacity: 0; }
+.sidebar-hidden .library-pane-resizer { display: none; }
+.sidebar-hidden .note-pane-resizer { left: var(--note-pane-width, 296px); }
+
+@media (max-width: 800px) {
+  body { min-width: 0; }
+  .app-shell, .app-shell.sidebar-hidden { grid-template-columns: minmax(180px, 35%) 1fr; }
+  .app-topbar { grid-template-columns: minmax(180px, 35%) 1fr; }
+  .sidebar-resizer, .topbar-actions { display: none; }
+  .workspace-header { padding: 10px 14px; }
+  .actions > button:not(.danger), .nr-view-mode__button:nth-child(2) { display: none; }
+  .editor-tools { padding: 5px 14px; }
+}

@@ -19,7 +19,7 @@ import {
   scrollOutlineTargetIntoPreview,
   scrollTopForProgress,
   syncScrollPosition,
-} from "./main";
+} from "./features/preview/Outline";
 
 const headings = [
   { index: 0, level: 1, title: "Project plan" },

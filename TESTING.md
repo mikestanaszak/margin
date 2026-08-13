@@ -8,12 +8,15 @@ pnpm test
 pnpm build
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 ```
 
-`pnpm test:all` combines the frontend and Rust test suites. Rust formatting is checked separately after backend edits:
+`pnpm test` runs the unit suite and then the dedicated Mermaid renderer integration suite. Run either phase directly when iterating:
 
 ```cmd
-cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+pnpm test:unit
+pnpm test:integration
 ```
 
 ## Example library
@@ -39,7 +42,7 @@ The example notes include:
 | Note/folder trash, restore, permanent delete, and path containment | Rust workflow and rejection tests | Confirm destructive-action prompts and context menus |
 | Preview GFM, tasks, tables, links, local images, and code languages | React and transformation tests | Visually inspect highlighting and local image layout |
 | CodeMirror formatting, code-fence language autocomplete, image insertion, controlled updates, and view-state bounds | Editor command tests | Confirm selection and scroll remain stable through autosave and mode changes |
-| Tags, note cards, favorites control, quick switcher, and relative dates | React interaction tests | Confirm favorite persistence after relaunch |
+| YAML front-matter tags, note cards, favorites control, quick switcher, and relative dates | React interaction tests | Confirm tags appear on note cards and favorite persistence after relaunch |
 | Edit/Split/Preview and keyboard-resizable split layout | React interaction tests | Drag dividers and verify saved widths after relaunch |
 | Quick-capture append and import destinations | Rust workflow tests | Exercise the registered global shortcut and separate capture window |
 | External-change indexing | Rust reload test | Verify the clean reload and unsaved-conflict decision dialog |

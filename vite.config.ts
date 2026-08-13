@@ -10,6 +10,15 @@ export default defineConfig({
     watch: { ignored: ["**/target/**"] }
   },
   envPrefix: ["VITE_", "TAURI_"],
+  build: {
+    manifest: true,
+    rollupOptions: {
+      input: {
+        main: "index.html",
+        capture: "capture.html",
+      },
+    },
+  },
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
