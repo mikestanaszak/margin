@@ -109,7 +109,7 @@ export function CaptureComposer({
         />
       </div>
       <footer>
-        <span className="capture-status">{status}</span>
+        <span className="capture-status">{saving ? "Saving…" : status}</span>
         <span className="capture-hint">
           <kbd>{shortcut}</kbd>
           <span>opens</span>

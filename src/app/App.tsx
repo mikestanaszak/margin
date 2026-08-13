@@ -283,6 +283,9 @@ export function App() {
   const [quickCaptureStatus, setQuickCaptureStatus] = useState(
     "Registering global shortcut…",
   );
+  const [quickCaptureFeedback, setQuickCaptureFeedback] = useState(
+    "Adds to today’s Daily note",
+  );
   const [noteContextMenu, setNoteContextMenu] = useState<{
     note: NoteSummary;
     x: number;
@@ -569,7 +572,10 @@ export function App() {
     localStorage.setItem(outlinePaneWidthKey, String(outlinePaneWidth));
   }, [outlinePaneWidth]);
   const showQuickCapture = () => {
-    void native.showQuickCapture().catch(() => setQuickCaptureOpen(true));
+    void native.showQuickCapture().catch(() => {
+      setQuickCaptureFeedback("Adds to today’s Daily note");
+      setQuickCaptureOpen(true);
+    });
   };
   useEffect(() => {
     let disposed = false;
@@ -1289,17 +1295,30 @@ export function App() {
   };
   const saveQuickCapture = async (text: string) => {
     if (!library) {
+      setQuickCaptureFeedback("Choose your notes folder before saving.");
       await selectLibrary();
       return false;
     }
     try {
-      const daily = await native.appendQuickNote(library, text);
+      const template =
+        templates.find((item) => item.id === "daily") ||
+        templates[0] ||
+        defaultTemplates[0];
+      const daily = await native.appendQuickNote(
+        library,
+        text,
+        expandTemplate(template),
+      );
       await refresh();
-      setQuickCaptureOpen(false);
-      setStatus(`Saved to Daily/${fileStem(daily.path)}.md`);
+      const savedStatus = `Saved to Daily/${fileStem(daily.path)}.md`;
+      setQuickCaptureFeedback(savedStatus);
+      setStatus(savedStatus);
+      window.setTimeout(() => setQuickCaptureOpen(false), 160);
       return true;
     } catch (error) {
-      setStatus(`Could not save quick note: ${String(error)}`);
+      const failure = `Could not save quick note: ${String(error)}`;
+      setQuickCaptureFeedback(failure);
+      setStatus(failure);
       return false;
     }
   };
@@ -2001,6 +2020,7 @@ export function App() {
       {quickCaptureOpen && (
         <QuickCaptureDialog
           shortcut={formatShortcut(shortcuts.quickCapture)}
+          status={quickCaptureFeedback}
           onClose={() => setQuickCaptureOpen(false)}
           onSave={saveQuickCapture}
         />
@@ -2569,10 +2589,12 @@ function FolderDialog({
 }
 function QuickCaptureDialog({
   shortcut,
+  status,
   onClose,
   onSave,
 }: {
   shortcut: string;
+  status: string;
   onClose: () => void;
   onSave: (text: string) => boolean | Promise<boolean>;
 }) {
@@ -2580,7 +2602,7 @@ function QuickCaptureDialog({
     <div className="modal-backdrop quick-capture-backdrop">
       <CaptureComposer
         shortcut={shortcut}
-        status="Saved to today’s Daily note"
+        status={status}
         disabled={false}
         onClose={onClose}
         onSave={onSave}
