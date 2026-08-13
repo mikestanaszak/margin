@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("react-dom/client", () => ({
@@ -31,10 +31,111 @@ afterEach(() => {
   vi.useRealTimers();
   hideQuickCapture.mockReset().mockResolvedValue(undefined);
   currentWindowHide.mockReset().mockResolvedValue(undefined);
+  loadSelectedLibrary.mockReset().mockResolvedValue("C:/Notes");
   appendQuickNote.mockReset();
 });
 
 describe("standalone Quick Capture sessions", () => {
+  it("loads a library selected after the persistent window mounted", async () => {
+    loadSelectedLibrary
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce("C:/Selected Notes");
+    appendQuickNote.mockResolvedValue({});
+
+    const view = render(<CaptureWindow />);
+    try {
+      const input = await screen.findByPlaceholderText("Start typing…");
+      await waitFor(() => expect(loadSelectedLibrary).toHaveBeenCalledOnce());
+
+      fireEvent.focus(window);
+      await waitFor(() => expect(loadSelectedLibrary).toHaveBeenCalledTimes(2));
+      fireEvent.change(input, { target: { value: "First captured note" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save capture" }));
+
+      await waitFor(() =>
+        expect(appendQuickNote).toHaveBeenCalledWith(
+          "C:/Selected Notes",
+          "First captured note",
+          expect.any(String),
+        ),
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("uses a newly selected library after focus reopens capture", async () => {
+    loadSelectedLibrary
+      .mockResolvedValueOnce("C:/Library A")
+      .mockResolvedValueOnce("C:/Library B");
+    appendQuickNote.mockResolvedValue({});
+
+    const view = render(<CaptureWindow />);
+    try {
+      const input = await screen.findByPlaceholderText("Start typing…");
+      await waitFor(() => expect(loadSelectedLibrary).toHaveBeenCalledOnce());
+
+      fireEvent.focus(window);
+      await waitFor(() => expect(loadSelectedLibrary).toHaveBeenCalledTimes(2));
+      fireEvent.change(input, { target: { value: "Save in the new library" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save capture" }));
+
+      await waitFor(() =>
+        expect(appendQuickNote).toHaveBeenCalledWith(
+          "C:/Library B",
+          "Save in the new library",
+          expect.any(String),
+        ),
+      );
+      expect(appendQuickNote).not.toHaveBeenCalledWith(
+        "C:/Library A",
+        expect.any(String),
+        expect.any(String),
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("ignores a stale library response from an older capture session", async () => {
+    let resolveOldLibrary: (library: string) => void = () => undefined;
+    loadSelectedLibrary
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveOldLibrary = resolve;
+        }),
+      )
+      .mockResolvedValueOnce("C:/Current Library");
+    appendQuickNote.mockResolvedValue({});
+
+    const view = render(<CaptureWindow />);
+    try {
+      const input = await screen.findByPlaceholderText("Start typing…");
+      expect(loadSelectedLibrary).toHaveBeenCalledOnce();
+      fireEvent.focus(window);
+      await waitFor(() => expect(loadSelectedLibrary).toHaveBeenCalledTimes(2));
+
+      await act(async () => resolveOldLibrary("C:/Old Library"));
+      fireEvent.change(input, { target: { value: "Current session note" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save capture" }));
+
+      await waitFor(() =>
+        expect(appendQuickNote).toHaveBeenCalledWith(
+          "C:/Current Library",
+          "Current session note",
+          expect.any(String),
+        ),
+      );
+      expect(appendQuickNote).not.toHaveBeenCalledWith(
+        "C:/Old Library",
+        expect.any(String),
+        expect.any(String),
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("ignores an old native hide rejection after focus reopens capture", async () => {
     let rejectHide: (error: unknown) => void = () => undefined;
     hideQuickCapture.mockReturnValueOnce(

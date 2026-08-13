@@ -84,33 +84,46 @@ export function CaptureWindow() {
     })();
   }, [invalidateSession]);
 
-  useEffect(() => {
+  const refreshLibrary = useCallback((forSession: number) => {
+    setLibraryReady(false);
     void native
       .loadSelectedLibrary()
-      .then(setLibrary)
-      .catch(() => setLibrary(null))
-      .finally(() => setLibraryReady(true));
+      .then((selectedLibrary) => {
+        if (forSession === captureSession.current)
+          setLibrary(selectedLibrary);
+      })
+      .catch(() => {
+        if (forSession === captureSession.current) setLibrary(null);
+      })
+      .finally(() => {
+        if (forSession === captureSession.current) setLibraryReady(true);
+      });
   }, []);
 
   useEffect(() => {
-    const syncTemplates = () => {
-      invalidateSession();
+    refreshLibrary(captureSession.current);
+  }, [refreshLibrary]);
+
+  useEffect(() => {
+    const syncCaptureSession = () => {
+      const reopenedSession = invalidateSession();
       setStatus("");
       setTemplates(loadTemplates());
+      refreshLibrary(reopenedSession);
     };
     const suppressWebviewMenu = (event: MouseEvent) => event.preventDefault();
     document.documentElement.classList.add("capture-window-html");
     document.body.classList.add("capture-window-body");
-    window.addEventListener("focus", syncTemplates);
+    window.addEventListener("focus", syncCaptureSession);
     window.addEventListener("contextmenu", suppressWebviewMenu);
     return () => {
       captureSession.current += 1;
-      window.removeEventListener("focus", syncTemplates);
+      window.removeEventListener("focus", syncCaptureSession);
       window.removeEventListener("contextmenu", suppressWebviewMenu);
       document.documentElement.classList.remove("capture-window-html");
       document.body.classList.remove("capture-window-body");
     };
-  }, [invalidateSession]);
+  }, [invalidateSession, refreshLibrary]);
 
   const save = async (text: string): Promise<boolean> => {
     const startedInSession = captureSession.current;
