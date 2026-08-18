@@ -390,6 +390,7 @@ fn unique_temporary_path(path: &Path) -> PathBuf {
 #[derive(Debug)]
 struct LinkRewrite {
     path: PathBuf,
+    original: Vec<u8>,
     content: String,
 }
 
@@ -398,6 +399,7 @@ struct StagedFileUpdate {
     target: PathBuf,
     replacement: PathBuf,
     backup: PathBuf,
+    original: Vec<u8>,
     applied: bool,
 }
 
@@ -778,6 +780,7 @@ fn plan_link_rewrites(
         if rewritten_body != content[body_offset..] {
             rewrites.push(LinkRewrite {
                 path: entry.path().to_path_buf(),
+                original: content.as_bytes().to_vec(),
                 content: format!("{}{}", &content[..body_offset], rewritten_body),
             });
         }
@@ -808,17 +811,24 @@ fn cleanup_after_rollback(updates: &[StagedFileUpdate]) {
 fn stage_file_updates(rewrites: Vec<LinkRewrite>) -> Result<Vec<StagedFileUpdate>, String> {
     let mut updates = Vec::with_capacity(rewrites.len());
     for rewrite in rewrites {
-        let original = match fs::read(&rewrite.path) {
+        let current = match fs::read(&rewrite.path) {
             Ok(content) => content,
             Err(error) => {
                 discard_staged_file_updates(&updates);
                 return Err(error.to_string());
             }
         };
+        if current != rewrite.original {
+            discard_staged_file_updates(&updates);
+            return Err(format!(
+                "{} changed outside Margin before link repair could be staged",
+                rewrite.path.display()
+            ));
+        }
         let backup = unique_temporary_path(&rewrite.path);
         let replacement = unique_temporary_path(&rewrite.path);
-        if let Err(error) =
-            fs::write(&backup, original).and_then(|_| fs::write(&replacement, rewrite.content))
+        if let Err(error) = fs::write(&backup, &rewrite.original)
+            .and_then(|_| fs::write(&replacement, rewrite.content))
         {
             let _ = fs::remove_file(&backup);
             let _ = fs::remove_file(&replacement);
@@ -829,10 +839,21 @@ fn stage_file_updates(rewrites: Vec<LinkRewrite>) -> Result<Vec<StagedFileUpdate
             target: rewrite.path,
             replacement,
             backup,
+            original: rewrite.original,
             applied: false,
         });
     }
     Ok(updates)
+}
+
+fn verify_staged_target(update: &StagedFileUpdate) -> Result<(), String> {
+    match fs::read(&update.target) {
+        Ok(current) if current == update.original => Ok(()),
+        _ => Err(format!(
+            "{} changed outside Margin before link repair could be applied",
+            update.target.display()
+        )),
+    }
 }
 
 fn rollback_staged_file_updates(
@@ -878,6 +899,13 @@ fn apply_staged_file_updates(
     fail_restore_for_index: Option<usize>,
 ) -> Result<(), String> {
     for index in 0..updates.len() {
+        if let Err(error) = verify_staged_target(&updates[index]) {
+            let rollback = rollback_staged_file_updates(updates, fail_restore_for_index);
+            return Err(match rollback {
+                Ok(()) => error,
+                Err(rollback_error) => format!("{}; rollback failed: {}", error, rollback_error),
+            });
+        }
         if fail_before_index == Some(index) {
             let rollback = rollback_staged_file_updates(updates, fail_restore_for_index);
             return Err(match rollback {
@@ -988,6 +1016,7 @@ fn save_note_checked(
             rewrite_markdown_links(&content[source_body_offset..], &path, &path, &destination);
         rewrites.push(LinkRewrite {
             path: path.clone(),
+            original: fs::read(&path).map_err(|error| SaveNoteFailure::Error(error.to_string()))?,
             content: format!(
                 "{}{}",
                 &content[..source_body_offset],
@@ -1255,8 +1284,8 @@ mod tests {
     use super::{
         apply_staged_file_updates, body_with_title, create_folder, create_note,
         delete_note_permanently, duplicate_note, import_markdown_file, move_folder_to_trash,
-        move_note_to_folder, move_note_to_trash, normalize_tags, read_library_note_file,
-        read_note_file, rename_file_safely, rename_folder, rename_note,
+        move_note_to_folder, move_note_to_trash, normalize_tags, plan_link_rewrites,
+        read_library_note_file, read_note_file, rename_file_safely, rename_folder, rename_note,
         resolve_relative_markdown_target, restore_note_from_trash, save_note, save_note_document,
         scan_markdown_links, split_front_matter, stage_file_updates, LinkRewrite, LinkTarget,
     };
@@ -1751,10 +1780,12 @@ mod tests {
             let mut staged = stage_file_updates(vec![
                 LinkRewrite {
                     path: first.clone(),
+                    original: fs::read(&first).map_err(|error| error.to_string())?,
                     content: "# First\nrewritten\n".into(),
                 },
                 LinkRewrite {
                     path: second.clone(),
+                    original: fs::read(&second).map_err(|error| error.to_string())?,
                     content: "# Second\nrewritten\n".into(),
                 },
             ])?;
@@ -1776,6 +1807,76 @@ mod tests {
     }
 
     #[test]
+    fn staged_link_repair_rejects_an_external_edit_before_replacement() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let first = library.join("First.md");
+        let second = library.join("Second.md");
+        fs::write(&first, "# First\noriginal\n").unwrap();
+        fs::write(&second, "# Second\noriginal\n").unwrap();
+
+        let result = (|| -> Result<(), String> {
+            let mut staged = stage_file_updates(vec![
+                LinkRewrite {
+                    path: first.clone(),
+                    original: fs::read(&first).map_err(|error| error.to_string())?,
+                    content: "# First\nrewritten\n".into(),
+                },
+                LinkRewrite {
+                    path: second.clone(),
+                    original: fs::read(&second).map_err(|error| error.to_string())?,
+                    content: "# Second\nrewritten\n".into(),
+                },
+            ])?;
+            fs::write(&second, "# Second\nexternal\n").map_err(|error| error.to_string())?;
+
+            let error = apply_staged_file_updates(&mut staged, None, None)
+                .expect_err("the external edit must reject the transaction");
+
+            assert!(error.contains("changed outside Margin"));
+            assert_eq!(
+                fs::read_to_string(&first).map_err(|error| error.to_string())?,
+                "# First\noriginal\n"
+            );
+            assert_eq!(
+                fs::read_to_string(&second).map_err(|error| error.to_string())?,
+                "# Second\nexternal\n"
+            );
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn link_repair_staging_rejects_an_edit_after_planning() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let old_path = library.join("Old.md");
+        let new_path = library.join("New.md");
+        let links = library.join("Links.md");
+        fs::write(&old_path, "# Old\n").unwrap();
+        fs::write(&links, "# Links\n\n[Old](Old.md)\n").unwrap();
+
+        let result = (|| -> Result<(), String> {
+            let rewrites = plan_link_rewrites(&library, &old_path, &new_path)?;
+            fs::write(&links, "# Links\n\nexternal\n").map_err(|error| error.to_string())?;
+
+            let error =
+                stage_file_updates(rewrites).expect_err("the external edit must reject staging");
+
+            assert!(error.contains("changed outside Margin"));
+            assert_eq!(
+                fs::read_to_string(&links).map_err(|error| error.to_string())?,
+                "# Links\n\nexternal\n"
+            );
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
     fn failed_link_repair_rollback_retains_the_recovery_copy() {
         let library = temporary_library();
         fs::create_dir_all(&library).unwrap();
@@ -1788,10 +1889,12 @@ mod tests {
             let mut staged = stage_file_updates(vec![
                 LinkRewrite {
                     path: first.clone(),
+                    original: fs::read(&first).map_err(|error| error.to_string())?,
                     content: "# First\nrewritten\n".into(),
                 },
                 LinkRewrite {
                     path: second.clone(),
+                    original: fs::read(&second).map_err(|error| error.to_string())?,
                     content: "# Second\nrewritten\n".into(),
                 },
             ])?;
