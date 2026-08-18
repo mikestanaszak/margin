@@ -35,9 +35,10 @@ const { open } = vi.hoisted(() => ({
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open,
 }));
-vi.mock("@tauri-apps/plugin-updater", () => ({
-  check: vi.fn(() => Promise.resolve(null)),
+const { check } = vi.hoisted(() => ({
+  check: vi.fn((): Promise<unknown> => Promise.resolve(null)),
 }));
+vi.mock("@tauri-apps/plugin-updater", () => ({ check }));
 const { convertFileSrc, invoke } = vi.hoisted(() => ({
   convertFileSrc: vi.fn((path: string) => `asset://${path}`),
   invoke: vi.fn((command: string) =>
@@ -71,8 +72,6 @@ import {
   createRefreshCoordinator,
   QuickCaptureDialog,
   UpdateDialog,
-  restartInstalledUpdate,
-  type UpdateState,
 } from "./app/App";
 import {
   CascadingNoteOptions,
@@ -110,36 +109,30 @@ const notes = [
   },
 ];
 
-describe("update restart", () => {
-  it("marks an installed update as restarting only after the user chooses restart", async () => {
-    const states: UpdateState[] = [];
-    const errors: string[] = [];
-    const relaunchApp = vi.fn().mockResolvedValue(undefined);
+describe("updates", () => {
+  it("lets a manual check reconsider a skipped version", async () => {
+    const update = {
+      version: "0.6.0",
+      body: "Updater improvements",
+      downloadAndInstall: vi.fn().mockResolvedValue(undefined),
+    };
+    localStorage.setItem("margin.update-skipped-version", update.version);
+    localStorage.setItem("margin.update-last-checked", String(Date.now()));
+    check.mockResolvedValueOnce(update);
 
-    await restartInstalledUpdate(
-      relaunchApp,
-      (state) => states.push(state),
-      (error) => errors.push(error),
-    );
+    try {
+      render(<App />);
+      fireEvent.click(screen.getByLabelText("Settings"));
+      fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
 
-    expect(relaunchApp).toHaveBeenCalledOnce();
-    expect(states).toEqual(["restarting"]);
-    expect(errors).toEqual([""]);
-  });
-
-  it("returns to ready and reports a restart failure", async () => {
-    const states: UpdateState[] = [];
-    const errors: string[] = [];
-    const relaunchApp = vi.fn().mockRejectedValue(new Error("permission denied"));
-
-    await restartInstalledUpdate(
-      relaunchApp,
-      (state) => states.push(state),
-      (error) => errors.push(error),
-    );
-
-    expect(states).toEqual(["restarting", "ready"]);
-    expect(errors[errors.length - 1]).toContain("Could not restart Margin");
+      expect(
+        await screen.findByRole("heading", { name: "Margin 0.6.0" }),
+      ).toBeInTheDocument();
+    } finally {
+      localStorage.removeItem("margin.update-skipped-version");
+      localStorage.removeItem("margin.update-last-checked");
+      check.mockResolvedValue(null);
+    }
   });
 
   it("shows a disabled restarting control while a relaunch is in progress", () => {
@@ -160,6 +153,119 @@ describe("update restart", () => {
     expect(
       screen.getByRole("button", { name: "Restarting Margin…" }),
     ).toBeDisabled();
+  });
+
+  it("offers a clear retry and close path after installation fails", () => {
+    render(
+      <UpdateDialog
+        update={{ version: "0.6.0", body: "Updater improvements" } as never}
+        state="error"
+        error="Could not install the update: Error: offline"
+        onClose={() => undefined}
+        onInstall={() => undefined}
+        onRestart={() => undefined}
+        onSkip={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Close update" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Restart Margin" })).toBeNull();
+  });
+
+  it("marks installation as busy and prevents duplicate install actions", () => {
+    render(
+      <UpdateDialog
+        update={{ version: "0.6.0", body: "Updater improvements" } as never}
+        state="downloading"
+        error=""
+        onClose={() => undefined}
+        onInstall={() => undefined}
+        onRestart={() => undefined}
+        onSkip={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "Margin update" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Updating…" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Skip this version" }),
+    ).toBeDisabled();
+  });
+
+  it("marks a pending restart as busy", () => {
+    render(
+      <UpdateDialog
+        update={{ version: "0.6.0", body: "Updater improvements" } as never}
+        state="restarting"
+        error=""
+        onClose={() => undefined}
+        onInstall={() => undefined}
+        onRestart={() => undefined}
+        onSkip={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "Margin update" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+  });
+
+  it("announces update failures and changing status", () => {
+    const props = {
+      update: { version: "0.6.0", body: "Updater improvements" } as never,
+      onClose: () => undefined,
+      onInstall: () => undefined,
+      onRestart: () => undefined,
+      onSkip: () => undefined,
+    };
+    const { rerender } = render(
+      <UpdateDialog
+        {...props}
+        state="error"
+        error="Could not install the update: Error: offline"
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not install the update: Error: offline",
+    );
+
+    rerender(<UpdateDialog {...props} state="ready" error="" />);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Update installed. Restart Margin when you’re ready.",
+    );
+  });
+
+  it("describes installed and restarting updates accurately", () => {
+    const props = {
+      update: { version: "0.6.0", body: "Updater improvements" } as never,
+      error: "",
+      onClose: () => undefined,
+      onInstall: () => undefined,
+      onRestart: () => undefined,
+      onSkip: () => undefined,
+    };
+    const { rerender } = render(<UpdateDialog {...props} state="ready" />);
+
+    expect(
+      screen.getByText("Update installed", { selector: ".eyebrow" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Margin 0.6.0 is ready" }),
+    ).toBeInTheDocument();
+
+    rerender(<UpdateDialog {...props} state="restarting" />);
+    expect(
+      screen.getByText("Restarting Margin", { selector: ".eyebrow" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Margin 0.6.0 is restarting" }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -747,6 +853,46 @@ describe("navigation structures and safety dialogs", () => {
     expect(screen.getByRole("dialog", { name: "Settings" }).parentElement).toHaveClass("settings-backdrop");
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("announces manual update-check feedback without announcing persistent help", () => {
+    render(
+      <SettingsDialog
+        theme="system"
+        onTheme={() => undefined}
+        palette="mint"
+        onPalette={() => undefined}
+        shortcuts={{
+          newNote: "ctrl+n",
+          search: "ctrl+k",
+          switcher: "ctrl+p",
+          save: "ctrl+s",
+          view: "ctrl+e",
+          sidebar: "ctrl+\\",
+          outline: "ctrl+shift+o",
+          quickCapture: "ctrl+alt+shift+space",
+        }}
+        onShortcuts={() => undefined}
+        quickCaptureStatus="Ready"
+        library="C:/Notes"
+        quickImportTargets={notes}
+        quickImportDefaultPath=""
+        onQuickImportDefaultPath={() => undefined}
+        updateState="idle"
+        updateMessage="Could not check for updates right now."
+        onCheckForUpdates={() => undefined}
+        onChangeLibrary={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Could not check for updates right now.",
+    );
+    expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+    expect(
+      screen.getByText("Check GitHub for the latest signed Margin release."),
+    ).not.toHaveAttribute("role");
   });
 
   it("persists palette changes made through App Settings", () => {

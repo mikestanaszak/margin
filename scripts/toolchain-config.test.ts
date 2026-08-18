@@ -1,7 +1,34 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("toolchain configuration", () => {
+  it("keeps Vitest out of nested worktrees without dropping its default exclusions", () => {
+    const inspectConfig = [
+      'import { loadConfigFromFile } from "vite";',
+      'import { configDefaults } from "vitest/config";',
+      "const loaded = await loadConfigFromFile(",
+      '  { command: "serve", mode: "test" },',
+      '  "vite.config.ts",',
+      ");",
+      "process.stdout.write(JSON.stringify({",
+      "  excluded: loaded?.config.test?.exclude ?? [],",
+      "  defaults: configDefaults.exclude,",
+      "}));",
+    ].join("\n");
+    const inspected = JSON.parse(
+      execFileSync(
+        process.execPath,
+        ["--input-type=module", "--eval", inspectConfig],
+        { encoding: "utf8" },
+      ),
+    ) as { excluded: string[]; defaults: string[] };
+
+    expect(inspected.excluded).toContain("**/.worktrees/**");
+    for (const defaultExclusion of inspected.defaults)
+      expect(inspected.excluded).toContain(defaultExclusion);
+  });
+
   it("pins pnpm and runs bundle inspection only after a production build", () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8"));
     expect(pkg.packageManager).toBe("pnpm@10.15.1");

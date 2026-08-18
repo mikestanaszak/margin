@@ -50,13 +50,12 @@
 - Margin registers as an editor for `.md` and `.markdown` files. Files already
   inside the selected library open directly; files outside it can be opened as
   their original or imported as a copy into a chosen folder.
-- Signed in-app updates, with daily checks and an available-update prompt. Choosing Update now downloads and installs the update; Restart Margin appears only after that operation finishes.
+- Signed in-app updates, with daily automatic checks and manual checks in Settings. Automatic checks suppress a version the user skipped, while a manual check surfaces that version again for reconsideration. Choosing Update now downloads and installs without restarting; Restart Margin appears only after installation succeeds. Check, install, and restart failures keep clear feedback and a retry or close path.
 - Closing the main window hides Margin so global Quick Capture remains available. The tray menu provides Show Margin, Quick Capture, and Quit.
 - Quit waits for pending managed-note saves. A conflict or save failure shows the main window with the draft and recovery state intact; if saving does not answer, discarding the draft requires explicit native confirmation and Cancel is the default.
 
 ## Planned
 
-- Expanded staged-update installation coverage.
 - Optional Git-aware library status and version history.
 - Improved imports from popular Markdown exports.
 - Optional graph views and unresolved-link note creation.
