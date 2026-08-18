@@ -39,7 +39,7 @@
 - Daily captures can be imported into a configured default note, another existing note, or a new note in any folder.
 - Light, dark, and system appearance; system is the default. Ink, Mint, and Linen palettes are available independently of appearance, with Mint as the default.
 - Margin uses one packaged green application icon on every platform; theme and palette changes do not change it.
-- Images can be picked, dragged into the editor, or pasted. Margin copies each image into a sibling `<note>.assets` folder and inserts a relative Markdown image link. A successful note save removes unreferenced direct files from that note's companion folder and deletes the folder when it becomes empty.
+- Images can be picked, dragged into the editor, or pasted. Margin copies each image into a sibling `<note>.assets` folder and inserts a relative Markdown image link. A successful note save removes unreferenced direct files from that note's companion folder and deletes the folder when it becomes empty. Encoded local references are decoded exactly once; ambiguous local destinations preserve the folder rather than risk deletion.
 - Image companion folders stay out of the sidebar and folder menus. The Image action lives beside table insertion in the top edit formatting toolbar. Renaming a note moves its companion folder and rewrites that note's image paths.
 - The Paper palette provides coordinated warm-tan light and dark appearances; code-fence language suggestions remain readable in every palette.
 - Settings for library location, hotkeys, Quick Capture destination, supported code-block languages, and manual update checks.
@@ -51,6 +51,7 @@
   inside the selected library open directly; files outside it can be opened as
   their original or imported as a copy into a chosen folder.
 - Signed in-app updates, with daily automatic checks and manual checks in Settings. Automatic checks suppress a version the user skipped, while a manual check surfaces that version again for reconsideration. Choosing Update now downloads and installs without restarting; Restart Margin appears only after installation succeeds. Check, install, and restart failures keep clear feedback and a retry or close path.
+- Published releases include a SHA-256 manifest. The manual Windows, macOS, and Linux installer scripts verify their selected package before modifying an installation. Manual packages are not currently Windows Authenticode-signed or Apple Developer ID-signed/notarized, so documentation does not claim operating-system publisher identity.
 - Closing the main window hides Margin so global Quick Capture remains available. The tray menu provides Show Margin, Quick Capture, and Quit.
 - Quit waits for pending managed-note saves. A conflict or save failure shows the main window with the draft and recovery state intact; if saving does not answer, discarding the draft requires explicit native confirmation and Cancel is the default.
 

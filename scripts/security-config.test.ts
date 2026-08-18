@@ -89,4 +89,14 @@ describe("workflow supply-chain configuration", () => {
       }
     }
   });
+
+  it("keeps manual installation on the checksummed trust path", () => {
+    for (const installer of ["install.ps1", "install.sh", "install-linux.sh"]) {
+      expect(readText(installer), installer).toContain("SHA256SUMS");
+    }
+
+    const readme = readText("README.md");
+    expect(readme).toContain("Manual downloads do not yet carry Windows Authenticode");
+    expect(readme).toContain("signed in-app updates");
+  });
 });

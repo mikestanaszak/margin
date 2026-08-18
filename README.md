@@ -34,7 +34,7 @@ Notes/
       whiteboard.png
 ```
 
-The `.assets` folder is hidden from Margin’s sidebar because it belongs to the adjacent note, not to your folder organization. If you rename or move a note, Margin moves its companion folder and repairs its image references. When an image reference is removed from the Markdown, the unreferenced image file is removed on the next save; an empty companion folder disappears too. Margin only removes direct files it created in that note’s own `.assets` folder.
+The `.assets` folder is hidden from Margin’s sidebar because it belongs to the adjacent note, not to your folder organization. If you rename or move a note, Margin moves its companion folder and repairs its image references. When an image reference is removed from the Markdown, the unreferenced image file is removed on the next save; an empty companion folder disappears too. Treat a note’s `.assets` folder as app-managed: Margin can remove any unreferenced direct file stored there.
 
 ## Everyday workflow
 
@@ -95,7 +95,9 @@ curl -fsSL https://raw.githubusercontent.com/mikestanaszak/margin/main/install.s
 curl -fsSL https://raw.githubusercontent.com/mikestanaszak/margin/main/install-linux.sh | bash
 ```
 
-Manual installers for Windows, macOS, Debian/Ubuntu, and AppImage Linux are available from the [latest release](https://github.com/mikestanaszak/margin/releases/latest).
+Manual installers for Windows, macOS, Debian/Ubuntu, and AppImage Linux are available from the [latest release](https://github.com/mikestanaszak/margin/releases/latest). Each release includes `SHA256SUMS`, and the installer scripts verify the exact downloaded package before changing an installation.
+
+Margin uses signed in-app updates. Manual downloads do not yet carry Windows Authenticode or Apple Developer ID/notarization, so their SHA-256 checks protect download integrity but do not establish an operating-system publisher identity.
 
 ## Shortcuts
 
@@ -113,9 +115,9 @@ The shortcut list is configurable in Settings.
 
 ## Privacy and safety
 
-Margin stores your writing as ordinary UTF-8 `.md` files with optional YAML front matter in the library you choose. Version 0.5.0 does not add a database, account, migration, or proprietary note format. Margin checks for signed updates and verifies downloads before installation. For safety, Margin does not follow symlinks inside a library; select the real notes folder and keep linked files as normal external files.
+Margin stores your writing as ordinary UTF-8 `.md` files with optional YAML front matter in the library you choose. Version 0.5.1 does not add a database, account, migration, or proprietary note format. Margin checks for signed updates and verifies manual downloads against the release checksum manifest before installation. For safety, Margin does not follow symlinks inside a library; select the real notes folder and keep linked files as normal external files.
 
-AI integrations, Git history, importers, graph views, synchronization, unresolved-link note creation, tag editing, and tag filtering remain future work and are not part of 0.5.0.
+AI integrations, Git history, importers, graph views, synchronization, unresolved-link note creation, tag editing, and tag filtering remain future work and are not part of 0.5.1.
 
 ## Build from source
 

@@ -48,6 +48,7 @@ The example notes include:
 | External-change indexing | Rust reload test | Verify the clean reload and unsaved-conflict decision dialog |
 | Themes and configurable shortcuts | Pure shortcut tests plus production build | Check system theme changes and an OS-level shortcut conflict |
 | Daily/manual update checks, skipped versions, no-update/error feedback, install/retry, successful install, and restart states | Platform-independent updater controller and React interaction tests | Signature verification and a real install/relaunch require a signed staged release served by the update endpoint |
+| Release packages, updater platform URLs/signatures, and SHA-256 coverage | Release-contract and checksum-manifest tests | Confirm the draft release remains unpublished if any platform build or verification job fails |
 | Offline/privacy guarantees | Architecture review: file operations have no network dependency or telemetry | Disconnect networking and create/search/edit notes |
 
 ## Native smoke checklist
@@ -63,3 +64,4 @@ Use `pnpm tauri dev` after automated checks pass:
 7. Open quick capture with the global shortcut, cancel with Escape, save with Ctrl/Cmd+Enter, and import the Daily capture to both an existing note and a new nested note.
 8. Change theme, pane sizes, default capture import target, and shortcuts; relaunch and verify persistence.
 9. Trigger a manual update check. If using a signed staged release, exercise download/install, confirm Margin does not restart automatically, then choose Restart Margin. Real signature verification and install/relaunch are not attempted with an unsigned local build.
+10. For a release candidate, compare the selected installer against `SHA256SUMS` before launch and confirm each installer script rejects a deliberately mismatched copy without stopping or replacing Margin.
