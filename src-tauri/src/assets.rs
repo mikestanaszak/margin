@@ -237,7 +237,10 @@ fn referenced_note_assets(note: &Path, markdown: &str) -> Result<Option<HashSet<
         let decoded = match percent_decode_path(target) {
             Ok(decoded) => decoded.replace('\\', "/"),
             Err(()) => {
-                if target.contains(folder_name) || target.contains(".assets") {
+                let absolute_or_remote = target.starts_with(['/', '\\'])
+                    || target.contains("://")
+                    || target.get(1..2) == Some(":");
+                if !absolute_or_remote {
                     return Ok(None);
                 }
                 continue;
@@ -267,6 +270,15 @@ fn referenced_note_assets(note: &Path, markdown: &str) -> Result<Option<HashSet<
     }
 
     for (start, _) in markdown.match_indices(".assets") {
+        if !markdown_target_ranges
+            .iter()
+            .any(|range| range.contains(&start))
+        {
+            return Ok(None);
+        }
+    }
+    let lowercase_markdown = markdown.to_ascii_lowercase();
+    for (start, _) in lowercase_markdown.match_indices("%2eassets") {
         if !markdown_target_ranges
             .iter()
             .any(|range| range.contains(&start))
@@ -582,8 +594,10 @@ mod tests {
     fn ambiguous_local_image_references_skip_cleanup() {
         let cases = [
             "![Keep](Images.assets/keep%ZZ.png)",
+            "![Keep](Images%2Eassets/keep%ZZ.png)",
             "![Keep](Images.assets/../outside.png)",
             "![Keep](Images.assets/keep.png",
+            "![Keep][image]\n\n[image]: Images%2Eassets/keep%ZZ.png",
         ];
 
         for markdown in cases {
