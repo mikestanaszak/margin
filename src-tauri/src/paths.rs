@@ -205,6 +205,14 @@ fn paths_refer_to_same_entry(left: &Path, right: &Path) -> bool {
     }
 }
 
+fn path_is_missing_or_same_entry(source: &Path, destination: &Path) -> bool {
+    match fs::symlink_metadata(destination) {
+        Ok(_) => paths_refer_to_same_entry(source, destination),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(_) => false,
+    }
+}
+
 fn path_for_title_with_case_behavior(
     source: &Path,
     title: &str,
@@ -221,7 +229,7 @@ fn path_for_title_with_case_behavior(
             .file_name()
             .zip(destination.file_name())
             .is_some_and(|(current, next)| current.eq_ignore_ascii_case(next))
-        && (!destination.exists() || paths_refer_to_same_entry(source, &destination))
+        && path_is_missing_or_same_entry(source, &destination)
     {
         // Windows and the default macOS volume are case-insensitive. Returning
         // the requested spelling lets rename_file_safely perform a case-only

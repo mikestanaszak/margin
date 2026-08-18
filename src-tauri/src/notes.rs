@@ -998,6 +998,17 @@ where
 }
 
 fn rename_file_safely(source: &Path, destination: &Path) -> Result<(), String> {
+    rename_file_safely_with_hook(source, destination, || Ok(()))
+}
+
+fn rename_file_safely_with_hook<F>(
+    source: &Path,
+    destination: &Path,
+    before_case_commit: F,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
     if source == destination {
         return Ok(());
     }
@@ -1011,9 +1022,40 @@ fn rename_file_safely(source: &Path, destination: &Path) -> Result<(), String> {
     }
     let intermediate = unique_temporary_path(source);
     fs::rename(source, &intermediate).map_err(|error| error.to_string())?;
-    if let Err(error) = fs::rename(&intermediate, destination) {
-        let _ = fs::rename(&intermediate, source);
-        return Err(error.to_string());
+    let restore_source = |cause: String| -> Result<(), String> {
+        match fs::hard_link(&intermediate, source) {
+            Ok(()) => match fs::remove_file(&intermediate) {
+                Ok(()) => Err(cause),
+                Err(error) => Err(format!(
+                    "{}; source was restored, but a duplicate recovery copy remains at {}: {}",
+                    cause,
+                    intermediate.display(),
+                    error
+                )),
+            },
+            Err(error) => Err(format!(
+                "{}; source could not be restored without overwriting another file: {}; recovery copy retained at {}",
+                cause,
+                error,
+                intermediate.display()
+            )),
+        }
+    };
+    if let Err(error) = before_case_commit() {
+        return restore_source(error);
+    }
+    if let Err(error) = fs::hard_link(&intermediate, destination) {
+        return restore_source(format!(
+            "Could not rename without replacing an existing note: {}",
+            error
+        ));
+    }
+    if let Err(error) = fs::remove_file(&intermediate) {
+        return Err(format!(
+            "The note was renamed, but a duplicate recovery copy remains at {}: {}",
+            intermediate.display(),
+            error
+        ));
     }
     Ok(())
 }
@@ -1350,9 +1392,9 @@ mod tests {
         create_folder, create_note, delete_note_permanently, duplicate_note, import_markdown_file,
         move_folder_to_trash, move_note_to_folder, move_note_to_trash, normalize_tags,
         plan_link_rewrites, read_library_note_file, read_note_file, rename_file_safely,
-        rename_folder, rename_note, resolve_relative_markdown_target, restore_note_from_trash,
-        save_note, save_note_document, scan_markdown_links, split_front_matter, stage_file_updates,
-        LinkRewrite, LinkTarget,
+        rename_file_safely_with_hook, rename_folder, rename_note, resolve_relative_markdown_target,
+        restore_note_from_trash, save_note, save_note_document, scan_markdown_links,
+        split_front_matter, stage_file_updates, LinkRewrite, LinkTarget,
     };
     #[cfg(unix)]
     use crate::library::load_library;
@@ -2061,6 +2103,32 @@ mod tests {
         })();
         fs::remove_dir_all(&library).ok();
         result.unwrap();
+    }
+
+    #[test]
+    fn case_only_filename_rename_never_clobbers_a_late_destination() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let source = library.join("Race.md");
+        let destination = library.join("race.md");
+        fs::write(&source, "source").unwrap();
+
+        let result = rename_file_safely_with_hook(&source, &destination, || {
+            fs::write(&destination, "external").map_err(|error| error.to_string())
+        });
+
+        let error = result.expect_err("the late destination must reject the rename");
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "external");
+        if fs::read_to_string(&source).unwrap() != "source" {
+            let recovery = fs::read_dir(&library)
+                .unwrap()
+                .filter_map(Result::ok)
+                .find(|entry| fs::read_to_string(entry.path()).ok().as_deref() == Some("source"))
+                .expect("the original note must remain recoverable")
+                .path();
+            assert!(error.contains(recovery.to_string_lossy().as_ref()));
+        }
+        fs::remove_dir_all(&library).ok();
     }
 
     #[test]
