@@ -400,6 +400,7 @@ struct StagedFileUpdate {
     replacement: PathBuf,
     backup: PathBuf,
     original: Vec<u8>,
+    committed: Vec<u8>,
     applied: bool,
 }
 
@@ -827,8 +828,9 @@ fn stage_file_updates(rewrites: Vec<LinkRewrite>) -> Result<Vec<StagedFileUpdate
         }
         let backup = unique_temporary_path(&rewrite.path);
         let replacement = unique_temporary_path(&rewrite.path);
-        if let Err(error) = fs::write(&backup, &rewrite.original)
-            .and_then(|_| fs::write(&replacement, rewrite.content))
+        let committed = rewrite.content.into_bytes();
+        if let Err(error) =
+            fs::write(&backup, &rewrite.original).and_then(|_| fs::write(&replacement, &committed))
         {
             let _ = fs::remove_file(&backup);
             let _ = fs::remove_file(&replacement);
@@ -840,6 +842,7 @@ fn stage_file_updates(rewrites: Vec<LinkRewrite>) -> Result<Vec<StagedFileUpdate
             replacement,
             backup,
             original: rewrite.original,
+            committed,
             applied: false,
         });
     }
@@ -870,15 +873,52 @@ fn rollback_staged_file_updates(
                     update.target.display(),
                     update.backup.display()
                 ));
-            } else if let Err(error) = fs::rename(&update.backup, &update.target) {
-                errors.push(format!(
-                    "Could not restore {}: {}; recovery copy retained at {}",
-                    update.target.display(),
-                    error,
-                    update.backup.display()
-                ));
             } else {
-                update.applied = false;
+                let current = fs::read(&update.target);
+                let unchanged_or_missing = match &current {
+                    Ok(content) => content.as_slice() == update.committed.as_slice(),
+                    Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+                };
+                if unchanged_or_missing {
+                    if let Err(error) = fs::rename(&update.backup, &update.target) {
+                        errors.push(format!(
+                            "Could not restore {}: {}; recovery copy retained at {}",
+                            update.target.display(),
+                            error,
+                            update.backup.display()
+                        ));
+                    } else {
+                        update.applied = false;
+                    }
+                    continue;
+                }
+
+                let external_recovery = unique_temporary_path(&update.target);
+                if let Err(error) = fs::rename(&update.target, &external_recovery) {
+                    errors.push(format!(
+                        "Could not safely restore {} after another edit: {}; original recovery copy retained at {}",
+                        update.target.display(),
+                        error,
+                        update.backup.display()
+                    ));
+                    continue;
+                }
+                if let Err(error) = fs::rename(&update.backup, &update.target) {
+                    errors.push(format!(
+                        "Could not restore {}: {}; external edit retained at {}; original recovery copy retained at {}",
+                        update.target.display(),
+                        error,
+                        external_recovery.display(),
+                        update.backup.display()
+                    ));
+                } else {
+                    update.applied = false;
+                    errors.push(format!(
+                        "{} changed outside Margin during rollback; external edit retained at {}",
+                        update.target.display(),
+                        external_recovery.display()
+                    ));
+                }
             }
         }
     }
@@ -898,6 +938,23 @@ fn apply_staged_file_updates(
     fail_before_index: Option<usize>,
     fail_restore_for_index: Option<usize>,
 ) -> Result<(), String> {
+    apply_staged_file_updates_with_hook(
+        updates,
+        fail_before_index,
+        fail_restore_for_index,
+        |_, _| Ok(()),
+    )
+}
+
+fn apply_staged_file_updates_with_hook<F>(
+    updates: &mut [StagedFileUpdate],
+    fail_before_index: Option<usize>,
+    fail_restore_for_index: Option<usize>,
+    mut after_apply: F,
+) -> Result<(), String>
+where
+    F: FnMut(usize, &mut [StagedFileUpdate]) -> Result<(), String>,
+{
     for index in 0..updates.len() {
         if let Err(error) = verify_staged_target(&updates[index]) {
             let rollback = rollback_staged_file_updates(updates, fail_restore_for_index);
@@ -926,6 +983,13 @@ fn apply_staged_file_updates(
             let rollback = rollback_staged_file_updates(updates, fail_restore_for_index);
             return Err(match rollback {
                 Ok(()) => error.to_string(),
+                Err(rollback_error) => format!("{}; rollback failed: {}", error, rollback_error),
+            });
+        }
+        if let Err(error) = after_apply(index, updates) {
+            let rollback = rollback_staged_file_updates(updates, fail_restore_for_index);
+            return Err(match rollback {
+                Ok(()) => error,
                 Err(rollback_error) => format!("{}; rollback failed: {}", error, rollback_error),
             });
         }
@@ -1282,12 +1346,13 @@ pub(crate) fn move_folder_to_trash(folder: String, library_path: String) -> Resu
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_staged_file_updates, body_with_title, create_folder, create_note,
-        delete_note_permanently, duplicate_note, import_markdown_file, move_folder_to_trash,
-        move_note_to_folder, move_note_to_trash, normalize_tags, plan_link_rewrites,
-        read_library_note_file, read_note_file, rename_file_safely, rename_folder, rename_note,
-        resolve_relative_markdown_target, restore_note_from_trash, save_note, save_note_document,
-        scan_markdown_links, split_front_matter, stage_file_updates, LinkRewrite, LinkTarget,
+        apply_staged_file_updates, apply_staged_file_updates_with_hook, body_with_title,
+        create_folder, create_note, delete_note_permanently, duplicate_note, import_markdown_file,
+        move_folder_to_trash, move_note_to_folder, move_note_to_trash, normalize_tags,
+        plan_link_rewrites, read_library_note_file, read_note_file, rename_file_safely,
+        rename_folder, rename_note, resolve_relative_markdown_target, restore_note_from_trash,
+        save_note, save_note_document, scan_markdown_links, split_front_matter, stage_file_updates,
+        LinkRewrite, LinkTarget,
     };
     #[cfg(unix)]
     use crate::library::load_library;
@@ -1842,6 +1907,60 @@ mod tests {
                 fs::read_to_string(&second).map_err(|error| error.to_string())?,
                 "# Second\nexternal\n"
             );
+            Ok(())
+        })();
+        fs::remove_dir_all(&library).ok();
+        result.unwrap();
+    }
+
+    #[test]
+    fn rollback_preserves_an_external_edit_made_after_replacement() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let first = library.join("First.md");
+        let second = library.join("Second.md");
+        fs::write(&first, "# First\noriginal\n").unwrap();
+        fs::write(&second, "# Second\noriginal\n").unwrap();
+
+        let result = (|| -> Result<(), String> {
+            let mut staged = stage_file_updates(vec![
+                LinkRewrite {
+                    path: first.clone(),
+                    original: fs::read(&first).map_err(|error| error.to_string())?,
+                    content: "# First\nrewritten\n".into(),
+                },
+                LinkRewrite {
+                    path: second.clone(),
+                    original: fs::read(&second).map_err(|error| error.to_string())?,
+                    content: "# Second\nrewritten\n".into(),
+                },
+            ])?;
+
+            let error =
+                apply_staged_file_updates_with_hook(&mut staged, Some(1), None, |index, _| {
+                    if index == 0 {
+                        fs::write(&first, "# First\nexternal after commit\n")
+                            .map_err(|error| error.to_string())?;
+                    }
+                    Ok(())
+                })
+                .expect_err("the simulated second replacement must fail");
+
+            assert!(error.contains("external edit retained at"));
+            assert_eq!(
+                fs::read_to_string(&first).map_err(|error| error.to_string())?,
+                "# First\noriginal\n"
+            );
+            let recovery_files = fs::read_dir(&library)
+                .map_err(|error| error.to_string())?
+                .filter_map(Result::ok)
+                .filter_map(|entry| {
+                    let content = fs::read_to_string(entry.path()).ok()?;
+                    (content == "# First\nexternal after commit\n").then_some(entry.path())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(recovery_files.len(), 1);
+            fs::remove_file(&recovery_files[0]).map_err(|error| error.to_string())?;
             Ok(())
         })();
         fs::remove_dir_all(&library).ok();
