@@ -61,13 +61,19 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Read draft release metadata
+      - name: Download draft release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${GITHUB_REF_NAME}" --dir release-assets
+      - name: Create SHA-256 checksum manifest
+        run: node scripts/release-checksums.mjs --directory release-assets --output release-assets/SHA256SUMS
+      - name: Upload checksum manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" release-assets/SHA256SUMS --clobber
+      - name: Refresh draft release metadata
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release view "${GITHUB_REF_NAME}" --json assets > release.json
-      - name: Download updater manifest
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release download "${GITHUB_REF_NAME}" --pattern latest.json --dir release-assets
       - name: Verify published artifact contract
-        run: node scripts/verify-release-assets.mjs --tag "${GITHUB_REF_NAME}" --release release.json --latest release-assets/latest.json
+        run: node scripts/verify-release-assets.mjs --tag "${GITHUB_REF_NAME}" --release release.json --latest release-assets/latest.json --checksums release-assets/SHA256SUMS

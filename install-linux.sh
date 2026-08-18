@@ -12,6 +12,19 @@ BIN_LINK="${BIN_DIR}/margin"
 TEMP_DIR=""
 
 fail() { printf 'Margin installer: %s\n' "$*" >&2; exit 1; }
+expected_checksum() {
+  awk -v target="$1" '
+    {
+      sub(/\r$/, "")
+      hash = substr($0, 1, 64)
+      separator = substr($0, 65, 2)
+      name = substr($0, 67)
+      if (length(hash) != 64 || hash !~ /^[0-9a-f]+$/ || separator != "  " || name == "" || index(name, "/") || index(name, "\\") || name ~ /[[:cntrl:]]/) invalid = 1
+      else if (name == target) { expected = hash; count += 1 }
+    }
+    END { if (invalid || count != 1) exit 1; print expected }
+  ' "$2"
+}
 
 cleanup() {
   [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR" >/dev/null 2>&1 || true
@@ -30,11 +43,18 @@ fi
 RELEASE_JSON="$(curl --fail --silent --show-error --location -H 'Accept: application/vnd.github+json' "$RELEASE_ENDPOINT")" || fail "could not find the requested GitHub release"
 DOWNLOAD_URL="$(printf '%s' "$RELEASE_JSON" | grep -Eo '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]+"' | cut -d '"' -f 4 | grep -E '\.AppImage$' | head -n 1 || true)"
 [[ -n "$DOWNLOAD_URL" ]] || fail "the release has no x64 Linux AppImage asset"
+CHECKSUM_URL="$(printf '%s' "$RELEASE_JSON" | grep -Eo '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]+"' | cut -d '"' -f 4 | grep -E '/SHA256SUMS$' | head -n 1 || true)"
+[[ -n "$CHECKSUM_URL" ]] || fail "the release has no SHA-256 checksum manifest"
 
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/margin.XXXXXX")"
-mkdir -p "$INSTALL_DIR" "$BIN_DIR"
 printf 'Downloading Margin…\n'
 curl --fail --silent --show-error --location "$DOWNLOAD_URL" --output "${TEMP_DIR}/Margin.AppImage"
+curl --fail --silent --show-error --location "$CHECKSUM_URL" --output "${TEMP_DIR}/SHA256SUMS"
+ARTIFACT_NAME="${DOWNLOAD_URL##*/}"
+EXPECTED_HASH="$(expected_checksum "$ARTIFACT_NAME" "${TEMP_DIR}/SHA256SUMS")" || fail "the release checksum manifest is malformed or missing ${ARTIFACT_NAME}"
+ACTUAL_HASH="$(sha256sum "${TEMP_DIR}/Margin.AppImage" | awk '{print $1}')"
+[[ "$ACTUAL_HASH" == "$EXPECTED_HASH" ]] || fail "the Linux AppImage failed SHA-256 verification"
+mkdir -p "$INSTALL_DIR" "$BIN_DIR"
 chmod +x "${TEMP_DIR}/Margin.AppImage"
 mv "${TEMP_DIR}/Margin.AppImage" "$APP_IMAGE"
 ln -sfn "$APP_IMAGE" "$BIN_LINK"
