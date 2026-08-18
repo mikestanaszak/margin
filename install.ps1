@@ -13,10 +13,17 @@ try {
         "https://api.github.com/repos/$repository/releases/tags/v$version"
     }
     $release = Invoke-RestMethod -Uri $releaseEndpoint -Headers @{ Accept = "application/vnd.github+json" }
-    $installer = $release.assets | Where-Object { $_.name -match "_x64-setup\.exe$" } | Select-Object -First 1
-    if (-not $installer) { throw "The release has no Windows installer." }
-    $checksumManifest = $release.assets | Where-Object { $_.name -eq "SHA256SUMS" } | Select-Object -First 1
-    if (-not $checksumManifest) { throw "The release has no SHA-256 checksum manifest." }
+    if ($release.tag_name -notmatch '^v?(\d+\.\d+\.\d+)$') {
+        throw "The release tag does not contain a supported Margin version."
+    }
+    $releaseVersion = $Matches[1]
+    $expectedInstallerName = "Margin_${releaseVersion}_x64-setup.exe"
+    $installers = @($release.assets | Where-Object { $_.name -ceq $expectedInstallerName })
+    if ($installers.Count -ne 1) { throw "The release must contain exactly one $expectedInstallerName asset." }
+    $installer = $installers[0]
+    $checksumManifests = @($release.assets | Where-Object { $_.name -ceq "SHA256SUMS" })
+    if ($checksumManifests.Count -ne 1) { throw "The release must contain exactly one SHA-256 checksum manifest." }
+    $checksumManifest = $checksumManifests[0]
 
     New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
     $installerPath = Join-Path $temporaryDirectory $installer.name

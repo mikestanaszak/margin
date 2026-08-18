@@ -31,6 +31,19 @@ describe("release checksum manifests", () => {
     expect(after).not.toBe(before);
   });
 
+  it("uses deterministic code-unit ordering for punctuation and case", () => {
+    const manifest = createChecksumManifest(
+      ["a.bin", "Z.bin", "_.bin"].map((name) => ({
+        name,
+        bytes: encoder.encode(name),
+      })),
+    );
+
+    expect(
+      manifest.split("\n").filter(Boolean).map((line) => line.slice(66)),
+    ).toEqual(["Z.bin", "_.bin", "a.bin"]);
+  });
+
   it("parses a valid manifest into exact filename hashes", () => {
     const manifest =
       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  Margin.exe\n";

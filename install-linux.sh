@@ -41,16 +41,22 @@ else
 fi
 
 RELEASE_JSON="$(curl --fail --silent --show-error --location -H 'Accept: application/vnd.github+json' "$RELEASE_ENDPOINT")" || fail "could not find the requested GitHub release"
-DOWNLOAD_URL="$(printf '%s' "$RELEASE_JSON" | grep -Eo '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]+"' | cut -d '"' -f 4 | grep -E '\.AppImage$' | head -n 1 || true)"
-[[ -n "$DOWNLOAD_URL" ]] || fail "the release has no x64 Linux AppImage asset"
-CHECKSUM_URL="$(printf '%s' "$RELEASE_JSON" | grep -Eo '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]+"' | cut -d '"' -f 4 | grep -E '/SHA256SUMS$' | head -n 1 || true)"
-[[ -n "$CHECKSUM_URL" ]] || fail "the release has no SHA-256 checksum manifest"
+TAG_NAME="$(printf '%s' "$RELEASE_JSON" | grep -Eo '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' | cut -d '"' -f 4)"
+[[ "$TAG_NAME" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]] || fail "the release tag does not contain a supported Margin version"
+RELEASE_VERSION="${BASH_REMATCH[1]}"
+ARTIFACT_NAME="Margin_${RELEASE_VERSION}_amd64.AppImage"
+ASSET_URLS="$(printf '%s' "$RELEASE_JSON" | grep -Eo '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]+"' | cut -d '"' -f 4)"
+DOWNLOAD_URL="$(printf '%s\n' "$ASSET_URLS" | awk -v suffix="/${ARTIFACT_NAME}" 'length($0) >= length(suffix) && substr($0, length($0) - length(suffix) + 1) == suffix')"
+DOWNLOAD_COUNT="$(printf '%s\n' "$DOWNLOAD_URL" | awk 'NF { count += 1 } END { print count + 0 }')"
+[[ "$DOWNLOAD_COUNT" -eq 1 ]] || fail "the release must contain exactly one ${ARTIFACT_NAME} asset"
+CHECKSUM_URL="$(printf '%s\n' "$ASSET_URLS" | awk -v suffix="/SHA256SUMS" 'length($0) >= length(suffix) && substr($0, length($0) - length(suffix) + 1) == suffix')"
+CHECKSUM_COUNT="$(printf '%s\n' "$CHECKSUM_URL" | awk 'NF { count += 1 } END { print count + 0 }')"
+[[ "$CHECKSUM_COUNT" -eq 1 ]] || fail "the release must contain exactly one SHA-256 checksum manifest"
 
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/margin.XXXXXX")"
 printf 'Downloading Margin…\n'
 curl --fail --silent --show-error --location "$DOWNLOAD_URL" --output "${TEMP_DIR}/Margin.AppImage"
 curl --fail --silent --show-error --location "$CHECKSUM_URL" --output "${TEMP_DIR}/SHA256SUMS"
-ARTIFACT_NAME="${DOWNLOAD_URL##*/}"
 EXPECTED_HASH="$(expected_checksum "$ARTIFACT_NAME" "${TEMP_DIR}/SHA256SUMS")" || fail "the release checksum manifest is malformed or missing ${ARTIFACT_NAME}"
 ACTUAL_HASH="$(sha256sum "${TEMP_DIR}/Margin.AppImage" | awk '{print $1}')"
 [[ "$ACTUAL_HASH" == "$EXPECTED_HASH" ]] || fail "the Linux AppImage failed SHA-256 verification"

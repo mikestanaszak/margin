@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseChecksumManifest } from "./release-checksums.mjs";
 
@@ -7,6 +9,7 @@ export function validateReleaseAssets(
   releaseAssets,
   latestManifest,
   checksums,
+  artifactChecksums,
 ) {
   const version = tag.replace(/^v/, "");
   const packages = [
@@ -46,7 +49,27 @@ export function validateReleaseAssets(
     errors.push("Missing or invalid SHA256SUMS manifest");
   } else {
     for (const name of packages) {
-      if (!checksums.has(name)) errors.push(`Missing checksum: ${name}`);
+      if (!checksums.has(name)) {
+        errors.push(`Missing checksum: ${name}`);
+      } else if (!(artifactChecksums instanceof Map) || !artifactChecksums.has(name)) {
+        errors.push(`Missing downloaded artifact digest: ${name}`);
+      } else if (checksums.get(name) !== artifactChecksums.get(name)) {
+        errors.push(`Checksum mismatch: ${name}`);
+      }
+    }
+  }
+
+  if (!(artifactChecksums instanceof Map)) {
+    errors.push("Missing downloaded artifact digests");
+  } else {
+    for (const name of [...packages, "SHA256SUMS"]) {
+      const asset = assets.find((candidate) => candidate.name === name);
+      const expected = artifactChecksums.get(name);
+      if (!expected) {
+        errors.push(`Missing downloaded artifact digest: ${name}`);
+      } else if (asset?.digest !== `sha256:${expected}`) {
+        errors.push(`Release digest mismatch: ${name}`);
+      }
     }
   }
 
@@ -82,6 +105,17 @@ export function validateReleaseAssets(
   return errors;
 }
 
+export function readArtifactChecksums(directory, names) {
+  return new Map(
+    names.map((name) => [
+      name,
+      createHash("sha256")
+        .update(readFileSync(join(directory, name)))
+        .digest("hex"),
+    ]),
+  );
+}
+
 function readArgument(name) {
   const index = process.argv.indexOf(name);
   const value = process.argv[index + 1];
@@ -98,14 +132,26 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const releasePath = readArgument("--release");
   const latestPath = readArgument("--latest");
   const checksumsPath = readArgument("--checksums");
+  const assetsDirectory = readArgument("--assets-directory");
   const release = JSON.parse(readFileSync(releasePath, "utf8"));
   const latestManifest = JSON.parse(readFileSync(latestPath, "utf8"));
   const checksums = parseChecksumManifest(readFileSync(checksumsPath, "utf8"));
+  const version = tag.replace(/^v/, "");
+  const artifactChecksums = readArtifactChecksums(assetsDirectory, [
+    `Margin_${version}_x64-setup.exe`,
+    `Margin_${version}_x64_en-US.msi`,
+    `Margin_${version}_aarch64.dmg`,
+    `Margin_${version}_aarch64.app.tar.gz`,
+    `Margin_${version}_amd64.deb`,
+    `Margin_${version}_amd64.AppImage`,
+    "SHA256SUMS",
+  ]);
   const errors = validateReleaseAssets(
     tag,
     release.assets,
     latestManifest,
     checksums,
+    artifactChecksums,
   );
 
   errors.forEach((error) => console.error(error));

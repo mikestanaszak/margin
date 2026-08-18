@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validateReleaseAssets } from "./verify-release-assets.mjs";
+import { validateReleaseAssets as validateReleaseAssetsContract } from "./verify-release-assets.mjs";
 
 const tag = "v0.5.1";
 const version = "0.5.1";
@@ -22,6 +22,7 @@ const completeAssetNames = [
 const completeAssets = completeAssetNames.map((name, index) => ({
   name,
   apiUrl: `https://api.github.com/repos/mikestanaszak/margin/releases/assets/${1000 + index}`,
+  digest: "",
 }));
 const assetUrl = (name: string) =>
   completeAssets.find((asset) => asset.name === name)?.apiUrl ?? "";
@@ -73,6 +74,29 @@ const packageNames = [
 const completeChecksums = new Map(
   packageNames.map((name, index) => [name, `${index}`.repeat(64)]),
 );
+const completeArtifactChecksums = new Map([
+  ...completeChecksums,
+  ["SHA256SUMS", "a".repeat(64)],
+]);
+completeAssets.forEach((asset) => {
+  asset.digest = `sha256:${completeArtifactChecksums.get(asset.name) ?? "b".repeat(64)}`;
+});
+
+function validateReleaseAssets(
+  currentTag: string,
+  assets: typeof completeAssets,
+  manifest: typeof matchingManifest,
+  checksums: Map<string, string>,
+  artifactChecksums = completeArtifactChecksums,
+) {
+  return validateReleaseAssetsContract(
+    currentTag,
+    assets,
+    manifest,
+    checksums,
+    artifactChecksums,
+  );
+}
 
 describe("validateReleaseAssets", () => {
   it("accepts the complete three-platform release contract", () => {
@@ -114,6 +138,34 @@ describe("validateReleaseAssets", () => {
     expect(
       validateReleaseAssets(tag, completeAssets, matchingManifest, checksums),
     ).toContain(`Missing checksum: Margin_${version}_x64_en-US.msi`);
+  });
+
+  it("rejects a well-formed checksum that does not match the artifact bytes", () => {
+    const checksums = new Map(completeChecksums);
+    const packageName = `Margin_${version}_amd64.AppImage`;
+    checksums.set(packageName, "f".repeat(64));
+
+    expect(
+      validateReleaseAssets(
+        tag,
+        completeAssets,
+        matchingManifest,
+        checksums,
+        completeChecksums,
+      ),
+    ).toContain(`Checksum mismatch: ${packageName}`);
+  });
+
+  it("rejects refreshed release metadata with the wrong uploaded digest", () => {
+    const assets = structuredClone(completeAssets);
+    const packageName = `Margin_${version}_aarch64.dmg`;
+    const asset = assets.find(({ name }) => name === packageName);
+    if (!asset) throw new Error("missing test asset");
+    asset.digest = `sha256:${"f".repeat(64)}`;
+
+    expect(
+      validateReleaseAssets(tag, assets, matchingManifest, completeChecksums),
+    ).toContain(`Release digest mismatch: ${packageName}`);
   });
 
   it("reports an updater manifest version mismatch", () => {

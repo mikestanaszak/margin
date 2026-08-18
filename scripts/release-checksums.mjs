@@ -26,7 +26,9 @@ export function createChecksumManifest(files) {
       hash: createHash("sha256").update(bytes).digest("hex"),
     };
   });
-  entries.sort((left, right) => left.name.localeCompare(right.name, "en"));
+  entries.sort((left, right) =>
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+  );
   return entries.map(({ name, hash }) => `${hash}  ${name}\n`).join("");
 }
 
