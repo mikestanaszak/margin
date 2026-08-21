@@ -1,6 +1,6 @@
 [package]
 name = "margin"
-version = "0.5.1"
+version = "0.5.2"
 description = "A local-first Markdown notes app called Margin"
 edition = "2021"
 

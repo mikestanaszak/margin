@@ -115,9 +115,9 @@ The shortcut list is configurable in Settings.
 
 ## Privacy and safety
 
-Margin stores your writing as ordinary UTF-8 `.md` files with optional YAML front matter in the library you choose. Version 0.5.1 does not add a database, account, migration, or proprietary note format. Margin checks for signed updates and verifies manual downloads against the release checksum manifest before installation. For safety, Margin does not follow symlinks inside a library; select the real notes folder and keep linked files as normal external files.
+Margin stores your writing as ordinary UTF-8 `.md` files with optional YAML front matter in the library you choose. Version 0.5.2 does not add a database, account, migration, or proprietary note format. Margin checks for signed updates and verifies manual downloads against the release checksum manifest before installation. For safety, Margin does not follow symlinks inside a library; select the real notes folder and keep linked files as normal external files.
 
-AI integrations, Git history, importers, graph views, synchronization, unresolved-link note creation, tag editing, and tag filtering remain future work and are not part of 0.5.1.
+AI integrations, Git history, importers, graph views, synchronization, unresolved-link note creation, tag editing, and tag filtering remain future work and are not part of 0.5.2.
 
 ## Build from source
 
