@@ -37,4 +37,11 @@ describe("style ownership", () => {
     expect(preview).toContain(".table-row-action button { position: static; }");
     expect(app).toContain(".compare { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }");
   });
+
+  test("keeps fenced code aligned with normal preview content", () => {
+    const preview = readStyle("src/features/preview/preview.css");
+
+    expect(preview).toContain(".preview pre { margin: 1.5em 0; padding: 15px 17px;");
+    expect(preview).not.toMatch(/\.preview-code-block pre\s*\{[^}]*padding-top/);
+  });
 });
