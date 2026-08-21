@@ -41,10 +41,10 @@ The example notes include:
 | Create, save, filename alignment, collisions, rename, duplicate, and move | Rust workflow tests | Confirm Explorer shows ordinary `.md` files |
 | Note/folder trash, restore, permanent delete, and path containment | Rust workflow and rejection tests | Confirm destructive-action prompts and context menus |
 | Preview GFM, tasks, tables, links, local images, and code languages | React and transformation tests | Visually inspect highlighting and local image layout |
-| CodeMirror formatting, code-fence language autocomplete, image insertion, controlled updates, and view-state bounds | Editor command tests | Confirm selection and scroll remain stable through autosave and mode changes |
+| CodeMirror formatting, whole-note selection, code-fence language autocomplete and Tab indentation, image insertion, controlled updates, and view-state bounds | Editor command tests | On macOS, confirm the native correction menu appears for a misspelled word in Edit and not in Preview |
 | YAML front-matter tags, note cards, favorites control, quick switcher, and relative dates | React interaction tests | Confirm tags appear on note cards and favorite persistence after relaunch |
 | Edit/Split/Preview and keyboard-resizable split layout | React interaction tests | Drag dividers and verify saved widths after relaunch |
-| Quick-capture append and import destinations | Rust workflow tests | Exercise the registered global shortcut and separate capture window |
+| Quick-capture append, import destinations, and appearance refresh | Rust workflow and React interaction tests | Exercise the registered global shortcut, separate capture window, and theme changes between openings |
 | External-change indexing | Rust reload test | Verify the clean reload and unsaved-conflict decision dialog |
 | Themes and configurable shortcuts | Pure shortcut tests plus production build | Check system theme changes and an OS-level shortcut conflict |
 | Daily/manual update checks, skipped versions, no-update/error feedback, install/retry, successful install, and restart states | Platform-independent updater controller and React interaction tests | Signature verification and a real install/relaunch require a signed staged release served by the update endpoint |

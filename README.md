@@ -63,7 +63,7 @@ Tags are stored in each note's YAML front matter. Margin normalizes them by trim
 
 ### Capture and templates
 
-Press **Ctrl+Alt+Shift+Space** on Windows or **Command+Option+Shift+Space** on macOS to open the lightweight Quick Capture window. If that window is unavailable, Margin opens the same composer inside the workspace. Both paths provide the same Markdown list continuation, Daily template handling, keyboard behavior, and status feedback. The first capture of a day can create a Daily note from the Daily note template. Later, captures can be appended, imported into another note, or turned into a separate note. Manage templates, capture defaults, shortcuts, appearance, and updates in Settings.
+Press **Ctrl+Alt+Shift+Space** on Windows or **Command+Option+Shift+Space** on macOS to open the lightweight Quick Capture window. If that window is unavailable, Margin opens the same composer inside the workspace. Both paths provide the same Markdown list continuation, Daily template handling, keyboard behavior, status feedback, theme, and palette. The first capture of a day can create a Daily note from the Daily note template. Later, captures can be appended, imported into another note, or turned into a separate note. Manage templates, capture defaults, shortcuts, appearance, and updates in Settings.
 
 <p align="center">
   <img src="docs/images/quick-capture-current.png" alt="Margin Quick Capture window" width="520" />

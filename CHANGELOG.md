@@ -2,6 +2,20 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## Unreleased
+
+### Improved
+
+- Quick Capture reapplies the saved appearance and palette whenever its window opens or regains focus.
+- Tagged GitHub releases now publish the matching changelog section as their release notes instead of a generic placeholder.
+- Code-fence completion keeps Tab available for indentation while Enter accepts the highlighted language.
+
+### Fixed
+
+- The native spelling context menu is available in editable, spellchecked notes on macOS while application context menus remain suppressed elsewhere.
+- Cmd/Ctrl+A selects the complete active note in the editor without propagating to the surrounding application.
+- Preview code blocks no longer reserve an oversized blank strip above their first line.
+
 ## 0.5.1 — 2026-08-21
 
 ### Added
