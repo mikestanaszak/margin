@@ -25,15 +25,16 @@
 - Internal Markdown and wiki links open the matching note. Resolved relative Markdown links and unambiguous wiki links share one backlink graph and populate the receiving note's Linked from list; external URLs, anchors, absolute paths, ambiguous targets, and unresolved targets do not. Web links open in the system browser, and creating a missing note from a link remains deferred.
 - Inline code can be selected with a double-click.
 - Typing after an opening triple-backtick suggests supported Highlight.js language names and common aliases without restricting custom identifiers.
+- Enter accepts the highlighted code-language suggestion; Tab dismisses suggestions and indents. Cmd/Ctrl+A selects the complete active note without selecting the surrounding interface.
 - Autosave preserves editor selection and scroll position.
 - Preview uses the same comfortable, left-aligned reading margin as the editor.
 - Resizable heading outline with hierarchy, active-section tracking, synchronized scrolling, and a configurable shortcut.
-- Edit mode provides operating-system spell check; Preview and read-only notes remain non-editable.
+- Edit mode provides operating-system spell check and its native correction menu; Preview and read-only notes remain non-editable.
 
 ### Capture, import, and customization
 
 - Global Quick Capture: Cmd+Option+Shift+Space on macOS; Ctrl+Alt+Shift+Space elsewhere by default.
-- The dedicated Quick Capture window and in-app fallback share one lightweight composer, Markdown list continuation, keyboard behavior, status feedback, and Daily template handling.
+- The dedicated Quick Capture window and in-app fallback share one lightweight composer, Markdown list continuation, keyboard behavior, status feedback, Daily template handling, and the saved theme and palette.
 - Today opens or creates the current date’s note in the Daily folder.
 - Template editor: create, rename, duplicate, delete, preview, and create a note from reusable Markdown templates. `{{date}}` and `{{time}}` variables are supported.
 - Daily captures can be imported into a configured default note, another existing note, or a new note in any folder.
@@ -52,6 +53,8 @@
   their original or imported as a copy into a chosen folder.
 - Signed in-app updates, with daily automatic checks and manual checks in Settings. Automatic checks suppress a version the user skipped, while a manual check surfaces that version again for reconsideration. Choosing Update now downloads and installs without restarting; Restart Margin appears only after installation succeeds. Check, install, and restart failures keep clear feedback and a retry or close path.
 - Published releases include a SHA-256 manifest. The manual Windows, macOS, and Linux installer scripts verify their selected package before modifying an installation. Manual packages are not currently Windows Authenticode-signed or Apple Developer ID-signed/notarized, so documentation does not claim operating-system publisher identity.
+- GitHub release bodies are generated from the tagged version's `CHANGELOG.md` section after all platform packages are assembled.
+- Packaged builds serve compiled assets with Tauri's embedded custom protocol and do not enable the optional localhost-server plugin. Development alone uses the configured Vite localhost server.
 - Closing the main window hides Margin so global Quick Capture remains available. The tray menu provides Show Margin, Quick Capture, and Quit.
 - Quit waits for pending managed-note saves. A conflict or save failure shows the main window with the draft and recovery state intact; if saving does not answer, discarding the draft requires explicit native confirmation and Cancel is the default.
 

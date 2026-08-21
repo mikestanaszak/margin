@@ -1,7 +1,11 @@
 import { EditorSelection, EditorState, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { history, undo, undoDepth } from "@codemirror/commands";
-import { CompletionContext } from "@codemirror/autocomplete";
+import {
+  CompletionContext,
+  completionStatus,
+  startCompletion,
+} from "@codemirror/autocomplete";
 import { all as highlightLanguages, createLowlight } from "lowlight";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
@@ -17,6 +21,7 @@ import {
   selectionFromSaved,
   wrapSelection,
 } from "./MarkdownEditor";
+import { isMac } from "./platform";
 
 const views: EditorView[] = [];
 
@@ -94,6 +99,33 @@ describe("code-fence language autocomplete", () => {
   ])("does not suggest languages outside a fence language position: %j", async (doc) => {
     expect(await languageCompletions(doc)).toBeNull();
   });
+
+  it("dismisses language completion and indents when Tab is pressed", async () => {
+    const editorRef = createRef<MarkdownEditorHandle>();
+    const { container } = render(
+      createElement(MarkdownEditor, {
+        ref: editorRef,
+        notePath: "tab.md",
+        value: "```ts",
+        onChange: vi.fn(),
+      }),
+    );
+    const view = editorRef.current?.getView();
+    const content = container.querySelector<HTMLElement>(".cm-content");
+    expect(view).toBeDefined();
+    expect(content).not.toBeNull();
+
+    act(() => {
+      view?.dispatch({ selection: { anchor: 5 } });
+      if (view) startCompletion(view);
+    });
+    await waitFor(() => expect(completionStatus(view!.state)).toBe("active"));
+
+    fireEvent.keyDown(content!, { key: "Tab" });
+
+    expect(view?.state.doc.toString()).toBe("  ```ts");
+    expect(completionStatus(view!.state)).toBeNull();
+  });
 });
 
 describe("Markdown editor formatting", () => {
@@ -147,6 +179,36 @@ describe("Markdown editor formatting", () => {
 
     expect(content).toHaveTextContent("Read-only external note");
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps the primary Select All shortcut inside the editable note", () => {
+    const editorRef = createRef<MarkdownEditorHandle>();
+    const { container } = render(
+      createElement(MarkdownEditor, {
+        ref: editorRef,
+        notePath: "select-all.md",
+        value: "First line\nSecond line",
+        onChange: vi.fn(),
+      }),
+    );
+    const content = container.querySelector<HTMLElement>(".cm-content");
+    const view = editorRef.current?.getView();
+    const bubbledToWindow = vi.fn();
+    window.addEventListener("keydown", bubbledToWindow);
+
+    try {
+      fireEvent.keyDown(content!, {
+        key: "a",
+        ctrlKey: !isMac,
+        metaKey: isMac,
+      });
+    } finally {
+      window.removeEventListener("keydown", bubbledToWindow);
+    }
+
+    expect(view?.state.selection.main.from).toBe(0);
+    expect(view?.state.selection.main.to).toBe(view?.state.doc.length);
+    expect(bubbledToWindow).not.toHaveBeenCalled();
   });
 
   it("enables native spell check only for editable notes", () => {

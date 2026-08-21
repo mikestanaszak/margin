@@ -8,6 +8,7 @@ import React, {
   useState,
 } from "react";
 import "./app.css";
+import { shouldSuppressWebviewContextMenu } from "./context-menu";
 import { open } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
@@ -71,6 +72,13 @@ import {
   type Palette,
 } from "../theme-palettes";
 import {
+  applyAppearance,
+  loadTheme,
+  storeAppearance,
+  themeStorageKey,
+  type Theme,
+} from "../appearance";
+import {
   clamp,
   fileStem,
   formatShortcut,
@@ -114,7 +122,6 @@ type Shortcuts = Record<ShortcutId, string>;
 type RefreshRequest = { path: string; force: boolean };
 const libraryKey = "markdown-notes.library-path";
 const favoritesKey = "markdown-notes.pinned";
-const themeKey = "markdown-notes.theme";
 const shortcutsKey = "markdown-notes.shortcuts";
 const quickImportDefaultKey = "markdown-notes.quick-import-default";
 const templatesKey = "margin.templates";
@@ -337,12 +344,9 @@ export function App() {
     source: filter.type === "trash" ? "trash" : "notes",
     scope: searchScope,
   });
-  const [theme, setTheme] = useState<"system" | "light" | "dark">(() => {
-    const saved = localStorage.getItem(themeKey);
-    return saved === "light" || saved === "dark" || saved === "system"
-      ? saved
-      : "system";
-  });
+  const [theme, setTheme] = useState<Theme>(() =>
+    loadTheme(localStorage.getItem(themeStorageKey)),
+  );
   const [palette, setPalette] = useState<Palette>(() =>
     loadPalette(localStorage.getItem(paletteStorageKey)),
   );
@@ -522,10 +526,9 @@ export function App() {
     localStorage.setItem(favoritesKey, JSON.stringify(favorites));
   }, [favorites]);
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.dataset.palette = palette;
-    localStorage.setItem(themeKey, theme);
-    localStorage.setItem(paletteStorageKey, palette);
+    const appearance = { theme, palette };
+    applyAppearance(appearance);
+    storeAppearance(appearance);
   }, [palette, theme]);
   useEffect(() => {
     localStorage.setItem(shortcutsKey, JSON.stringify(shortcuts));
@@ -651,7 +654,9 @@ export function App() {
   // menu exposes browser actions (reload, inspect, and similar) that do not
   // belong in the product surface. Keyboard cut/copy/paste remains native.
   useEffect(() => {
-    const suppressWebviewMenu = (event: MouseEvent) => event.preventDefault();
+    const suppressWebviewMenu = (event: MouseEvent) => {
+      if (shouldSuppressWebviewContextMenu(event.target)) event.preventDefault();
+    };
     window.addEventListener("contextmenu", suppressWebviewMenu);
     return () => window.removeEventListener("contextmenu", suppressWebviewMenu);
   }, []);

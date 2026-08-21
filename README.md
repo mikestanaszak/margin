@@ -51,7 +51,7 @@ Notes can also be opened from their file manager. A Markdown file already in the
 ### Editing and preview
 
 - The top Edit bar inserts headings, emphasis, links, tables, and images. Select text for the smaller contextual formatting controls.
-- Type after an opening `` ``` `` fence to choose a code language. The list includes Highlight.js languages and common aliases, but custom identifiers still work.
+- Type after an opening `` ``` `` fence to choose a code language. Press Enter to accept the highlighted language; Tab dismisses the list and indents the fence. The list includes Highlight.js languages and common aliases, but custom identifiers still work.
 - Preview code blocks have a Copy button. Tables open an editor for adding, removing, filling, and reordering rows and columns.
 - Checkboxes can be toggled from Preview and save back to Markdown. Mermaid diagrams render locally and retain a visible source fallback if a diagram is invalid.
 
@@ -63,7 +63,7 @@ Tags are stored in each note's YAML front matter. Margin normalizes them by trim
 
 ### Capture and templates
 
-Press **Ctrl+Alt+Shift+Space** on Windows or **Command+Option+Shift+Space** on macOS to open the lightweight Quick Capture window. If that window is unavailable, Margin opens the same composer inside the workspace. Both paths provide the same Markdown list continuation, Daily template handling, keyboard behavior, and status feedback. The first capture of a day can create a Daily note from the Daily note template. Later, captures can be appended, imported into another note, or turned into a separate note. Manage templates, capture defaults, shortcuts, appearance, and updates in Settings.
+Press **Ctrl+Alt+Shift+Space** on Windows or **Command+Option+Shift+Space** on macOS to open the lightweight Quick Capture window. If that window is unavailable, Margin opens the same composer inside the workspace. Both paths provide the same Markdown list continuation, Daily template handling, keyboard behavior, status feedback, theme, and palette. The first capture of a day can create a Daily note from the Daily note template. Later, captures can be appended, imported into another note, or turned into a separate note. Manage templates, capture defaults, shortcuts, appearance, and updates in Settings.
 
 <p align="center">
   <img src="docs/images/quick-capture-current.png" alt="Margin Quick Capture window" width="520" />
@@ -127,5 +127,7 @@ Margin uses Tauri, React, TypeScript, and Rust. With Node.js, pnpm, Rust, and th
 pnpm install
 pnpm tauri dev
 ```
+
+Development uses Vite at `http://localhost:1420`. Packaged builds load the compiled `dist` assets through Tauri's embedded custom protocol instead; Margin does not enable Tauri's optional localhost-server plugin. On macOS, `tauri://localhost` is the WebView origin label for those embedded assets, not evidence that Margin opened a TCP listening port.
 
 Run `pnpm test`, `pnpm build`, `cargo test --manifest-path src-tauri/Cargo.toml`, `cargo check --manifest-path src-tauri/Cargo.toml`, `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, and `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` before contributing. Run `pnpm test:integration` directly when changing Mermaid rendering. More development detail is in [TESTING.md](TESTING.md).

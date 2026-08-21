@@ -35,6 +35,7 @@ describe("desktop security configuration", () => {
 
   it("keeps development sources and global file globs out of production", () => {
     const config = readJson<{
+      build: { frontendDist: string; devUrl?: string };
       app: {
         security: {
           csp: string;
@@ -45,12 +46,17 @@ describe("desktop security configuration", () => {
     }>("src-tauri/tauri.conf.json");
     const { security } = config.app;
 
+    expect(config.build.frontendDist).toBe("../dist");
+    expect(config.build.devUrl).toBe("http://localhost:1420");
     expect(security.assetProtocol.scope).toEqual(["$HOME/**"]);
     expect(security.csp).not.toMatch(
-      /unsafe-eval|http:\/\/localhost:1420|ws:\/\/localhost:1420/,
+      /unsafe-eval|https?:\/\/localhost:\d+|wss?:\/\/localhost:\d+/,
     );
     expect(security.devCsp).toMatch(/http:\/\/localhost:1420/);
     expect(security.devCsp).toMatch(/ws:\/\/localhost:1420/);
+
+    const manifest = readText("src-tauri/Cargo.toml");
+    expect(manifest).not.toContain("tauri-plugin-localhost");
   });
 
   it("grants plugin permissions only to the window that uses them", () => {
