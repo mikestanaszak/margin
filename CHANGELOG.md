@@ -2,7 +2,7 @@
 
 All notable user-facing changes to Margin are documented here.
 
-## 0.5.1 — 2026-08-18
+## 0.5.1 — 2026-08-21
 
 ### Added
 
