@@ -65,3 +65,4 @@ Use `pnpm tauri dev` after automated checks pass:
 8. Change theme, pane sizes, default capture import target, and shortcuts; relaunch and verify persistence.
 9. Trigger a manual update check. If using a signed staged release, exercise download/install, confirm Margin does not restart automatically, then choose Restart Margin. Real signature verification and install/relaunch are not attempted with an unsigned local build.
 10. For a release candidate, compare the selected installer against `SHA256SUMS` before launch and confirm each installer script rejects a deliberately mismatched copy without stopping or replacing Margin.
+11. On a packaged macOS release candidate, confirm Margin owns no TCP listening socket (for example, with Activity Monitor or `lsof -nP -iTCP -sTCP:LISTEN`). A `tauri://localhost` WebView origin is expected and is not a network listener.

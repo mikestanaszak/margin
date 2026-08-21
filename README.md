@@ -128,4 +128,6 @@ pnpm install
 pnpm tauri dev
 ```
 
+Development uses Vite at `http://localhost:1420`. Packaged builds load the compiled `dist` assets through Tauri's embedded custom protocol instead; Margin does not enable Tauri's optional localhost-server plugin. On macOS, `tauri://localhost` is the WebView origin label for those embedded assets, not evidence that Margin opened a TCP listening port.
+
 Run `pnpm test`, `pnpm build`, `cargo test --manifest-path src-tauri/Cargo.toml`, `cargo check --manifest-path src-tauri/Cargo.toml`, `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, and `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` before contributing. Run `pnpm test:integration` directly when changing Mermaid rendering. More development detail is in [TESTING.md](TESTING.md).
