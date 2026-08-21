@@ -7,6 +7,7 @@ import {
   useCancelableDelay,
 } from "./features/capture/CaptureComposer";
 import { isMac } from "./platform";
+import { applyStoredAppearance } from "./appearance";
 import { native } from "./services/native";
 import "./styles.css";
 
@@ -105,7 +106,9 @@ export function CaptureWindow() {
   }, [refreshLibrary]);
 
   useEffect(() => {
+    applyStoredAppearance();
     const syncCaptureSession = () => {
+      applyStoredAppearance();
       const reopenedSession = invalidateSession();
       setStatus("");
       setTemplates(loadTemplates());

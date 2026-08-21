@@ -33,9 +33,29 @@ afterEach(() => {
   currentWindowHide.mockReset().mockResolvedValue(undefined);
   loadSelectedLibrary.mockReset().mockResolvedValue("C:/Notes");
   appendQuickNote.mockReset();
+  localStorage.removeItem("markdown-notes.theme");
+  localStorage.removeItem("margin.palette");
+  delete document.documentElement.dataset.theme;
+  delete document.documentElement.dataset.palette;
 });
 
 describe("standalone Quick Capture sessions", () => {
+  it("refreshes the saved theme and palette when capture reopens", async () => {
+    localStorage.setItem("markdown-notes.theme", "dark");
+    localStorage.setItem("margin.palette", "paper");
+    const view = render(<CaptureWindow />);
+    await screen.findByPlaceholderText("Start typing…");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(document.documentElement.dataset.palette).toBe("paper");
+
+    localStorage.setItem("markdown-notes.theme", "light");
+    localStorage.setItem("margin.palette", "ink");
+    fireEvent.focus(window);
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(document.documentElement.dataset.palette).toBe("ink");
+    view.unmount();
+  });
+
   it("loads a library selected after the persistent window mounted", async () => {
     loadSelectedLibrary
       .mockResolvedValueOnce(null)
