@@ -37,6 +37,14 @@ import {
 import { NoteList } from "../features/library/NoteList";
 import { useLibrarySearch } from "../features/search/useLibrarySearch";
 import {
+  createUpdateController,
+  shouldRunAutomaticUpdateCheck,
+  updateLastCheckedKey,
+  type UpdateCandidate,
+  type UpdateControllerState,
+  type UpdatePhase,
+} from "../features/updater/update-controller";
+import {
   initialNoteSessionState,
   noteSessionReducer,
 } from "../features/note-session/note-session";
@@ -91,30 +99,8 @@ type FailedSaveRecovery = {
   libraryPath: string;
   message: string;
 };
-type AppUpdate = NonNullable<Awaited<ReturnType<typeof check>>>;
-export type UpdateState =
-  | "idle"
-  | "checking"
-  | "available"
-  | "downloading"
-  | "ready"
-  | "restarting"
-  | "error";
-
-export async function restartInstalledUpdate(
-  relaunchApp: () => Promise<void>,
-  setState: (state: UpdateState) => void,
-  setError: (message: string) => void,
-): Promise<void> {
-  setState("restarting");
-  setError("");
-  try {
-    await relaunchApp();
-  } catch (error) {
-    setState("ready");
-    setError(`Could not restart Margin: ${String(error)}`);
-  }
-}
+type AppUpdate = UpdateCandidate;
+export type UpdateState = UpdatePhase;
 type ShortcutId =
   | "newNote"
   | "search"
@@ -159,8 +145,6 @@ function todayTitle() {
 const libraryPaneWidthKey = "markdown-notes.library-pane-width";
 const notePaneWidthKey = "markdown-notes.note-pane-width";
 const outlinePaneWidthKey = "markdown-notes.outline-pane-width";
-const updateLastCheckedKey = "margin.update-last-checked";
-const updateSkippedVersionKey = "margin.update-skipped-version";
 const legacySidebarShortcut = isMac ? "meta+\\" : "ctrl+\\";
 const legacySidebarAltShortcut = isMac ? "meta+alt+b" : "ctrl+alt+b";
 
@@ -312,12 +296,24 @@ export function App() {
   const [openedMarkdownPath, setOpenedMarkdownPath] = useState<string | null>(
     null,
   );
-  const [availableUpdate, setAvailableUpdate] = useState<AppUpdate | null>(
-    null,
+  const updateController = useMemo(
+    () =>
+      createUpdateController({
+        checkForUpdate: () => check({ timeout: 15000 }),
+        relaunchApp: relaunch,
+        getStoredValue: (key) => localStorage.getItem(key),
+        setStoredValue: (key, value) => localStorage.setItem(key, value),
+        now: Date.now,
+      }),
+    [],
   );
-  const [updateState, setUpdateState] = useState<UpdateState>("idle");
-  const [updateError, setUpdateError] = useState("");
-  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const [updater, setUpdater] = useState<UpdateControllerState>(() =>
+    updateController.getState(),
+  );
+  const availableUpdate = updater.update;
+  const updateState = updater.phase;
+  const updateError = updater.message;
+  const updateDialogOpen = updater.dialogOpen;
   const [favorites, setFavorites] = useState<string[]>(() =>
     JSON.parse(localStorage.getItem(favoritesKey) || "[]"),
   );
@@ -429,49 +425,6 @@ export function App() {
     [],
   );
 
-  const checkForUpdates = async (manual = false) => {
-    setUpdateState("checking");
-    setUpdateError("");
-    try {
-      const update = await check({ timeout: 15000 });
-      localStorage.setItem(updateLastCheckedKey, String(Date.now()));
-      if (
-        update &&
-        localStorage.getItem(updateSkippedVersionKey) !== update.version
-      ) {
-        setAvailableUpdate(update);
-        setUpdateState("available");
-        if (manual) setUpdateDialogOpen(true);
-      } else {
-        setAvailableUpdate(null);
-        setUpdateState("idle");
-        if (manual) setUpdateError("Margin is up to date.");
-      }
-    } catch {
-      setUpdateState("idle");
-      if (manual) setUpdateError("Could not check for updates right now.");
-    }
-  };
-  const installUpdate = async () => {
-    if (!availableUpdate) return;
-    setUpdateState("downloading");
-    setUpdateError("");
-    try {
-      await availableUpdate.downloadAndInstall();
-      setUpdateState("ready");
-    } catch (error) {
-      setUpdateState("error");
-      setUpdateError(`Could not install the update: ${String(error)}`);
-    }
-  };
-  const skipUpdate = () => {
-    if (availableUpdate)
-      localStorage.setItem(updateSkippedVersionKey, availableUpdate.version);
-    setUpdateDialogOpen(false);
-    setAvailableUpdate(null);
-    setUpdateState("idle");
-  };
-
   const refresh = useCallback((path?: string | null, force = path === undefined) => {
     const requestPath = path ?? libraryRef.current;
     if (!requestPath) return Promise.resolve();
@@ -521,6 +474,10 @@ export function App() {
     rememberWorkspaceScroll();
     setMode(next);
   };
+  useEffect(
+    () => updateController.subscribe(setUpdater),
+    [updateController],
+  );
   useEffect(() => {
     libraryRef.current = library;
     refreshGeneration.current += 1;
@@ -548,11 +505,13 @@ export function App() {
   }, [library, note?.path, note?.title]);
   useEffect(() => {
     if (
-      Date.now() - Number(localStorage.getItem(updateLastCheckedKey) || 0) >=
-      24 * 60 * 60 * 1000
+      shouldRunAutomaticUpdateCheck(
+        localStorage.getItem(updateLastCheckedKey),
+        Date.now(),
+      )
     )
-      void checkForUpdates();
-  }, []);
+      void updateController.check("automatic");
+  }, [updateController]);
   useEffect(() => {
     activePathRef.current = activePath;
   }, [activePath]);
@@ -1841,7 +1800,7 @@ export function App() {
           {availableUpdate && (
             <button
               className="update-available"
-              onClick={() => setUpdateDialogOpen(true)}
+              onClick={() => updateController.openDialog()}
             >
               Update {availableUpdate.version}
             </button>
@@ -2179,7 +2138,7 @@ export function App() {
           onManageTemplates={() => setTemplateEditorOpen(true)}
           updateState={updateState}
           updateMessage={updateError}
-          onCheckForUpdates={() => void checkForUpdates(true)}
+          onCheckForUpdates={() => void updateController.check("manual")}
           onChangeLibrary={() => void selectLibrary()}
           onClose={() => setSettingsOpen(false)}
         />
@@ -2200,12 +2159,10 @@ export function App() {
           update={availableUpdate}
           state={updateState}
           error={updateError}
-          onClose={() => setUpdateDialogOpen(false)}
-          onInstall={() => void installUpdate()}
-          onRestart={() =>
-            void restartInstalledUpdate(relaunch, setUpdateState, setUpdateError)
-          }
-          onSkip={skipUpdate}
+          onClose={() => updateController.closeDialog()}
+          onInstall={() => void updateController.install()}
+          onRestart={() => void updateController.restart()}
+          onSkip={() => updateController.skip()}
         />
       )}
       {noteContextMenu && (
@@ -2507,9 +2464,23 @@ export function UpdateDialog({
   onRestart: () => void;
   onSkip: () => void;
 }) {
-  const busy = state === "downloading";
   const ready = state === "ready";
   const restarting = state === "restarting";
+  const installing = state === "downloading";
+  const busy = installing || restarting;
+  const failed = state === "error";
+  const eyebrow = restarting
+    ? "Restarting Margin"
+    : ready
+      ? "Update installed"
+      : installing
+        ? "Installing update"
+        : "Update available";
+  const heading = restarting
+    ? `Margin ${update.version} is restarting`
+    : ready
+      ? `Margin ${update.version} is ready`
+      : `Margin ${update.version}`;
   return (
     <div className="modal-backdrop">
       <section
@@ -2517,30 +2488,37 @@ export function UpdateDialog({
         role="dialog"
         aria-modal="true"
         aria-label="Margin update"
+        aria-busy={busy}
       >
         <header>
           <div>
-            <p className="eyebrow">Update available</p>
-            <h2>Margin {update.version}</h2>
+            <p className="eyebrow">{eyebrow}</p>
+            <h2>{heading}</h2>
           </div>
           <button aria-label="Close update" onClick={onClose}>
             ×
           </button>
         </header>
         <p>{update.body || "A newer version of Margin is ready to install."}</p>
-        {error && <p className="update-status">{error}</p>}
-        {busy && (
-          <p className="update-status">
+        {error && (
+          <p className="update-status" role="alert">
+            {error}
+          </p>
+        )}
+        {installing && (
+          <p className="update-status" role="status" aria-live="polite">
             Downloading and verifying the update…
           </p>
         )}
         {ready && (
-          <p className="update-status">
+          <p className="update-status" role="status" aria-live="polite">
             Update installed. Restart Margin when you’re ready.
           </p>
         )}
         {restarting && (
-          <p className="update-status">Restarting Margin…</p>
+          <p className="update-status" role="status" aria-live="polite">
+            Restarting Margin…
+          </p>
         )}
         <div>
           {!ready && !restarting && (
@@ -2554,7 +2532,7 @@ export function UpdateDialog({
                 onClick={onInstall}
                 disabled={busy}
               >
-                {busy ? "Updating…" : "Update now"}
+                {busy ? "Updating…" : failed ? "Try again" : "Update now"}
               </button>
             </>
           )}

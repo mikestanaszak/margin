@@ -225,7 +225,13 @@ export function SettingsDialog({
             {updateState === "checking" ? "Checking…" : "Check for updates"}
           </button>
           {updateMessage && (
-            <p className="settings-update-status">{updateMessage}</p>
+            <p
+              className="settings-update-status"
+              role="status"
+              aria-live="polite"
+            >
+              {updateMessage}
+            </p>
           )}
         </section>
         <section className="settings-library">

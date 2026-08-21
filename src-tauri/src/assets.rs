@@ -1,11 +1,13 @@
 use crate::model::ImportedImage;
+use crate::notes::{scan_markdown_links, LinkTarget};
 use crate::paths::{
     canonical_library_root, existing_library_path, is_markdown_path, reject_symlink_components,
     safe_file_stem,
 };
 use std::{
+    collections::HashSet,
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 use tauri::{AppHandle, Manager};
 
@@ -116,6 +118,178 @@ pub(crate) fn rewrite_note_asset_references(
     )
 }
 
+fn percent_decode_path(value: &str) -> Result<String, ()> {
+    fn hex_value(value: u8) -> Option<u8> {
+        match value {
+            b'0'..=b'9' => Some(value - b'0'),
+            b'a'..=b'f' => Some(value - b'a' + 10),
+            b'A'..=b'F' => Some(value - b'A' + 10),
+            _ => None,
+        }
+    }
+
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        if bytes[cursor] != b'%' {
+            decoded.push(bytes[cursor]);
+            cursor += 1;
+            continue;
+        }
+        if cursor + 2 >= bytes.len() {
+            return Err(());
+        }
+        let high = hex_value(bytes[cursor + 1]).ok_or(())?;
+        let low = hex_value(bytes[cursor + 2]).ok_or(())?;
+        decoded.push(high * 16 + low);
+        cursor += 3;
+    }
+    String::from_utf8(decoded).map_err(|_| ())
+}
+
+fn has_unambiguous_inline_destination(
+    markdown: &str,
+    target_start: usize,
+    scanned_target_end: usize,
+    target: &str,
+) -> bool {
+    if target.starts_with('<') {
+        return target.len() >= 2
+            && target.ends_with('>')
+            && !target[1..target.len() - 1].contains(['\n', '\r']);
+    }
+    if target.bytes().any(|value| value.is_ascii_whitespace()) {
+        return false;
+    }
+
+    let bytes = markdown.as_bytes();
+    let mut cursor = target_start;
+    let mut nested_parentheses = 0usize;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'\\' => cursor = cursor.saturating_add(2),
+            b'(' => {
+                nested_parentheses += 1;
+                cursor += 1;
+            }
+            b')' if nested_parentheses > 0 => {
+                nested_parentheses -= 1;
+                cursor += 1;
+            }
+            b')' => return cursor == scanned_target_end,
+            b'\n' | b'\r' => return false,
+            _ => cursor += 1,
+        }
+    }
+    false
+}
+
+fn referenced_note_assets(note: &Path, markdown: &str) -> Result<Option<HashSet<PathBuf>>, String> {
+    let directory = asset_directory_for_note(note)?;
+    let folder_name = directory
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Image folder name is invalid")?;
+    let links = scan_markdown_links(markdown);
+    let markdown_target_ranges: Vec<_> = links
+        .iter()
+        .filter_map(|link| {
+            matches!(link.target, LinkTarget::Markdown(_))
+                .then_some(link.target_start..link.target_end)
+        })
+        .collect();
+    let mut referenced = HashSet::new();
+
+    for link in links {
+        let target_start = link.target_start;
+        let target_end = link.target_end;
+        let LinkTarget::Markdown(raw_target) = link.target else {
+            continue;
+        };
+        if !has_unambiguous_inline_destination(markdown, target_start, target_end, &raw_target) {
+            let decoded = percent_decode_path(raw_target.trim()).ok();
+            if raw_target.contains(folder_name)
+                || raw_target.contains(".assets")
+                || decoded.as_deref().is_some_and(|target| {
+                    target.contains(folder_name) || target.contains(".assets")
+                })
+            {
+                return Ok(None);
+            }
+            continue;
+        }
+        let mut target = raw_target.trim();
+        if target.starts_with('<') {
+            let Some(inner) = target
+                .strip_prefix('<')
+                .and_then(|value| value.strip_suffix('>'))
+            else {
+                if target.contains(folder_name) || target.contains(".assets") {
+                    return Ok(None);
+                }
+                continue;
+            };
+            target = inner;
+        }
+        let suffix = target.find(['?', '#']).unwrap_or(target.len());
+        target = &target[..suffix];
+        let decoded = match percent_decode_path(target) {
+            Ok(decoded) => decoded.replace('\\', "/"),
+            Err(()) => {
+                let absolute_or_remote = target.starts_with(['/', '\\'])
+                    || target.contains("://")
+                    || target.get(1..2) == Some(":");
+                if !absolute_or_remote {
+                    return Ok(None);
+                }
+                continue;
+            }
+        };
+        let path = Path::new(&decoded);
+        let components: Vec<_> = path.components().collect();
+        let is_local_asset = components.first().is_some_and(
+            |component| matches!(component, Component::Normal(name) if *name == folder_name),
+        );
+        if !is_local_asset {
+            continue;
+        }
+        if components.len() != 2
+            || !matches!(components[1], Component::Normal(_))
+            || components
+                .iter()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Ok(None);
+        }
+        let Component::Normal(file_name) = components[1] else {
+            return Ok(None);
+        };
+        let candidate = directory.join(file_name);
+        referenced.insert(fs::canonicalize(&candidate).unwrap_or(candidate));
+    }
+
+    for (start, _) in markdown.match_indices(".assets") {
+        if !markdown_target_ranges
+            .iter()
+            .any(|range| range.contains(&start))
+        {
+            return Ok(None);
+        }
+    }
+    let lowercase_markdown = markdown.to_ascii_lowercase();
+    for (start, _) in lowercase_markdown.match_indices("%2eassets") {
+        if !markdown_target_ranges
+            .iter()
+            .any(|range| range.contains(&start))
+        {
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(referenced))
+}
+
 pub(crate) fn cleanup_unreferenced_note_assets(
     library: &Path,
     note: &Path,
@@ -129,24 +303,17 @@ pub(crate) fn cleanup_unreferenced_note_assets(
     if !directory.is_dir() {
         return Err("The note's asset path is not a folder".into());
     }
-    let folder_name = directory
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or("Image folder name is invalid")?;
+    let Some(referenced) = referenced_note_assets(note, markdown)? else {
+        return Ok(());
+    };
     for entry in fs::read_dir(&directory).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
         let file_type = entry.file_type().map_err(|error| error.to_string())?;
         if !file_type.is_file() {
             continue;
         }
-        let file_name = entry
-            .file_name()
-            .to_str()
-            .ok_or("Image filename is invalid")?
-            .to_string();
-        let is_referenced = markdown.contains(&format!("{folder_name}/{file_name}"))
-            || markdown.contains(&format!("{folder_name}\\{file_name}"));
-        if !is_referenced {
+        let entry_path = fs::canonicalize(entry.path()).map_err(|error| error.to_string())?;
+        if !referenced.contains(&entry_path) {
             fs::remove_file(entry.path()).map_err(|error| error.to_string())?;
         }
     }
@@ -325,7 +492,7 @@ pub(crate) fn import_note_image_from_bytes(
 
 #[cfg(test)]
 mod tests {
-    use super::markdown_asset_directory;
+    use super::{cleanup_unreferenced_note_assets, markdown_asset_directory};
     use crate::{
         model::SaveNoteResult,
         notes::{duplicate_note, read_note_file, save_note},
@@ -389,6 +556,105 @@ mod tests {
         })();
         fs::remove_dir_all(&library).ok();
         result.unwrap();
+    }
+
+    #[test]
+    fn cleanup_preserves_percent_encoded_direct_image_assets() {
+        let cases = [
+            ("Images.assets/My%20image.png", "My image.png"),
+            ("Images.assets/caf%C3%A9.png", "café.png"),
+            ("<Images.assets/My%20image.png>", "My image.png"),
+            ("Images.assets/My%20image.png?raw=1#preview", "My image.png"),
+            ("Images.assets/100%2525.png", "100%25.png"),
+        ];
+
+        for (target, referenced_name) in cases {
+            let library = temporary_library();
+            fs::create_dir_all(&library).unwrap();
+            let note = library.join("Images.md");
+            let assets = library.join("Images.assets");
+            fs::write(&note, "# Images\n").unwrap();
+            fs::create_dir_all(&assets).unwrap();
+            fs::write(assets.join(referenced_name), b"keep").unwrap();
+            fs::write(assets.join("remove.png"), b"remove").unwrap();
+
+            cleanup_unreferenced_note_assets(&library, &note, &format!("![Keep]({target})\n"))
+                .unwrap();
+
+            assert!(
+                assets.join(referenced_name).exists(),
+                "expected {target} to preserve {referenced_name}"
+            );
+            assert!(!assets.join("remove.png").exists());
+            fs::remove_dir_all(&library).ok();
+        }
+    }
+
+    #[test]
+    fn ambiguous_local_image_references_skip_cleanup() {
+        let cases = [
+            "![Keep](Images.assets/keep%ZZ.png)",
+            "![Keep](Images%2Eassets/keep%ZZ.png)",
+            "![Keep](Images.assets/../outside.png)",
+            "![Keep](Images.assets/keep.png",
+            "![Keep][image]\n\n[image]: Images%2Eassets/keep%ZZ.png",
+        ];
+
+        for markdown in cases {
+            let library = temporary_library();
+            fs::create_dir_all(&library).unwrap();
+            let note = library.join("Images.md");
+            let assets = library.join("Images.assets");
+            fs::write(&note, "# Images\n").unwrap();
+            fs::create_dir_all(&assets).unwrap();
+            fs::write(assets.join("keep.png"), b"keep").unwrap();
+            fs::write(assets.join("also-keep.png"), b"keep").unwrap();
+
+            cleanup_unreferenced_note_assets(&library, &note, markdown).unwrap();
+
+            assert!(
+                assets.join("keep.png").exists(),
+                "cleanup should be skipped for {markdown}"
+            );
+            assert!(assets.join("also-keep.png").exists());
+            fs::remove_dir_all(&library).ok();
+        }
+    }
+
+    #[test]
+    fn cleanup_preserves_assets_for_complex_valid_markdown_images() {
+        let cases = [
+            ("![Keep](Images.assets/a(b).png)", "a(b).png"),
+            (
+                "![Keep](Images.assets/keep.png \"optional title\")",
+                "keep.png",
+            ),
+            ("![Keep](Images.assets/a\\(b\\).png)", "a(b).png"),
+            (
+                "![Keep][image]\n\n[image]: Images.assets/keep.png",
+                "keep.png",
+            ),
+            ("![Keep](Images%2Eassets/keep.png)", "keep.png"),
+        ];
+
+        for (markdown, referenced_name) in cases {
+            let library = temporary_library();
+            fs::create_dir_all(&library).unwrap();
+            let note = library.join("Images.md");
+            let assets = library.join("Images.assets");
+            fs::write(&note, "# Images\n").unwrap();
+            fs::create_dir_all(&assets).unwrap();
+            fs::write(assets.join(referenced_name), b"keep").unwrap();
+            fs::write(assets.join("unrelated.png"), b"also keep on ambiguity").unwrap();
+
+            cleanup_unreferenced_note_assets(&library, &note, markdown).unwrap();
+
+            assert!(
+                assets.join(referenced_name).exists(),
+                "cleanup removed the referenced asset for {markdown}"
+            );
+            fs::remove_dir_all(&library).ok();
+        }
     }
 
     #[test]

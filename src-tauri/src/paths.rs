@@ -198,26 +198,56 @@ pub(crate) fn safe_file_stem(title: &str) -> String {
     }
 }
 
-pub(crate) fn path_for_title(source: &Path, title: &str) -> Result<PathBuf, String> {
+fn paths_refer_to_same_entry(left: &Path, right: &Path) -> bool {
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn path_is_missing_or_same_entry(source: &Path, destination: &Path) -> bool {
+    match fs::symlink_metadata(destination) {
+        Ok(_) => paths_refer_to_same_entry(source, destination),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(_) => false,
+    }
+}
+
+fn path_for_title_with_case_behavior(
+    source: &Path,
+    title: &str,
+    case_insensitive_names: bool,
+) -> Result<PathBuf, String> {
     let parent = source.parent().ok_or("Note has no parent folder")?;
     let stem = safe_file_stem(title);
     let destination = parent.join(format!("{}.md", stem));
     if source == destination {
         Ok(source.to_path_buf())
-    } else if cfg!(any(target_os = "windows", target_os = "macos"))
+    } else if case_insensitive_names
         && source.parent() == destination.parent()
         && source
             .file_name()
             .zip(destination.file_name())
             .is_some_and(|(current, next)| current.eq_ignore_ascii_case(next))
+        && path_is_missing_or_same_entry(source, &destination)
     {
         // Windows and the default macOS volume are case-insensitive. Returning
         // the requested spelling lets rename_file_safely perform a case-only
-        // transition through an intermediate path.
+        // transition through an intermediate path. A case-sensitive macOS
+        // volume can contain both spellings, so an existing destination must
+        // first resolve to the same filesystem entry.
         Ok(destination)
     } else {
         Ok(unique_path(parent, &stem))
     }
+}
+
+pub(crate) fn path_for_title(source: &Path, title: &str) -> Result<PathBuf, String> {
+    path_for_title_with_case_behavior(
+        source,
+        title,
+        cfg!(any(target_os = "windows", target_os = "macos")),
+    )
 }
 
 pub(crate) fn unique_directory_path(requested: &Path) -> Result<PathBuf, String> {
@@ -236,5 +266,46 @@ pub(crate) fn unique_directory_path(requested: &Path) -> Result<PathBuf, String>
             return Ok(candidate);
         }
         number += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::path_for_title_with_case_behavior;
+    use crate::test_support::temporary_library;
+    use std::fs;
+
+    #[test]
+    fn case_insensitive_name_rules_do_not_replace_a_distinct_case_variant() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let source = library.join("Foo.md");
+        let distinct = library.join("foo.md");
+        fs::write(&source, "source").unwrap();
+        fs::write(&distinct, "distinct").unwrap();
+
+        if fs::canonicalize(&source).unwrap() == fs::canonicalize(&distinct).unwrap() {
+            fs::remove_dir_all(&library).ok();
+            return;
+        }
+
+        let destination = path_for_title_with_case_behavior(&source, "foo", true).unwrap();
+
+        assert_ne!(destination, distinct);
+        assert_eq!(fs::read_to_string(&distinct).unwrap(), "distinct");
+        fs::remove_dir_all(&library).ok();
+    }
+
+    #[test]
+    fn case_only_rename_keeps_the_requested_spelling_when_the_target_is_same_entry() {
+        let library = temporary_library();
+        fs::create_dir_all(&library).unwrap();
+        let source = library.join("Case.md");
+        fs::write(&source, "source").unwrap();
+
+        let destination = path_for_title_with_case_behavior(&source, "case", true).unwrap();
+
+        assert_eq!(destination, library.join("case.md"));
+        fs::remove_dir_all(&library).ok();
     }
 }

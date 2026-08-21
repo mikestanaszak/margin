@@ -2,6 +2,24 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## 0.5.1 — 2026-08-21
+
+### Added
+
+- Releases now include `SHA256SUMS`; the Windows, macOS, and Linux installer scripts verify the selected package before changing an installation.
+
+### Improved
+
+- Automatic update checks recover from invalid or future cadence timestamps, honor skipped versions, and clear stale update actions before a new check. Manual checks can reconsider a skipped version.
+- Update installation no longer restarts Margin automatically. Restart becomes available only after installation succeeds, with retry and close paths for check, install, or relaunch failures.
+- Release validation now verifies every expected package, updater signature, platform entry, tagged asset URL, and package checksum before a draft can be published.
+
+### Fixed
+
+- Case-only note renames no longer risk replacing a distinct case-variant note on a case-sensitive macOS volume.
+- Percent-encoded companion image references, including spaces and Unicode filenames, are preserved during cleanup; ambiguous local targets now skip deletion.
+- Title-rename link repair now aborts and rolls back if another linked note changes after planning or staging.
+
 ## 0.5.0 — 2026-08-13
 
 ### Added

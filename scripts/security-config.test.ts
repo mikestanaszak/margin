@@ -89,4 +89,36 @@ describe("workflow supply-chain configuration", () => {
       }
     }
   });
+
+  it("keeps manual installation on the checksummed trust path", () => {
+    for (const installer of ["install.ps1", "install.sh", "install-linux.sh"]) {
+      expect(readText(installer), installer).toContain("SHA256SUMS");
+    }
+
+    const readme = readText("README.md");
+    expect(readme).toContain("Manual downloads do not yet carry Windows Authenticode");
+    expect(readme).toContain("signed in-app updates");
+  });
+
+  it("selects exactly one versioned installer asset and rejects suffix decoys", () => {
+    const windows = readText("install.ps1");
+    expect(windows).toContain(
+      '$expectedInstallerName = "Margin_${releaseVersion}_x64-setup.exe"',
+    );
+    expect(windows).toContain("$installers.Count -ne 1");
+    expect(windows).not.toContain('Where-Object { $_.name -match "_x64-setup\\.exe$" }');
+    expect(windows).not.toContain("Select-Object -First 1");
+
+    const mac = readText("install.sh");
+    expect(mac).toContain('ARTIFACT_NAME="Margin_${RELEASE_VERSION}_${ARCHITECTURE}.dmg"');
+    expect(mac).toContain('[[ "$DOWNLOAD_COUNT" -eq 1 ]]');
+    expect(mac).not.toContain('grep -E "_${ARCHITECTURE}\\.dmg$"');
+    expect(mac).not.toContain("head -n 1");
+
+    const linux = readText("install-linux.sh");
+    expect(linux).toContain('ARTIFACT_NAME="Margin_${RELEASE_VERSION}_amd64.AppImage"');
+    expect(linux).toContain('[[ "$DOWNLOAD_COUNT" -eq 1 ]]');
+    expect(linux).not.toContain("grep -E '\\.AppImage$'");
+    expect(linux).not.toContain("head -n 1");
+  });
 });

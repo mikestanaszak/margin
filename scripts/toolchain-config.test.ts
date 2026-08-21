@@ -1,7 +1,47 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("toolchain configuration", () => {
+  it("keeps every packaged application version at 0.5.1", () => {
+    const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+    const tauri = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8"));
+    const cargo = readFileSync("src-tauri/Cargo.toml", "utf8");
+    const cargoVersion = /^version = "([^"]+)"$/m.exec(cargo)?.[1];
+
+    expect([pkg.version, tauri.version, cargoVersion]).toEqual([
+      "0.5.1",
+      "0.5.1",
+      "0.5.1",
+    ]);
+  });
+
+  it("keeps Vitest out of nested worktrees without dropping its default exclusions", () => {
+    const inspectConfig = [
+      'import { loadConfigFromFile } from "vite";',
+      'import { configDefaults } from "vitest/config";',
+      "const loaded = await loadConfigFromFile(",
+      '  { command: "serve", mode: "test" },',
+      '  "vite.config.ts",',
+      ");",
+      "process.stdout.write(JSON.stringify({",
+      "  excluded: loaded?.config.test?.exclude ?? [],",
+      "  defaults: configDefaults.exclude,",
+      "}));",
+    ].join("\n");
+    const inspected = JSON.parse(
+      execFileSync(
+        process.execPath,
+        ["--input-type=module", "--eval", inspectConfig],
+        { encoding: "utf8" },
+      ),
+    ) as { excluded: string[]; defaults: string[] };
+
+    expect(inspected.excluded).toContain("**/.worktrees/**");
+    for (const defaultExclusion of inspected.defaults)
+      expect(inspected.excluded).toContain(defaultExclusion);
+  });
+
   it("pins pnpm and runs bundle inspection only after a production build", () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8"));
     expect(pkg.packageManager).toBe("pnpm@10.15.1");
