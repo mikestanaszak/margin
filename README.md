@@ -51,7 +51,7 @@ Notes can also be opened from their file manager. A Markdown file already in the
 ### Editing and preview
 
 - The top Edit bar inserts headings, emphasis, links, tables, and images. Select text for the smaller contextual formatting controls.
-- Type after an opening `` ``` `` fence to choose a code language. The list includes Highlight.js languages and common aliases, but custom identifiers still work.
+- Type after an opening `` ``` `` fence to choose a code language. Press Enter to accept the highlighted language; Tab dismisses the list and indents the fence. The list includes Highlight.js languages and common aliases, but custom identifiers still work.
 - Preview code blocks have a Copy button. Tables open an editor for adding, removing, filling, and reordering rows and columns.
 - Checkboxes can be toggled from Preview and save back to Markdown. Mermaid diagrams render locally and retain a visible source fallback if a diagram is invalid.
 

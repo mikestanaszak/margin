@@ -8,6 +8,7 @@ import React, {
   useState,
 } from "react";
 import "./app.css";
+import { shouldSuppressWebviewContextMenu } from "./context-menu";
 import { open } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
@@ -651,7 +652,9 @@ export function App() {
   // menu exposes browser actions (reload, inspect, and similar) that do not
   // belong in the product surface. Keyboard cut/copy/paste remains native.
   useEffect(() => {
-    const suppressWebviewMenu = (event: MouseEvent) => event.preventDefault();
+    const suppressWebviewMenu = (event: MouseEvent) => {
+      if (shouldSuppressWebviewContextMenu(event.target)) event.preventDefault();
+    };
     window.addEventListener("contextmenu", suppressWebviewMenu);
     return () => window.removeEventListener("contextmenu", suppressWebviewMenu);
   }, []);

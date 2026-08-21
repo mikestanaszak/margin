@@ -18,6 +18,7 @@ import {
   history,
   historyKeymap,
   indentWithTab,
+  selectAll,
 } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import {
@@ -506,6 +507,12 @@ export const MarkdownEditor = forwardRef<
         },
       }),
       keymap.of([
+        {
+          key: "Mod-a",
+          run: selectAll,
+          preventDefault: true,
+          stopPropagation: true,
+        },
         indentWithTab,
         ...completionKeymap,
         ...closeBracketsKeymap,
