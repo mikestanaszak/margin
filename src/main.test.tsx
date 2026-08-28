@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EditorView } from "@codemirror/view";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("react-dom/client", () => ({
   createRoot: () => ({ render: vi.fn() }),
@@ -79,6 +80,7 @@ import {
   FolderTree,
 } from "./features/library/LibraryNavigation";
 import { MarkdownPreview } from "./features/preview/MarkdownPreview";
+import previewStyles from "./features/preview/preview.css?raw";
 import {
   activeOutlineAncestors,
   outlineTree,
@@ -269,7 +271,129 @@ describe("updates", () => {
   });
 });
 
+describe("pane size preferences", () => {
+  it.each([null, "", "   ", "invalid", "320"])(
+    "uses readable defaults for missing sizes and preserves saved widths (%s)",
+    (saved) => {
+      const keys = ["markdown-notes.library-pane-width", "markdown-notes.note-pane-width"];
+      const previous = keys.map((key) => localStorage.getItem(key));
+      for (const key of keys) {
+        if (saved === null) localStorage.removeItem(key);
+        else localStorage.setItem(key, saved);
+      }
+      const view = render(<App />);
+      try {
+        const shell = screen.getByRole("main");
+        expect(shell.style.getPropertyValue("--library-pane-width"))
+          .toBe(saved === "320" ? "320px" : "232px");
+        expect(shell.style.getPropertyValue("--note-pane-width"))
+          .toBe(saved === "320" ? "320px" : "296px");
+      } finally {
+        view.unmount();
+        keys.forEach((key, index) => {
+          if (previous[index] === null) localStorage.removeItem(key);
+          else localStorage.setItem(key, previous[index]!);
+        });
+      }
+    },
+  );
+});
+
 describe("Markdown preview", () => {
+  describe("list layout", () => {
+    let style: HTMLStyleElement;
+
+    beforeEach(() => {
+      style = document.createElement("style");
+      style.textContent = previewStyles;
+      document.head.append(style);
+    });
+
+    afterEach(() => style.remove());
+
+    const renderList = (markdown: string, editable = true) => {
+      const onToggleTask = vi.fn();
+      const result = render(
+        <MarkdownPreview
+          markdown={markdown}
+          notePath={notes[0].path}
+          notes={notes}
+          onOpen={vi.fn()}
+          onEditTable={vi.fn()}
+          onToggleTask={onToggleTask}
+          editable={editable}
+        />,
+      );
+      return { ...result, onToggleTask };
+    };
+
+    it("keeps bullet and number markers beside tasks, including nested mixed lists", () => {
+      renderList([
+        "- [ ] Parent task",
+        "  - Child bullet",
+        "  - [x] Child task",
+        "  - [Child link](https://example.com)",
+        "- Sibling bullet",
+        "",
+        "9. [ ] Numbered task",
+        "10. [Numbered link](https://example.com)",
+      ].join("\n"));
+
+      for (const text of ["Child bullet", "Child link", "Sibling bullet", "Numbered link"]) {
+        const item = screen.getByText(text).closest("li")!;
+        const computed = getComputedStyle(item);
+        expect(computed.display).toBe("list-item");
+        expect(computed.listStyle).not.toBe("none");
+        expect(computed.listStyleType).not.toBe("none");
+      }
+      expect(screen.getByText("Child bullet").closest("ul")?.parentElement)
+        .toHaveAttribute("data-task-index", "0");
+      expect(screen.getByText("Numbered link").closest("ol"))
+        .toHaveAttribute("start", "9");
+    });
+
+    it.each(["tight", "loose"])("keeps %s task checkboxes out of the wrapping text flow", (spacing) => {
+      const separator = spacing === "loose" ? "\n\n" : "\n";
+      const { onToggleTask } = renderList([
+        "- [ ] Parent with **bold** text and [a link](https://example.com)",
+        "  - [x] Nested task",
+        "- [ ] Sibling task",
+      ].join(separator));
+
+      const tasks = screen.getAllByRole("checkbox");
+      for (const task of tasks) {
+        expect(getComputedStyle(task).position).toBe("absolute");
+        expect(getComputedStyle(task.closest("li")!).marginLeft).not.toMatch(/^-/);
+      }
+      fireEvent.click(tasks[1]);
+      expect(onToggleTask).toHaveBeenCalledWith(1, false);
+      fireEvent.click(tasks[2]);
+      expect(onToggleTask).toHaveBeenCalledWith(2, true);
+    });
+
+    it("allows unbroken link text and inline formatting to wrap inside list items", () => {
+      const url = `https://example.com/${"a".repeat(180)}`;
+      const { container } = renderList([
+        `- <${url}>`,
+        `- [**A long bold link label** with inline code](https://example.com)`,
+        `- [ ] _Task_ containing \`${"token".repeat(40)}\``,
+      ].join("\n"));
+
+      for (const item of container.querySelectorAll("li")) {
+        expect(getComputedStyle(item).overflowWrap).toBe("anywhere");
+      }
+      expect(screen.getByRole("link", { name: url })).toHaveAttribute("href", url);
+    });
+
+    it("keeps nested tasks disabled in a read-only preview", () => {
+      const { onToggleTask } = renderList("- [ ] Parent\n  - Bullet\n  - [x] Child", false);
+      for (const task of screen.getAllByRole("checkbox")) {
+        expect(task).toBeDisabled();
+      }
+      expect(onToggleTask).not.toHaveBeenCalled();
+    });
+  });
+
   it("copies fenced code without adding a control to inline code", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
@@ -365,6 +489,18 @@ describe("Markdown preview", () => {
     expect(convertFileSrc).toHaveBeenCalledWith(
       "C:\\Notes\\Work\\Plan.assets\\diagram.png",
     );
+  });
+
+  it.each([
+    ["C:\\Notes\\Work\\Plan.md", "C:\\Notes\\assets\\café.svg"],
+    ["\\\\?\\C:\\Notes\\Work\\Plan.md", "\\\\?\\C:\\Notes\\assets\\café.svg"],
+    ["\\\\server\\share\\Notes\\Work\\Plan.md", "\\\\server\\share\\Notes\\assets\\café.svg"],
+    ["\\\\?\\UNC\\server\\share\\Notes\\Work\\Plan.md", "\\\\?\\UNC\\server\\share\\Notes\\assets\\café.svg"],
+    ["/home/notes/Work/Plan.md", "/home/notes/assets/café.svg"],
+  ])("normalizes relative image segments for %s", (notePath, expected) => {
+    convertFileSrc.mockClear();
+    render(<MarkdownPreview markdown="![Sketch](../assets/./caf%C3%A9.svg)" notePath={notePath} notes={[]} onOpen={() => undefined} onEditTable={() => undefined} onToggleTask={() => undefined} />);
+    expect(convertFileSrc).toHaveBeenCalledWith(expected);
   });
 
   it("decodes spaces and Unicode before resolving a Windows image path", () => {
@@ -2178,6 +2314,89 @@ describe("save-aware quit", () => {
           saved: true,
         }),
       );
+    } finally {
+      restoreDefaultInvoke();
+    }
+  });
+
+  it.each([false, true])("cancels stale autosaves after a title rename (queued save: %s)", async (queueAnotherSave) => {
+    const original = documents.get(notes[0].path)!;
+    const body = "# Renamed project\n\nA newly edited note.";
+    const saved = { ...original, body, title: "Renamed project", path: "C:/Notes/Work/Renamed project.md", revision: "renamed-revision" };
+    let resolveSave: (value: unknown) => void = () => undefined;
+    const pendingSave = new Promise((resolve) => { resolveSave = resolve; });
+    let saveCalls = 0;
+    invoke.mockImplementation(((command: string, args?: unknown) => {
+      const payload = args as { path?: string } | undefined;
+      if (command === "load_selected_library") return Promise.resolve("C:/Notes");
+      if (command === "load_library_snapshot") return Promise.resolve({ notes, folders: ["Work", "Personal"], trash: [], warnings: [] });
+      if (command === "read_note") return Promise.resolve(payload?.path === saved.path ? saved : documents.get(payload?.path || ""));
+      if (command === "save_note") {
+        saveCalls += 1;
+        return saveCalls === 1 ? pendingSave : Promise.resolve({ status: "error", message: "The old filename no longer exists" });
+      }
+      if (command === "take_opened_markdown_files" || command === "find_backlinks") return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    }) as never);
+    try {
+      render(<App />);
+      const projectButton = (await screen.findAllByRole("button", { name: /Project Alpha/ })).find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(projectButton!);
+      fireEvent.click(await screen.findByRole("button", { name: "Edit view" }));
+      const editorContent = await screen.findByLabelText("Markdown note");
+      const view = EditorView.findFromDOM(editorContent)!;
+      act(() => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: body } }));
+      fireEvent.blur(editorContent);
+      await waitFor(() => expect(saveCalls).toBe(1));
+      if (queueAnotherSave) fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+      await act(async () => { resolveSave({ status: "saved", note: saved }); await pendingSave; });
+      await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 850)); });
+      expect(saveCalls).toBe(1);
+      expect(screen.queryByRole("dialog", { name: /Unsaved draft/ })).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Markdown note")).toHaveTextContent("Renamed project");
+    } finally {
+      restoreDefaultInvoke();
+    }
+  });
+
+  it.each(["new", "edit", "preview"])("saves the outgoing draft before autosave during %s navigation", async (navigation) => {
+    const original = documents.get(notes[0].path)!;
+    const created = { ...original, path: "C:/Notes/Untitled.md", title: "Untitled", body: "# Untitled\n", revision: "new-note" };
+    const body = navigation === "preview"
+      ? original.body.replace("- [ ]", "- [x]")
+      : "# Project Alpha\n\nAn edit made just before opening another note.";
+    invoke.mockImplementation(((command: string, args?: unknown) => {
+      const payload = args as { path?: string; note?: typeof original } | undefined;
+      if (command === "load_selected_library") return Promise.resolve("C:/Notes");
+      if (command === "load_library_snapshot") return Promise.resolve({ notes, folders: ["Work", "Personal"], trash: [], warnings: [] });
+      if (command === "read_note") return Promise.resolve(payload?.path === created.path ? created : documents.get(payload?.path || ""));
+      if (command === "create_note") return Promise.resolve(created);
+      if (command === "save_note") return Promise.resolve({ status: "saved", note: { ...payload?.note, revision: "saved-outgoing" } });
+      if (command === "take_opened_markdown_files" || command === "find_backlinks") return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    }) as never);
+    try {
+      render(<App />);
+      const projectButton = (await screen.findAllByRole("button", { name: /Project Alpha/ })).find((button) => button.classList.contains("nr-note-main"));
+      fireEvent.click(projectButton!);
+      if (navigation === "preview") {
+        fireEvent.click(await screen.findByRole("checkbox"));
+      } else {
+        fireEvent.click(await screen.findByRole("button", { name: "Edit view" }));
+        const content = await screen.findByLabelText("Markdown note");
+        const view = EditorView.findFromDOM(content)!;
+        act(() => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: body } }));
+      }
+      if (navigation === "new") {
+        fireEvent.keyDown(window, { key: "n", ctrlKey: true });
+        await waitFor(() => expect(screen.getByLabelText("Markdown note")).toHaveTextContent("Untitled"));
+      } else {
+        const cafeButton = screen.getAllByRole("button", { name: /Café ideas/ }).find((button) => button.classList.contains("nr-note-main"));
+        fireEvent.click(cafeButton!);
+        await waitFor(() => expect(screen.getAllByRole("heading", { name: "Café ideas", level: 1 }).length).toBeGreaterThan(0));
+      }
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_note", expect.objectContaining({ note: expect.objectContaining({ path: original.path, body }) })));
+      expect(screen.queryByRole("dialog", { name: /Unsaved draft/ })).not.toBeInTheDocument();
     } finally {
       restoreDefaultInvoke();
     }

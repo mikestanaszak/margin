@@ -2,6 +2,19 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## 0.5.3 — 2026-08-28
+
+### Fixed
+
+- Bullets and numbers remain visible in lists that also contain tasks, including bullets nested under a task.
+- Wrapped task text stays aligned with the first line, with the checkbox beside it, in both compact lists and lists containing separate paragraphs.
+- Long links, formatted link labels, and unbroken inline text wrap within list items without displacing markers or overflowing narrow preview panes.
+- New installations use the intended navigation pane widths instead of starting with cramped sidebars and unnecessarily truncated note titles. Saved pane sizes are preserved.
+- Changing a note title no longer triggers stale autosave attempts against its previous filename or a misleading unsaved-draft warning after a successful save.
+- Creating or switching notes immediately after editing saves the outgoing draft, including task changes made in Preview.
+- Relative images using parent-directory paths render correctly, including Windows drive and network-share paths, without widening native file access.
+- Table, template, and settings dialogs retain their intended layout instead of being squeezed by shared modal styles.
+
 ## 0.5.2 — 2026-08-21
 
 ### Improved

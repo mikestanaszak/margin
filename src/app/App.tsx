@@ -167,7 +167,9 @@ const defaultShortcuts: Shortcuts = {
 };
 
 function loadPaneWidth(key: string, fallback: number) {
-  const saved = Number(localStorage.getItem(key));
+  const value = localStorage.getItem(key);
+  if (!value?.trim()) return fallback;
+  const saved = Number(value);
   return Number.isFinite(saved) ? clamp(saved, 180, 520) : fallback;
 }
 function loadShortcuts(): Shortcuts {
@@ -734,7 +736,7 @@ export function App() {
     if (!note || !hasUnsavedChanges(note, baseline.current)) return;
     const timer = window.setTimeout(() => void enqueueSave(note), 700);
     return () => window.clearTimeout(timer);
-  }, [note?.body, note?.title, note?.tags.join("\0")]);
+  }, [note?.path, note?.body, note?.title, note?.tags.join("\0")]);
   useEffect(() => {
     const checkForExternalChanges = async () => {
       const currentNote = noteRef.current;
@@ -890,6 +892,14 @@ export function App() {
           : null
         : targetFolder;
     try {
+      const currentNote = noteRef.current;
+      if (
+        currentNote &&
+        pathIsInLibrary(currentNote.path, library) &&
+        hasUnsavedChanges(currentNote, baseline.current) &&
+        !(await enqueueSaveRef.current(currentNote))
+      )
+        return;
       const created = await native.createNote(library, folder);
       let saved = created;
       if (body) {
@@ -1121,7 +1131,9 @@ export function App() {
     const previous = saveQueues.current.get(queueKey) ?? Promise.resolve();
     const queued = previous
       .catch(() => undefined)
-      .then(async () => {
+      .then(async (previousSaved) => {
+        // Already-queued work must not silently retry a failed save or conflict.
+        if (previousSaved === false) return false;
         if (
           !saveLibrary ||
           !pathIsInLibrary(queuedDraft.path, saveLibrary)
@@ -1129,7 +1141,10 @@ export function App() {
           retireOwnedDraft(queueKey, queuedDraft);
           return true;
         }
-        let nextDraft = queuedDraft;
+        // An earlier queue entry may already have saved the newest draft and
+        // retired its aliases. Never replay that entry's captured old path.
+        let nextDraft = latestSaveDrafts.current.get(queueKey);
+        if (!nextDraft) return true;
         while (true) {
           if (!(await saveNote(nextDraft, queueKey, saveLibrary))) return false;
           const latestDraft = latestSaveDrafts.current.get(queueKey);
@@ -1493,7 +1508,14 @@ export function App() {
           draft,
         });
       }}
-      onBlur={() => isManagedNote && void enqueueSave(note)}
+      onBlur={() => {
+        // Loaded notes keep a baseline across navigation; a successful rename
+        // removes only the old path. Ignore that retired editor's blur event.
+        if (isManagedNote && noteBaselines.current.has(note.path))
+          void enqueueSave(
+            noteRef.current?.path === note.path ? noteRef.current : note,
+          );
+      }}
       onImageFile={isManagedNote ? (file) => void importImageFile(file) : undefined}
       autoFocus
       readOnly={!isManagedNote}
@@ -1689,12 +1711,12 @@ export function App() {
             currentBaseline,
           )
         ) {
-          rememberLatestDraft(currentNote);
+          void enqueueSaveRef.current(currentNote);
         }
       }
       setActivePath(selected.path);
     },
-    [rememberLatestDraft],
+    [],
   );
   const toggleNoteFavorite = useCallback((selected: NoteSummary) => {
     setFavorites((value) =>

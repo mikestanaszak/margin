@@ -4,6 +4,16 @@ import { describe, expect, test } from "vitest";
 const readStyle = (path: string) => readFileSync(path, "utf8");
 
 describe("style ownership", () => {
+  test("keeps shared modal defaults below feature-specific layouts", () => {
+    const shared = readStyle("src/styles.css");
+    // Global CSS loads after feature CSS. Zero-specificity base selectors keep
+    // the table/template widths and settings backdrop effective in that order.
+    expect(shared).toMatch(/:where\(\.modal\)\s*\{[^}]*width:/);
+    expect(shared).toMatch(/:where\(\.modal-backdrop\)\s*\{/);
+    expect(shared).not.toMatch(/(?:^|\})\s*\.modal(?:-backdrop)?(?:\s|\{|>)/);
+    expect(shared).not.toMatch(/:where\(\.modal\)\s*(?:[>+~]|[a-z.])/);
+  });
+
   test("keeps app composition separate from feature presentation", () => {
     const shared = readStyle("src/styles.css");
     const app = readStyle("src/app/app.css");
