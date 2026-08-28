@@ -51,10 +51,19 @@ export function MarkdownPreview({
     } catch {
       // Keep malformed escapes literal so a bad Markdown URL cannot break preview.
     }
-    const relative = decoded
-      .replace(/^[\\/]+/, "")
-      .replace(/[\\/]/g, separator);
-    return convertFileSrc(`${parent}${separator}${relative}`);
+    // Tauri's asset protocol rejects paths containing parent components.
+    // Resolve them before conversion, preserving drive and UNC roots; native
+    // asset scope checks still decide whether the final file may be read.
+    const root = parent.match(/^(?:\\\\\?\\UNC\\[^\\]+\\[^\\]+|\\\\\?\\[a-z]:|\\\\[^\\]+\\[^\\]+|[a-z]:|\/)/i)?.[0] ?? "";
+    const parts = parent.slice(root.length).split(/[\\/]/).filter(Boolean);
+    for (const part of decoded.split(/[\\/]/)) {
+      if (!part || part === ".") continue;
+      if (part === "..") {
+        if (!parts.length) return undefined;
+        parts.pop();
+      } else parts.push(part);
+    }
+    return convertFileSrc(`${root}${root.endsWith(separator) ? "" : separator}${parts.join(separator)}`);
   };
   const markdownTables = useMemo(() => parseMarkdownTables(markdown), [markdown]);
   const normalizePath = (path: string) => {

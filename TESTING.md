@@ -32,6 +32,10 @@ The example notes include:
 - task lists, tables with escaped pipes, blockquotes, inline formatting, and highlighted code;
 - a non-Markdown file and internal `.markdown-notes` content that indexing must ignore.
 
+For a desktop UI pass, also copy [`tests/fixtures/desktop-ui`](tests/fixtures/desktop-ui) into a `UI Checks` subfolder of the temporary library. These additional notes cover mixed and nested tasks/bullets, loose paragraphs, numbered lists, quoted tasks, long unbroken URLs, formatted link labels, inline code, tables, Mermaid, local images, and deep headings.
+
+Check `List Layout`, `Long Links`, and `Rich Content` in Preview and Split with a narrow preview pane (about 300 pixels), then in Edit. Bullets/numbers and checkboxes must sit beside the first text line, wrapped text must stay aligned, nested bullets must remain visible, and long links must not cause horizontal preview scrolling. Fenced code should still scroll horizontally. Toggle parent and nested tasks, follow the internal links, edit the table, and use the outline. Repeat in light and dark themes and after resizing panes. Create a new note through the UI, confirm autosave on disk, search for it, switch notes, and verify an external file edit reloads without losing changes.
+
 ## Coverage matrix
 
 | Product area | Automated evaluation | Desktop-only regression check |

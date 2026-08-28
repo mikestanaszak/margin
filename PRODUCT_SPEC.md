@@ -21,6 +21,7 @@
 - Fenced code blocks have a keyboard-accessible Copy control with success and failure feedback.
 - Mermaid code fences render as local diagrams in Preview, with light and dark themes and a visible source fallback for malformed diagrams.
 - Preview tasks are clickable and save their completion state.
+- Preview keeps bullets and numbers visible beside tasks, including nested lists. Checkboxes sit beside the first line; wrapped task text and long links stay aligned with the item text without overflowing the pane.
 - Tables can be edited in place, with row/column insertion, deletion, and reordering.
 - Internal Markdown and wiki links open the matching note. Resolved relative Markdown links and unambiguous wiki links share one backlink graph and populate the receiving note's Linked from list; external URLs, anchors, absolute paths, ambiguous targets, and unresolved targets do not. Web links open in the system browser, and creating a missing note from a link remains deferred.
 - Inline code can be selected with a double-click.

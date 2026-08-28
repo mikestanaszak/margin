@@ -21,6 +21,8 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    // Keep raw preview CSS available to the rendered list regression tests.
+    css: { include: [/preview\.css\?raw$/] },
     exclude: [...configDefaults.exclude, "**/.worktrees/**"],
     setupFiles: ["./src/test/setup.ts"],
   },
