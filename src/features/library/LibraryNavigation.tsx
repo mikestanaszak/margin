@@ -63,7 +63,8 @@ export function LibraryNavigation({
   return (
     <aside className="sidebar" aria-label="Library navigation">
       <button className="new-note" onClick={onNewNote}>
-        ＋ New note <kbd>{newNoteShortcut}</kbd>
+        <span>New note</span>
+        <kbd>{newNoteShortcut}</kbd>
       </button>
       <nav>
         <button
@@ -78,7 +79,6 @@ export function LibraryNavigation({
           onClick={onOpenToday}
         >
           <span>Today</span>
-          <small>↗</small>
         </button>
         <button
           className={

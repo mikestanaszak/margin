@@ -18,6 +18,7 @@
 
 - Preview is the default; Cmd/Ctrl+E switches between Preview and Edit, with Split view available. Opening another note preserves the current Edit, Split, or Preview mode.
 - GitHub-flavored Markdown preview: headings, links, images, tasks, tables, blockquotes, and highlighted code blocks.
+- The Markdown editor highlights headings, emphasis, links, inline code, quotes, and syntax markers using the active palette. Table and Image insertion sit in the note header beside the view switcher.
 - Fenced code blocks have a keyboard-accessible Copy control with success and failure feedback.
 - Mermaid code fences render as local diagrams in Preview, with light and dark themes and a visible source fallback for malformed diagrams.
 - Preview tasks are clickable and save their completion state.

@@ -35,7 +35,7 @@ describe("style ownership", () => {
     const preview = readStyle("src/features/preview/preview.css");
 
     expect(preview).toContain(
-      ".preview .hljs-keyword, .preview .hljs-selector-tag, .preview .hljs-literal { color: #ff7b72; }",
+      ".preview .hljs-keyword, .preview .hljs-selector-tag, .preview .hljs-literal { color: var(--code-keyword); }",
     );
     expect(preview).toContain(
       ".table-column-actions { position: absolute; top: 6px; right: 4px; display: flex; gap: 1px; }",

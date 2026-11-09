@@ -31,4 +31,7 @@ unicode-normalization = "0.1"
 tauri-build = { version = "2", features = [] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-updater = "2"
+# Updater artifacts are raw .exe/.msi/AppImage plus the macOS .app.tar.gz
+# (createUpdaterArtifacts: true), so the v1 .zip extraction path and its
+# vulnerable zip 4.x dependency are not needed.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }

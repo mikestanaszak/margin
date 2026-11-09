@@ -2,6 +2,26 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## Unreleased
+
+### Improved
+
+- The editor highlights Markdown syntax (headings, emphasis, links, code, quotes) in every palette and theme.
+- Code blocks in Preview use readable light-mode colors instead of dark-theme colors on a light background.
+- Note cards use their full width for excerpts, tags, and dates, with spacing between cards and accent-colored tags.
+- The note header is tidier: Table and Image moved beside the view switcher, the switcher is more compact, and the stale library note count no longer appears under the note title.
+- The sidebar uses consistent type sizes and count alignment; folder actions appear on hover without truncating folder names.
+- Search and Settings use crisp line icons, and search shows a focus ring.
+- Filled accent buttons stay legible in dark themes.
+- Compact windows (around 900–1180px) cap the side panes so Split view no longer overflows the window.
+- Settings and other dialogs use consistent button and control sizes; the palette picker shows all four palettes in one row.
+- The quick switcher no longer draws a doubled focus line under its search field.
+
+### Security
+
+- Updated DOMPurify (3.4.17) and KaTeX (0.18.10), which Mermaid diagrams use, to releases that fix published advisories.
+- Updated rustls, rustls-webpki, and the bundled root certificates, and removed the unused `zip` extraction path from the updater.
+
 ## 0.5.3 — 2026-08-28
 
 ### Fixed
