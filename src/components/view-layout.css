@@ -25,7 +25,7 @@
 
 .nr-resizable-split__divider::before {
   position: absolute;
-  inset: 0 3px;
+  inset: 0 calc(50% - 0.5px);
   content: "";
   background: var(--nr-border);
   transition: background-color 120ms ease, box-shadow 120ms ease;
@@ -43,7 +43,9 @@
 
 .nr-resizable-split__divider:hover::before,
 .nr-resizable-split__divider:focus-visible::before {
-  background: var(--nr-highlight);
+  inset: 0 calc(50% - 1.5px);
+  background: var(--nr-accent);
+  opacity: 0.6;
 }
 
 .nr-resizable-split__divider:focus-visible::before {
@@ -58,14 +60,14 @@
 .nr-view-mode {
   display: inline-flex;
   gap: 2px;
-  padding: 3px;
+  padding: 2px;
   border: 1px solid var(--nr-border);
   border-radius: 8px;
-  background: var(--nr-highlight);
+  background: var(--surface-soft, var(--nr-highlight));
 }
 
 .nr-view-mode__button {
-  min-block-size: 30px;
+  min-block-size: 28px;
   border: 0;
   border-radius: 6px;
   color: var(--nr-muted);
@@ -78,12 +80,13 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
+  padding: 4px 11px;
+  font-size: 12.5px;
+  font-weight: 550;
 }
 
 .nr-view-mode__button:hover:not(:disabled) {
   color: var(--nr-text);
-  background: var(--nr-border);
 }
 
 .nr-view-mode__button[aria-pressed="true"] {
@@ -103,7 +106,8 @@
 }
 
 .nr-view-mode kbd {
-  padding: 1px 4px;
+  padding: 0 4px;
+  color: var(--nr-muted) !important;
   border: 1px solid var(--nr-border);
   border-radius: 4px;
   color: inherit;

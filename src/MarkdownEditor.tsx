@@ -21,6 +21,8 @@ import {
   selectAll,
 } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import {
   EditorSelection,
   EditorState,
@@ -169,6 +171,27 @@ function hasImageDataTransfer(data: DataTransfer | null) {
   );
 }
 
+// Colors come from the active palette so highlighting follows every theme.
+const markdownHighlightStyle = HighlightStyle.define([
+  { tag: tags.heading1, fontWeight: "750", fontSize: "1.25em", color: "var(--text)" },
+  { tag: tags.heading2, fontWeight: "720", fontSize: "1.12em", color: "var(--text)" },
+  {
+    tag: [tags.heading3, tags.heading4, tags.heading5, tags.heading6],
+    fontWeight: "700",
+    color: "var(--text)",
+  },
+  { tag: tags.strong, fontWeight: "700" },
+  { tag: tags.emphasis, fontStyle: "italic" },
+  { tag: tags.strikethrough, textDecoration: "line-through", color: "var(--muted)" },
+  { tag: [tags.link, tags.url], color: "var(--accent)" },
+  { tag: tags.monospace, color: "var(--accent-strong)" },
+  { tag: tags.quote, color: "var(--muted)", fontStyle: "italic" },
+  {
+    tag: [tags.processingInstruction, tags.meta, tags.contentSeparator],
+    color: "var(--faint)",
+  },
+]);
+
 const editorTheme = EditorView.theme({
   "&": {
     height: "100%",
@@ -183,12 +206,18 @@ const editorTheme = EditorView.theme({
     fontFamily:
       'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
     lineHeight: "1.7",
+    fontSize: "14px",
   },
   ".cm-content": {
     minHeight: "100%",
-    padding: "24px 32px",
-    caretColor: "currentColor",
+    maxWidth: "820px",
+    padding: "28px clamp(20px, 4vw, 48px) 64px",
+    caretColor: "var(--accent)",
   },
+  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
+    backgroundColor: "color-mix(in srgb, var(--accent) 22%, transparent) !important",
+  },
+  ".cm-placeholder": { color: "var(--faint)" },
   ".cm-line": { padding: "0" },
   ".cm-tooltip": {
     backgroundColor: "var(--surface)",
@@ -449,6 +478,7 @@ export const MarkdownEditor = forwardRef<
 
     const extensions: Extension[] = [
       markdown(),
+      syntaxHighlighting(markdownHighlightStyle),
       autocompletion({ override: [codeFenceLanguageCompletions] }),
       history({ minDepth: 500, newGroupDelay: 300 }),
       closeBrackets(),

@@ -14,6 +14,14 @@
   --accent-soft: #e0f0e6;
   --danger: #b04b4b;
   --shadow: 0 16px 50px rgb(25 42 32 / 12%);
+  --on-accent: #fff;
+  --code-keyword: #b42f45;
+  --code-string: #2d7a3e;
+  --code-number: #9a5b00;
+  --code-title: #1f5fa8;
+  --code-variable: #7a3fb0;
+  --code-type: #0b6f86;
+  --code-comment: #7d8a81;
   --nr-surface: var(--surface);
   --nr-text: var(--text);
   --nr-muted: var(--muted);
@@ -102,19 +110,36 @@
   :root[data-palette="paper"]:not([data-theme]), :root[data-palette="paper"][data-theme="system"] { --bg: #211912; --sidebar: #2b2017; --surface: #35281d; --surface-soft: #413224; --text: #f7ecdc; --muted: #d2bda7; --faint: #a78f7b; --border: #594433; --accent: #e5ad70; --accent-strong: #f1c28e; --accent-soft: #5d422b; --danger: #ef9185; --shadow: 0 20px 60px rgb(0 0 0 / 38%); }
 }
 
+/* Dark themes: accent fills are light, so their labels flip to the page tone. */
+:root[data-theme="dark"] { --on-accent: var(--bg); --code-keyword: #ff7b72; --code-string: #a5d6a7; --code-number: #f2c572; --code-title: #7dcfff; --code-variable: #d2a8ff; --code-type: #79c0ff; --code-comment: #8b9b90; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]), :root[data-theme="system"] { --on-accent: var(--bg); --code-keyword: #ff7b72; --code-string: #a5d6a7; --code-number: #f2c572; --code-title: #7dcfff; --code-variable: #d2a8ff; --code-type: #79c0ff; --code-comment: #8b9b90; }
+}
+
 * { box-sizing: border-box; }
-body { min-width: 900px; margin: 0; color: var(--text); background: var(--bg); }
+body { min-width: 900px; margin: 0; color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; }
+::selection { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 30%, transparent); border: 3px solid transparent; border-radius: 999px; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--muted) 50%, transparent); }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.primary { padding: 10px 12px; color: #fff; background: var(--accent); border: 0; border-radius: 9px; font-weight: 700; box-shadow: 0 2px 5px rgb(15 65 39 / 17%); }
+.primary { padding: 10px 12px; color: var(--on-accent); background: var(--accent); border: 0; border-radius: 9px; font-weight: 700; box-shadow: 0 2px 5px rgb(15 65 39 / 17%); }
 .primary:hover { background: var(--accent-strong); }
+.primary:disabled { cursor: not-allowed; opacity: 0.55; }
 /* Shared modal defaults must not override feature layouts loaded earlier. */
 :where(.modal-backdrop) { position: fixed; z-index: 10; inset: 0; display: grid; place-items: start center; padding-top: 12vh; background: rgb(11 20 14 / 54%); }
-:where(.modal) { width: min(480px, calc(100vw - 32px)); padding: 21px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
+:where(.modal) { width: min(480px, calc(100vw - 32px)); padding: 21px; font-size: 14px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
 :where(.modal h2) { margin: 0 0 12px; font-size: 18px; }
 :where(.modal h3) { margin: 20px 0 4px; font-size: 13px; }
 :where(.modal p) { color: var(--muted); }
 :where(.modal > div:last-child) { display: flex; justify-content: flex-end; gap: 8px; }
-:where(.modal button) { padding: 7px 10px; color: var(--text); background: var(--surface-soft); border: 0; border-radius: 6px; }
-:where(.modal button.primary) { color: #fff; background: var(--accent); }
+:where(.modal button) { padding: 7px 11px; color: var(--text); background: var(--surface-soft); border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+:where(.modal button:hover) { background: var(--accent-soft); }
+:where(.modal select, .modal input) { font-size: 13px; }
+:where(.modal header button) { color: var(--muted); background: transparent; border-color: transparent; }
+:where(.modal header button:hover) { color: var(--text); background: var(--surface-soft); }
+:where(.modal button.primary) { color: var(--on-accent); background: var(--accent); border-color: transparent; }
+:where(.modal button.primary:hover) { background: var(--accent-strong); }

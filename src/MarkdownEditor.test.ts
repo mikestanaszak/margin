@@ -129,6 +129,23 @@ describe("code-fence language autocomplete", () => {
 });
 
 describe("Markdown editor formatting", () => {
+  it("highlights Markdown syntax while editing", () => {
+    const { container } = render(
+      createElement(MarkdownEditor, {
+        notePath: "highlight.md",
+        value: "# Heading\n\nSome **bold** text",
+        onChange: vi.fn(),
+      }),
+    );
+    const highlighted = Array.from(
+      container.querySelectorAll(".cm-line span[class]"),
+      (span) => span.textContent,
+    );
+    // Highlighted tokens are wrapped in generated classes; plain text is not.
+    expect(highlighted).toEqual(expect.arrayContaining([" Heading", "bold"]));
+    expect(highlighted).not.toContain("Some ");
+  });
+
   it("wraps, unwraps, and preserves the selected text", () => {
     const view = editor("Make Margin calm", 5, 11);
     wrapSelection(view, "**");

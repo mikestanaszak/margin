@@ -270,7 +270,7 @@ export function App() {
   const [query, setQuery] = useState("");
   const [backlinks, setBacklinks] = useState<NoteSummary[]>([]);
   const [mode, setMode] = useState<"edit" | "preview" | "split">("preview");
-  const [status, setStatus] = useState("Choose a notes folder to begin");
+  const [status, setStatus] = useState("");
   const [indexWarningCount, setIndexWarningCount] = useState(0);
   const [quickOpen, setQuickOpen] = useState(false);
   const [sidebarHidden, setSidebarHidden] = useState(false);
@@ -451,8 +451,10 @@ export function App() {
           setFolders(snapshot.folders);
           setTrashNotes(snapshot.trash);
           setIndexWarningCount(snapshot.warnings?.length ?? 0);
-          setStatus(
-            `${snapshot.notes.length} ${snapshot.notes.length === 1 ? "note" : "notes"}`,
+          // Counts already live in the sidebar and list header; keep the note
+          // header status free for save and file messages.
+          setStatus((current) =>
+            current.startsWith("Could not read library") ? "" : current,
           );
         } catch (error) {
           if (
@@ -1814,7 +1816,10 @@ export function App() {
           <span>Margin</span>
         </div>
         <label className="top-search">
-          <span>⌕</span>
+          <svg className="top-search-icon" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.75" />
+            <path d="m10.5 10.5 3.25 3.25" />
+          </svg>
           <input
             id="note-search"
             value={query}
@@ -1838,7 +1843,10 @@ export function App() {
             title="Settings"
             onClick={() => setSettingsOpen(true)}
           >
-            ⚙
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M10 12.6a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2Z" />
+              <path d="M16.1 12.2a1.3 1.3 0 0 0 .26 1.43l.05.05a1.58 1.58 0 1 1-2.23 2.23l-.05-.05a1.3 1.3 0 0 0-1.43-.26 1.3 1.3 0 0 0-.79 1.19v.14a1.58 1.58 0 0 1-3.16 0v-.07a1.3 1.3 0 0 0-.85-1.19 1.3 1.3 0 0 0-1.43.26l-.05.05a1.58 1.58 0 1 1-2.23-2.23l.05-.05a1.3 1.3 0 0 0 .26-1.43 1.3 1.3 0 0 0-1.19-.79h-.14a1.58 1.58 0 0 1 0-3.16h.07a1.3 1.3 0 0 0 1.19-.85 1.3 1.3 0 0 0-.26-1.43l-.05-.05a1.58 1.58 0 1 1 2.23-2.23l.05.05a1.3 1.3 0 0 0 1.43.26h.06a1.3 1.3 0 0 0 .79-1.19v-.14a1.58 1.58 0 0 1 3.16 0v.07a1.3 1.3 0 0 0 .79 1.19 1.3 1.3 0 0 0 1.43-.26l.05-.05a1.58 1.58 0 1 1 2.23 2.23l-.05.05a1.3 1.3 0 0 0-.26 1.43v.06a1.3 1.3 0 0 0 1.19.79h.14a1.58 1.58 0 0 1 0 3.16h-.07a1.3 1.3 0 0 0-1.19.79Z" />
+            </svg>
           </button>
         </div>
       </header>
@@ -1923,6 +1931,32 @@ export function App() {
                 </div>
               </div>
               <div className="actions">
+                {mode !== "preview" && (
+                  <div
+                    className="editor-tools"
+                    role="toolbar"
+                    aria-label="Editor tools"
+                  >
+                    <button
+                      className="insert-table"
+                      type="button"
+                      title="Insert a table"
+                      onClick={() => setTableDialogOpen(true)}
+                    >
+                      Table
+                    </button>
+                    {isManagedNote && (
+                      <button
+                        className="insert-image"
+                        type="button"
+                        title="Insert an image"
+                        onClick={() => void chooseImage()}
+                      >
+                        Image
+                      </button>
+                    )}
+                  </div>
+                )}
                 {isDailyNote && !isTrashedNote && (
                   <button
                     type="button"
@@ -1938,26 +1972,6 @@ export function App() {
                 />
               </div>
             </header>
-            {mode !== "preview" && (
-              <div className="editor-tools" role="toolbar" aria-label="Editor tools">
-                <button
-                  className="insert-table"
-                  type="button"
-                  onClick={() => setTableDialogOpen(true)}
-                >
-                  Table
-                </button>
-                {isManagedNote && (
-                  <button
-                    className="insert-image"
-                    type="button"
-                    onClick={() => void chooseImage()}
-                  >
-                    Image
-                  </button>
-                )}
-              </div>
-            )}
             <div className="workspace-main">
               <div className={`note-content ${mode}`}>
                 {mode === "edit" ? (
@@ -1968,8 +1982,8 @@ export function App() {
                   <ResizableSplit
                     left={noteEditor}
                     right={notePreview}
-                    minLeftWidth={280}
-                    minRightWidth={320}
+                    minLeftWidth={240}
+                    minRightWidth={260}
                     persistenceKey="markdown-notes.split-ratio"
                   />
                 )}
