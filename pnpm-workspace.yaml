@@ -2,3 +2,10 @@ allowBuilds:
   esbuild: true
 onlyBuiltDependencies:
   - esbuild
+# Mermaid's own ranges still allow vulnerable releases of these transitive
+# dependencies (GHSA advisories for DOMPurify <=3.4.16 and KaTeX <0.18.2).
+# Mermaid only calls katex.renderToString, which is unchanged in 0.18.
+# 0.18.11 is deprecated upstream, so pin 0.18.10.
+overrides:
+  dompurify: ^3.4.17
+  katex: 0.18.10

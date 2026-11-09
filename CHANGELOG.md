@@ -17,6 +17,11 @@ All notable user-facing changes to Margin are documented here.
 - Settings and other dialogs use consistent button and control sizes; the palette picker shows all four palettes in one row.
 - The quick switcher no longer draws a doubled focus line under its search field.
 
+### Security
+
+- Updated DOMPurify (3.4.17) and KaTeX (0.18.10), which Mermaid diagrams use, to releases that fix published advisories.
+- Updated rustls, rustls-webpki, and the bundled root certificates, and removed the unused `zip` extraction path from the updater.
+
 ## 0.5.3 — 2026-08-28
 
 ### Fixed
