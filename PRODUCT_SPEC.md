@@ -30,7 +30,7 @@
 - Enter accepts the highlighted code-language suggestion; Tab dismisses suggestions and indents. Cmd/Ctrl+A selects the complete active note without selecting the surrounding interface.
 - Autosave preserves editor selection and scroll position.
 - Preview uses the same comfortable, left-aligned reading margin as the editor.
-- Resizable heading outline with hierarchy, active-section tracking, synchronized scrolling, and a configurable shortcut.
+- Resizable heading outline with hierarchy, active-section tracking, synchronized scrolling, and a configurable shortcut. Choosing a heading scrolls Preview to it, or moves the editor to it in Edit view. Headings, tasks, tables, and the title ignore lines inside fenced code.
 - Edit mode provides operating-system spell check and its native correction menu; Preview and read-only notes remain non-editable.
 
 ### Capture, import, and customization

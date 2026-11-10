@@ -13,37 +13,32 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import { listen } from "@tauri-apps/api/event";
-import { insertImage, MarkdownEditor, type MarkdownEditorHandle } from "../MarkdownEditor";
-import type {
-  ImportedImageResponse,
-  NoteDocument,
-  NoteSummary,
-} from "./types";
+import { EditorView } from "@codemirror/view";
+import {
+  insertImage,
+  MarkdownEditor,
+  type MarkdownEditorHandle,
+} from "../MarkdownEditor";
+import type { ImportedImageResponse, NoteDocument, NoteSummary } from "./types";
 import {
   NoteListItem,
   QuickSwitcher,
   ResizableSplit,
   ViewModeControl,
 } from "../components";
+import { isModalOpen } from "../components/Modal";
 import {
-  CaptureComposer,
   captureSuccessDelayMs,
   useCancelableDelay,
 } from "../features/capture/CaptureComposer";
-import {
-  CascadingFolderOptions,
-  CascadingNoteOptions,
-  LibraryNavigation,
-} from "../features/library/LibraryNavigation";
+import { LibraryNavigation } from "../features/library/LibraryNavigation";
 import { NoteList } from "../features/library/NoteList";
 import { useLibrarySearch } from "../features/search/useLibrarySearch";
 import {
   createUpdateController,
   shouldRunAutomaticUpdateCheck,
   updateLastCheckedKey,
-  type UpdateCandidate,
   type UpdateControllerState,
-  type UpdatePhase,
 } from "../features/updater/update-controller";
 import {
   initialNoteSessionState,
@@ -59,13 +54,16 @@ import {
   TableDialog,
   TableEditorDialog,
 } from "../features/preview/TableDialogs";
-import { SettingsDialog } from "../features/settings/SettingsDialog";
+import {
+  SettingsDialog,
+  type Shortcuts,
+} from "../features/settings/SettingsDialog";
 import {
   expandTemplate,
   TemplateEditorDialog,
+  todayTitle,
   type NoteTemplate,
 } from "../features/templates/TemplateEditorDialog";
-import { isMac } from "../platform";
 import {
   loadPalette,
   paletteStorageKey,
@@ -91,105 +89,40 @@ import {
   toggleTask,
 } from "../note-utils";
 import { native } from "../services/native";
+import {
+  ColumnResizeHandle,
+  ConflictDialog,
+  FailedSaveDialog,
+  FolderDialog,
+  ImportDailyNoteDialog,
+  NoteContextMenu,
+  OpenedMarkdownDialog,
+  QuickCaptureDialog,
+  UpdateDialog,
+} from "./dialogs";
+import {
+  dailyTemplate,
+  defaultShortcuts,
+  loadFavorites,
+  loadPaneWidth,
+  loadShortcuts,
+  loadTemplates,
+  storageKeys,
+  usePersistedPreference,
+} from "./preferences";
+import { createRefreshCoordinator } from "./refresh-coordinator";
 
 type Filter = {
   type: "all" | "today" | "favorites" | "trash" | "folder";
   folder?: string;
 };
-type Conflict = {
-  disk: NoteDocument;
-  mine: NoteDocument;
-  path: string;
-  libraryPath?: string;
-};
+type ViewMode = "edit" | "preview" | "split";
 type FailedSaveRecovery = {
   draft: NoteDocument;
   libraryPath: string;
   message: string;
 };
-type AppUpdate = UpdateCandidate;
-export type UpdateState = UpdatePhase;
-type ShortcutId =
-  | "newNote"
-  | "search"
-  | "switcher"
-  | "save"
-  | "view"
-  | "sidebar"
-  | "outline"
-  | "quickCapture";
-type Shortcuts = Record<ShortcutId, string>;
-type RefreshRequest = { path: string; force: boolean };
-const libraryKey = "markdown-notes.library-path";
-const favoritesKey = "markdown-notes.pinned";
-const shortcutsKey = "markdown-notes.shortcuts";
-const quickImportDefaultKey = "markdown-notes.quick-import-default";
-const templatesKey = "margin.templates";
-const defaultTemplates: NoteTemplate[] = [
-  {
-    id: "daily",
-    name: "Daily note",
-    body: "# {{date}}\n\n## Priorities\n\n- [ ] \n\n## Notes\n\n",
-  },
-];
-function loadTemplates(): NoteTemplate[] {
-  try {
-    const saved = JSON.parse(
-      localStorage.getItem(templatesKey) || "[]",
-    ) as NoteTemplate[];
-    return saved.length ? saved : defaultTemplates;
-  } catch {
-    return defaultTemplates;
-  }
-}
-function todayTitle() {
-  return new Intl.DateTimeFormat("en-CA", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
-const libraryPaneWidthKey = "markdown-notes.library-pane-width";
-const notePaneWidthKey = "markdown-notes.note-pane-width";
-const outlinePaneWidthKey = "markdown-notes.outline-pane-width";
-const legacySidebarShortcut = isMac ? "meta+\\" : "ctrl+\\";
-const legacySidebarAltShortcut = isMac ? "meta+alt+b" : "ctrl+alt+b";
 
-const defaultShortcuts: Shortcuts = {
-  newNote: isMac ? "meta+n" : "ctrl+n",
-  search: isMac ? "meta+k" : "ctrl+k",
-  switcher: isMac ? "meta+p" : "ctrl+p",
-  save: isMac ? "meta+s" : "ctrl+s",
-  view: isMac ? "meta+e" : "ctrl+e",
-  sidebar: isMac ? "meta+shift+b" : "ctrl+shift+b",
-  outline: isMac ? "meta+shift+o" : "ctrl+shift+o",
-  quickCapture: isMac ? "meta+alt+shift+space" : "ctrl+alt+shift+space",
-};
-
-function loadPaneWidth(key: string, fallback: number) {
-  const value = localStorage.getItem(key);
-  if (!value?.trim()) return fallback;
-  const saved = Number(value);
-  return Number.isFinite(saved) ? clamp(saved, 180, 520) : fallback;
-}
-function loadShortcuts(): Shortcuts {
-  try {
-    const saved = JSON.parse(
-      localStorage.getItem(shortcutsKey) || "{}",
-    ) as Partial<Shortcuts>;
-    return {
-      ...defaultShortcuts,
-      ...saved,
-      sidebar:
-        saved.sidebar === legacySidebarShortcut ||
-        saved.sidebar === legacySidebarAltShortcut
-          ? defaultShortcuts.sidebar
-          : saved.sidebar || defaultShortcuts.sidebar,
-    };
-  } catch {
-    return defaultShortcuts;
-  }
-}
 function normalizedFilePath(path: string) {
   return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 }
@@ -198,36 +131,13 @@ function pathIsInLibrary(path: string, library: string) {
   const root = normalizedFilePath(library);
   return file === root || file.startsWith(`${root}/`);
 }
-
-
-/**
- * Coalesce library refreshes without losing a forced refresh behind a normal
- * poll. Every caller resolves only after the queue is drained, so a mutation
- * can immediately observe its own note/folder changes even before the native
- * filesystem watcher delivers an event.
- */
-function createRefreshCoordinator(
-  run: (request: RefreshRequest) => Promise<void>,
-) {
-  let inFlight: Promise<void> | null = null;
-  let pending: RefreshRequest | null = null;
-  return (request: RefreshRequest) => {
-    if (pending?.path === request.path)
-      pending = { ...pending, force: pending.force || request.force };
-    else pending = request;
-    if (!inFlight) {
-      inFlight = (async () => {
-        while (pending) {
-          const next = pending;
-          pending = null;
-          await run(next);
-        }
-      })().finally(() => {
-        inFlight = null;
-      });
-    }
-    return inFlight;
-  };
+/** True for `folder` itself and every folder nested inside it. */
+function inFolder(candidate: string, folder: string) {
+  return candidate === folder || candidate.startsWith(`${folder}/`);
+}
+/** Daily imports are only accepted from the library's top-level Daily folder. */
+function isDailyFolder(folder: string) {
+  return inFolder(folder, "Daily");
 }
 
 export function App() {
@@ -245,13 +155,13 @@ export function App() {
   const [library, setLibrary] = useState<string | null>(null);
   const [libraryInitialized, setLibraryInitialized] = useState(false);
   const [libraryPaneWidth, setLibraryPaneWidth] = useState(() =>
-    loadPaneWidth(libraryPaneWidthKey, 232),
+    loadPaneWidth(storageKeys.libraryPaneWidth, 232),
   );
   const [notePaneWidth, setNotePaneWidth] = useState(() =>
-    loadPaneWidth(notePaneWidthKey, 296),
+    loadPaneWidth(storageKeys.notePaneWidth, 296),
   );
   const [outlinePaneWidth, setOutlinePaneWidth] = useState(() =>
-    loadPaneWidth(outlinePaneWidthKey, 280),
+    loadPaneWidth(storageKeys.outlinePaneWidth, 280),
   );
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [trashNotes, setTrashNotes] = useState<NoteSummary[]>([]);
@@ -269,7 +179,7 @@ export function App() {
   const [filter, setFilter] = useState<Filter>({ type: "all" });
   const [query, setQuery] = useState("");
   const [backlinks, setBacklinks] = useState<NoteSummary[]>([]);
-  const [mode, setMode] = useState<"edit" | "preview" | "split">("preview");
+  const [mode, setMode] = useState<ViewMode>("preview");
   const [status, setStatus] = useState("");
   const [indexWarningCount, setIndexWarningCount] = useState(0);
   const [quickOpen, setQuickOpen] = useState(false);
@@ -320,20 +230,14 @@ export function App() {
     updateController.getState(),
   );
   const availableUpdate = updater.update;
-  const updateState = updater.phase;
-  const updateError = updater.message;
-  const updateDialogOpen = updater.dialogOpen;
-  const [favorites, setFavorites] = useState<string[]>(() =>
-    JSON.parse(localStorage.getItem(favoritesKey) || "[]"),
-  );
+  const [favorites, setFavorites] = useState<string[]>(loadFavorites);
   const searchScope = useMemo(() => {
     const candidates = filter.type === "trash" ? trashNotes : notes;
     return candidates
       .filter(
         (item) =>
           (filter.type !== "folder" ||
-            item.folder === filter.folder ||
-            item.folder.startsWith(`${filter.folder}/`)) &&
+            inFolder(item.folder, filter.folder ?? "")) &&
           (filter.type !== "favorites" || favorites.includes(item.path)) &&
           (filter.type !== "today" ||
             (item.folder === "Daily" && item.title === todayTitle())),
@@ -354,7 +258,7 @@ export function App() {
   );
   const [shortcuts, setShortcuts] = useState<Shortcuts>(loadShortcuts);
   const [quickImportDefaultPath, setQuickImportDefaultPath] = useState(
-    () => localStorage.getItem(quickImportDefaultKey) || "",
+    () => localStorage.getItem(storageKeys.quickImportDefault) || "",
   );
   const [templates, setTemplates] = useState<NoteTemplate[]>(loadTemplates);
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
@@ -369,15 +273,15 @@ export function App() {
   const pendingOpenedMarkdown = useRef<string[]>([]);
   const noteLoadGeneration = useRef(0);
   const refreshGeneration = useRef(0);
-  const refreshCoordinator = useRef<ReturnType<typeof createRefreshCoordinator> | null>(null);
+  const refreshCoordinator = useRef<ReturnType<
+    typeof createRefreshCoordinator
+  > | null>(null);
   const saveQueues = useRef(new Map<string, Promise<boolean>>());
   const latestSaveDrafts = useRef(new Map<string, NoteDocument>());
-  const failedSaveRecoveriesRef = useRef(
-    new Map<string, FailedSaveRecovery>(),
+  const failedSaveRecoveriesRef = useRef(new Map<string, FailedSaveRecovery>());
+  const enqueueSaveRef = useRef<(draft: NoteDocument) => Promise<boolean>>(
+    async () => false,
   );
-  const enqueueSaveRef = useRef<
-    (draft: NoteDocument) => Promise<boolean>
-  >(async () => false);
   const lastReportedDirty = useRef<boolean | null>(null);
   const latestQuitRequestId = useRef(0);
   const activeQuitRequestId = useRef<number | null>(null);
@@ -406,7 +310,10 @@ export function App() {
   const rememberLatestDraft = useCallback(
     (draft: NoteDocument) => {
       const ownedDraft = { ...draft, tags: [...draft.tags] };
-      latestSaveDrafts.current.set(queueKeyForPath(ownedDraft.path), ownedDraft);
+      latestSaveDrafts.current.set(
+        queueKeyForPath(ownedDraft.path),
+        ownedDraft,
+      );
       return ownedDraft;
     },
     [queueKeyForPath],
@@ -430,43 +337,88 @@ export function App() {
     },
     [],
   );
-
-  const refresh = useCallback((path?: string | null, force = path === undefined) => {
-    const requestPath = path ?? libraryRef.current;
-    if (!requestPath) return Promise.resolve();
-    if (!refreshCoordinator.current) {
-      refreshCoordinator.current = createRefreshCoordinator(async (request) => {
-        const generation = ++refreshGeneration.current;
-        try {
-          const snapshot = await native.loadLibrarySnapshot(
-            request.path,
-            request.force,
-          );
-          if (
-            generation !== refreshGeneration.current ||
-            libraryRef.current !== request.path
-          )
-            return;
-          setNotes(snapshot.notes);
-          setFolders(snapshot.folders);
-          setTrashNotes(snapshot.trash);
-          setIndexWarningCount(snapshot.warnings?.length ?? 0);
-          // Counts already live in the sidebar and list header; keep the note
-          // header status free for save and file messages.
-          setStatus((current) =>
-            current.startsWith("Could not read library") ? "" : current,
-          );
-        } catch (error) {
-          if (
-            generation === refreshGeneration.current &&
-            libraryRef.current === request.path
-          )
-            setStatus(`Could not read library: ${String(error)}`);
-        }
-      });
-    }
-    return refreshCoordinator.current({ path: requestPath, force });
+  /** Resolves a draft to its latest saved path and the baseline stored there. */
+  const savedStateFor = useCallback((draft: NoteDocument) => {
+    const path = savedPathAliases.current.get(draft.path) ?? draft.path;
+    const savedBaseline =
+      noteBaselines.current.get(path) ??
+      noteBaselines.current.get(draft.path) ??
+      null;
+    return { path, baseline: savedBaseline };
   }, []);
+  const draftIsUnsaved = useCallback(
+    (draft: NoteDocument) => {
+      const saved = savedStateFor(draft);
+      return hasUnsavedChanges({ ...draft, path: saved.path }, saved.baseline);
+    },
+    [savedStateFor],
+  );
+  /**
+   * Every user navigation goes through here so the outgoing note's pending
+   * edits are queued for saving before its autosave timer is torn down.
+   */
+  const openNotePath = useCallback(
+    (path: string) => {
+      const currentNote = noteRef.current;
+      if (currentNote && draftIsUnsaved(currentNote))
+        void enqueueSaveRef.current(currentNote);
+      setActivePath(path);
+    },
+    [draftIsUnsaved],
+  );
+  /** Applies an edit to the active note as the newest owned draft. */
+  const applyEdit = useCallback(
+    (notePath: string, edit: (current: NoteDocument) => NoteDocument) => {
+      const current = noteRef.current;
+      if (current?.path !== notePath) return;
+      const draft = rememberLatestDraft(edit(current));
+      noteRef.current = draft;
+      dispatchNoteSession({ type: "edited", draft });
+    },
+    [rememberLatestDraft],
+  );
+
+  const refresh = useCallback(
+    (path?: string | null, force = path === undefined) => {
+      const requestPath = path ?? libraryRef.current;
+      if (!requestPath) return Promise.resolve();
+      if (!refreshCoordinator.current) {
+        refreshCoordinator.current = createRefreshCoordinator(
+          async (request) => {
+            const generation = ++refreshGeneration.current;
+            try {
+              const snapshot = await native.loadLibrarySnapshot(
+                request.path,
+                request.force,
+              );
+              if (
+                generation !== refreshGeneration.current ||
+                libraryRef.current !== request.path
+              )
+                return;
+              setNotes(snapshot.notes);
+              setFolders(snapshot.folders);
+              setTrashNotes(snapshot.trash);
+              setIndexWarningCount(snapshot.warnings?.length ?? 0);
+              // Counts already live in the sidebar and list header; keep the note
+              // header status free for save and file messages.
+              setStatus((current) =>
+                current.startsWith("Could not read library") ? "" : current,
+              );
+            } catch (error) {
+              if (
+                generation === refreshGeneration.current &&
+                libraryRef.current === request.path
+              )
+                setStatus(`Could not read library: ${String(error)}`);
+            }
+          },
+        );
+      }
+      return refreshCoordinator.current({ path: requestPath, force });
+    },
+    [],
+  );
   const rememberWorkspaceScroll = () => {
     if (!note) return;
     const scroller =
@@ -477,15 +429,12 @@ export function App() {
     const maximum = Math.max(1, scroller.scrollHeight - scroller.clientHeight);
     viewScrollRatios.current.set(note.path, scroller.scrollTop / maximum);
   };
-  const setViewMode = (next: "edit" | "preview" | "split") => {
+  const setViewMode = (next: ViewMode) => {
     if (next === mode) return;
     rememberWorkspaceScroll();
     setMode(next);
   };
-  useEffect(
-    () => updateController.subscribe(setUpdater),
-    [updateController],
-  );
+  useEffect(() => updateController.subscribe(setUpdater), [updateController]);
   useEffect(() => {
     libraryRef.current = library;
     refreshGeneration.current += 1;
@@ -498,7 +447,8 @@ export function App() {
     }
     let disposed = false;
     const timer = window.setTimeout(() => {
-      void native.findBacklinks(library, note.path, note.title)
+      void native
+        .findBacklinks(library, note.path, note.title)
         .then((matches) => {
           if (!disposed) setBacklinks(matches);
         })
@@ -527,31 +477,20 @@ export function App() {
     noteRef.current = note;
   }, [note]);
   useEffect(() => {
-    localStorage.setItem(favoritesKey, JSON.stringify(favorites));
-  }, [favorites]);
-  useEffect(() => {
     const appearance = { theme, palette };
     applyAppearance(appearance);
     storeAppearance(appearance);
   }, [palette, theme]);
-  useEffect(() => {
-    localStorage.setItem(shortcutsKey, JSON.stringify(shortcuts));
-  }, [shortcuts]);
-  useEffect(() => {
-    localStorage.setItem(quickImportDefaultKey, quickImportDefaultPath);
-  }, [quickImportDefaultPath]);
-  useEffect(() => {
-    localStorage.setItem(templatesKey, JSON.stringify(templates));
-  }, [templates]);
-  useEffect(() => {
-    localStorage.setItem(libraryPaneWidthKey, String(libraryPaneWidth));
-  }, [libraryPaneWidth]);
-  useEffect(() => {
-    localStorage.setItem(notePaneWidthKey, String(notePaneWidth));
-  }, [notePaneWidth]);
-  useEffect(() => {
-    localStorage.setItem(outlinePaneWidthKey, String(outlinePaneWidth));
-  }, [outlinePaneWidth]);
+  usePersistedPreference(storageKeys.favorites, favorites);
+  usePersistedPreference(storageKeys.shortcuts, shortcuts);
+  usePersistedPreference(
+    storageKeys.quickImportDefault,
+    quickImportDefaultPath,
+  );
+  usePersistedPreference(storageKeys.templates, templates);
+  usePersistedPreference(storageKeys.libraryPaneWidth, libraryPaneWidth);
+  usePersistedPreference(storageKeys.notePaneWidth, notePaneWidth);
+  usePersistedPreference(storageKeys.outlinePaneWidth, outlinePaneWidth);
   const showQuickCapture = () => {
     void native.showQuickCapture().catch(() => {
       quickCaptureSession.current += 1;
@@ -568,7 +507,8 @@ export function App() {
   useEffect(() => {
     let disposed = false;
     const requested = shortcuts.quickCapture;
-    void native.configureQuickCaptureShortcut(nativeShortcut(requested))
+    void native
+      .configureQuickCaptureShortcut(nativeShortcut(requested))
       .then(() => {
         if (!disposed) {
           registeredCaptureShortcut.current = requested;
@@ -593,16 +533,19 @@ export function App() {
   }, [shortcuts.quickCapture]);
   useEffect(() => {
     let disposed = false;
-    void native.loadSelectedLibrary()
+    void native
+      .loadSelectedLibrary()
       .then(async (selected) => {
         if (disposed) return;
         if (selected) {
           setLibrary(selected);
           return;
         }
-        const legacyLibrary = localStorage.getItem(libraryKey);
+        const legacyLibrary = localStorage.getItem(storageKeys.legacyLibrary);
         if (legacyLibrary) {
-          await native.saveSelectedLibrary(legacyLibrary).catch(() => undefined);
+          await native
+            .saveSelectedLibrary(legacyLibrary)
+            .catch(() => undefined);
           setLibrary(legacyLibrary);
         }
       })
@@ -622,13 +565,13 @@ export function App() {
         return;
       }
       if (library && pathIsInLibrary(path, library)) {
-        setActivePath(path);
+        openNotePath(path);
         setStatus("Opened Markdown file");
       } else {
         setOpenedMarkdownPath(path);
       }
     },
-    [library, libraryInitialized],
+    [library, libraryInitialized, openNotePath],
   );
   useEffect(() => {
     if (!libraryInitialized) return;
@@ -659,7 +602,8 @@ export function App() {
   // belong in the product surface. Keyboard cut/copy/paste remains native.
   useEffect(() => {
     const suppressWebviewMenu = (event: MouseEvent) => {
-      if (shouldSuppressWebviewContextMenu(event.target)) event.preventDefault();
+      if (shouldSuppressWebviewContextMenu(event.target))
+        event.preventDefault();
     };
     window.addEventListener("contextmenu", suppressWebviewMenu);
     return () => window.removeEventListener("contextmenu", suppressWebviewMenu);
@@ -702,9 +646,9 @@ export function App() {
         const ownedDraft = latestSaveDrafts.current.get(queueKey);
         const pendingOwnedDraft = Boolean(
           ownedDraft &&
-            (saveQueues.current.has(queueKey) ||
-              failedSaveRecoveriesRef.current.has(queueKey) ||
-              hasUnsavedChanges(ownedDraft, loaded)),
+          (saveQueues.current.has(queueKey) ||
+            failedSaveRecoveriesRef.current.has(queueKey) ||
+            hasUnsavedChanges(ownedDraft, loaded)),
         );
         const restoredDraft =
           pendingOwnedDraft && ownedDraft
@@ -821,6 +765,9 @@ export function App() {
   }, [mode, note?.path]);
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      // Dialogs own the keyboard while open; app shortcuts must not act
+      // behind them (for example creating a note under Settings).
+      if (event.defaultPrevented || isModalOpen()) return;
       if (event.key === "Escape" && outlineOpen) {
         event.preventDefault();
         setOutlineOpen(false);
@@ -869,6 +816,17 @@ export function App() {
       setFilter({ type: "all" });
     }
   };
+  /** Lists a folder's notes and expands its ancestors in the sidebar. */
+  const showFolder = (folder: string) => {
+    if (!folder) {
+      setFilter({ type: "all" });
+      return;
+    }
+    setFilter({ type: "folder", folder });
+    setCollapsedFolders((current) =>
+      current.filter((value) => !inFolder(folder, value)),
+    );
+  };
   const importOpenedMarkdown = async (folder: string) => {
     if (!openedMarkdownPath || !library) return;
     try {
@@ -878,7 +836,7 @@ export function App() {
         folder || null,
       );
       await refresh();
-      setActivePath(imported.path);
+      openNotePath(imported.path);
       setOpenedMarkdownPath(null);
       setStatus("Imported a copy into your library");
     } catch (error) {
@@ -908,7 +866,9 @@ export function App() {
         const result = await native.saveNote({ ...created, body }, library);
         if (result.status === "saved") saved = result.note;
         else if (result.status === "conflict")
-          throw new Error("The new note changed on disk before it could be saved");
+          throw new Error(
+            "The new note changed on disk before it could be saved",
+          );
         else throw new Error(result.message);
       }
       await refresh();
@@ -925,14 +885,10 @@ export function App() {
     );
     setFilter({ type: "today" });
     if (existing) {
-      setActivePath(existing.path);
+      openNotePath(existing.path);
       return;
     }
-    const template =
-      templates.find((item) => item.id === "daily") ||
-      templates[0] ||
-      defaultTemplates[0];
-    await createNote("Daily", expandTemplate(template, title));
+    await createNote("Daily", expandTemplate(dailyTemplate(templates), title));
   };
   const createFolder = async (folder: string) => {
     if (!library) return;
@@ -978,12 +934,8 @@ export function App() {
   ) => {
     if (!saveLibrary || !pathIsInLibrary(draft.path, saveLibrary)) return true;
     const originalPath = draft.path;
-    const previousPath =
-      savedPathAliases.current.get(originalPath) ?? originalPath;
-    const currentBaseline =
-      noteBaselines.current.get(previousPath) ??
-      noteBaselines.current.get(originalPath) ??
-      null;
+    const { path: previousPath, baseline: currentBaseline } =
+      savedStateFor(draft);
     const noteToSave = {
       ...draft,
       path: previousPath,
@@ -1016,8 +968,7 @@ export function App() {
           path: previousPath,
           libraryPath: saveLibrary,
         });
-        if (isStillActive)
-          setStatus("Save conflict: the note changed on disk");
+        if (isStillActive) setStatus("Save conflict: the note changed on disk");
         return false;
       }
       if (result.status === "error") {
@@ -1136,10 +1087,7 @@ export function App() {
       .then(async (previousSaved) => {
         // Already-queued work must not silently retry a failed save or conflict.
         if (previousSaved === false) return false;
-        if (
-          !saveLibrary ||
-          !pathIsInLibrary(queuedDraft.path, saveLibrary)
-        ) {
+        if (!saveLibrary || !pathIsInLibrary(queuedDraft.path, saveLibrary)) {
           retireOwnedDraft(queueKey, queuedDraft);
           return true;
         }
@@ -1151,18 +1099,7 @@ export function App() {
           if (!(await saveNote(nextDraft, queueKey, saveLibrary))) return false;
           const latestDraft = latestSaveDrafts.current.get(queueKey);
           if (!latestDraft) return true;
-          const latestPath =
-            savedPathAliases.current.get(latestDraft.path) ?? latestDraft.path;
-          const latestBaseline =
-            noteBaselines.current.get(latestPath) ??
-            noteBaselines.current.get(latestDraft.path) ??
-            null;
-          if (
-            !hasUnsavedChanges(
-              { ...latestDraft, path: latestPath },
-              latestBaseline,
-            )
-          ) {
+          if (!draftIsUnsaved(latestDraft)) {
             retireOwnedDraft(queueKey, latestDraft);
             return true;
           }
@@ -1184,7 +1121,7 @@ export function App() {
     try {
       const copy = await native.duplicateNote(source.path, library);
       await refresh();
-      setActivePath(copy.path);
+      openNotePath(copy.path);
     } catch (error) {
       setStatus(`Duplicate failed: ${String(error)}`);
     }
@@ -1219,10 +1156,7 @@ export function App() {
     }
   };
   const trashNote = async (source: NoteSummary) => {
-    if (
-      !library ||
-      !confirm(`Move “${source.title}” to this library’s trash?`)
-    )
+    if (!library || !confirm(`Move “${source.title}” to this library’s trash?`))
       return;
     try {
       await native.moveNoteToTrash(source.path, library);
@@ -1235,9 +1169,7 @@ export function App() {
   };
   const deleteFolder = async (folder: string) => {
     if (!library) return;
-    const contained = notes.filter(
-      (item) => item.folder === folder || item.folder.startsWith(`${folder}/`),
-    );
+    const contained = notes.filter((item) => inFolder(item.folder, folder));
     if (
       !confirm(
         `Move “${folder}” and its ${contained.length} ${contained.length === 1 ? "note" : "notes"} to Trash? You can restore its notes later.`,
@@ -1251,16 +1183,10 @@ export function App() {
       );
       if (activePath && contained.some((item) => item.path === activePath))
         setActivePath(null);
-      if (
-        filter.type === "folder" &&
-        filter.folder &&
-        (filter.folder === folder || filter.folder.startsWith(`${folder}/`))
-      )
+      if (filter.type === "folder" && inFolder(filter.folder ?? "", folder))
         setFilter({ type: "all" });
       setCollapsedFolders((current) =>
-        current.filter(
-          (value) => value !== folder && !value.startsWith(`${folder}/`),
-        ),
+        current.filter((value) => !inFolder(value, folder)),
       );
       await refresh();
       setStatus(`Moved ${folder} to Trash`);
@@ -1273,7 +1199,7 @@ export function App() {
     try {
       const restored = await native.restoreNoteFromTrash(source.path, library);
       await refresh();
-      setActivePath(restored.path);
+      openNotePath(restored.path);
       setFilter({ type: "all" });
     } catch (error) {
       setStatus(`Could not restore note: ${String(error)}`);
@@ -1282,9 +1208,7 @@ export function App() {
   const deleteNotePermanently = async (source: NoteSummary) => {
     if (
       !library ||
-      !confirm(
-        `Permanently delete “${source.title}”? This cannot be undone.`,
-      )
+      !confirm(`Permanently delete “${source.title}”? This cannot be undone.`)
     )
       return;
     try {
@@ -1303,16 +1227,12 @@ export function App() {
       await selectLibrary();
       return false;
     }
-    const template =
-      templates.find((item) => item.id === "daily") ||
-      templates[0] ||
-      defaultTemplates[0];
     let daily: NoteDocument;
     try {
       daily = await native.appendQuickNote(
         library,
         text,
-        expandTemplate(template),
+        expandTemplate(dailyTemplate(templates)),
       );
     } catch (error) {
       if (session !== quickCaptureSession.current) return false;
@@ -1325,13 +1245,9 @@ export function App() {
     const savedStatus = `Saved to Daily/${fileStem(daily.path)}.md`;
     setQuickCaptureFeedback(savedStatus);
     setStatus(savedStatus);
-    scheduleQuickCaptureClose(
-      () => {
-        if (session === quickCaptureSession.current)
-          setQuickCaptureOpen(false);
-      },
-      captureSuccessDelayMs,
-    );
+    scheduleQuickCaptureClose(() => {
+      if (session === quickCaptureSession.current) setQuickCaptureOpen(false);
+    }, captureSuccessDelayMs);
     void refresh().catch((error) => {
       if (session === quickCaptureSession.current)
         setStatus(`Could not read library: ${String(error)}`);
@@ -1365,52 +1281,33 @@ export function App() {
       );
       await refresh();
       setImportDialogOpen(false);
-      if (folder) {
-        setFilter({ type: "folder", folder });
-        setCollapsedFolders((current) =>
-          current.filter((value) => !folder.startsWith(`${value}/`)),
-        );
-      } else {
-        setFilter({ type: "all" });
-      }
-      setActivePath(saved.path);
+      showFolder(folder);
+      openNotePath(saved.path);
       setStatus(`Imported ${note.title} into ${saved.title}`);
     } catch (error) {
       setStatus(`Could not create imported note: ${String(error)}`);
     }
   };
-  const openLinkedNote = useCallback((target: NoteSummary) => {
-    const containingFolder = target.folder.trim();
-    if (containingFolder) {
-      setFilter({ type: "folder", folder: containingFolder });
-      setCollapsedFolders((current) =>
-        current.filter(
-          (folder) =>
-            folder !== containingFolder &&
-            !containingFolder.startsWith(`${folder}/`),
-        ),
-      );
-    } else {
-      setFilter({ type: "all" });
-    }
-    setActivePath(target.path);
-  }, []);
-  const listedNotes = filter.type === "trash" ? trashNotes : notes;
-  const visibleNotes = useMemo(
-    () => {
-      if (query.trim()) return librarySearch.results;
-      const scopedPaths = new Set(searchScope);
-      return listedNotes
-        .filter((item) => scopedPaths.has(item.path))
-        .sort(
-          (left, right) =>
-            Number(favorites.includes(right.path)) -
-              Number(favorites.includes(left.path)) ||
-            right.updated - left.updated,
-        );
+  const openLinkedNote = useCallback(
+    (target: NoteSummary) => {
+      showFolder(target.folder.trim());
+      openNotePath(target.path);
     },
-    [favorites, librarySearch.results, listedNotes, query, searchScope],
+    [openNotePath],
   );
+  const listedNotes = filter.type === "trash" ? trashNotes : notes;
+  const visibleNotes = useMemo(() => {
+    if (query.trim()) return librarySearch.results;
+    const scopedPaths = new Set(searchScope);
+    return listedNotes
+      .filter((item) => scopedPaths.has(item.path))
+      .sort(
+        (left, right) =>
+          Number(favorites.includes(right.path)) -
+            Number(favorites.includes(left.path)) ||
+          right.updated - left.updated,
+      );
+  }, [favorites, librarySearch.results, listedNotes, query, searchScope]);
   const folderCounts = useMemo(
     () =>
       Object.fromEntries(
@@ -1427,69 +1324,97 @@ export function App() {
   const deferredNoteBody = useDeferredValue(note?.body ?? "");
   const deferredNotePath = useDeferredValue(note?.path ?? "");
   const outlineItems = useMemo<OutlineItem[]>(
-    () =>
-      outlineOpen && note
-        ? extractOutlineItems(deferredNoteBody)
-        : [],
+    () => (outlineOpen && note ? extractOutlineItems(deferredNoteBody) : []),
     [deferredNoteBody, note?.path, outlineOpen],
   );
   const isManagedNote = Boolean(
     note && library && pathIsInLibrary(note.path, library),
   );
-  const insertImportedImage = useCallback((notePath: string, image: ImportedImageResponse) => {
-    if (noteRef.current?.path !== notePath) {
-      setStatus("The image was imported, but the active note changed before it could be inserted.");
-      return;
-    }
-    const view = editor.current?.getView();
-    if (!view) {
-      setStatus("The image was imported, but the editor is unavailable.");
-      return;
-    }
-    insertImage(view, { markdownPath: image.markdown_path, alt: image.alt });
-  }, []);
-  const waitForPendingNoteSave = useCallback(async (notePath: string) => {
-    const queueKey = saveQueueKeys.current.get(notePath) ?? notePath;
-    await (saveQueues.current.get(queueKey) ?? Promise.resolve()).catch(() => undefined);
-  }, []);
-  const importImageFile = useCallback(async (file: File) => {
-    let activeNote = noteRef.current;
-    let activeLibrary = libraryRef.current;
-    if (!activeNote || !activeLibrary || !pathIsInLibrary(activeNote.path, activeLibrary)) return;
-    if (file.size > 25 * 1024 * 1024) return setStatus("Images must be 25 MB or smaller.");
-    try {
-      await waitForPendingNoteSave(activeNote.path);
-      activeNote = noteRef.current;
-      activeLibrary = libraryRef.current;
-      if (!activeNote || !activeLibrary || !pathIsInLibrary(activeNote.path, activeLibrary)) return;
-      const image = await native.importNoteImageFromBytes(
-        activeNote.path,
-        file.name || "pasted-image.png",
-        Array.from(new Uint8Array(await file.arrayBuffer())),
-        activeLibrary,
+  const insertImportedImage = useCallback(
+    (notePath: string, image: ImportedImageResponse) => {
+      if (noteRef.current?.path !== notePath) {
+        setStatus(
+          "The image was imported, but the active note changed before it could be inserted.",
+        );
+        return;
+      }
+      const view = editor.current?.getView();
+      if (!view) {
+        setStatus("The image was imported, but the editor is unavailable.");
+        return;
+      }
+      insertImage(view, { markdownPath: image.markdown_path, alt: image.alt });
+    },
+    [],
+  );
+  /**
+   * Copies an image into the active note's companion folder once any pending
+   * save (which may rename the note) has settled, then inserts its link.
+   */
+  const importImage = useCallback(
+    async (
+      copyImage: (
+        notePath: string,
+        libraryPath: string,
+      ) => Promise<ImportedImageResponse>,
+    ) => {
+      const activeManagedNote = () => {
+        const activeNote = noteRef.current;
+        const activeLibrary = libraryRef.current;
+        return activeNote &&
+          activeLibrary &&
+          pathIsInLibrary(activeNote.path, activeLibrary)
+          ? { notePath: activeNote.path, libraryPath: activeLibrary }
+          : null;
+      };
+      const before = activeManagedNote();
+      if (!before) return;
+      try {
+        await (
+          saveQueues.current.get(queueKeyForPath(before.notePath)) ??
+          Promise.resolve()
+        ).catch(() => undefined);
+        const target = activeManagedNote();
+        if (!target) return;
+        insertImportedImage(
+          target.notePath,
+          await copyImage(target.notePath, target.libraryPath),
+        );
+      } catch (error) {
+        setStatus(`Could not import image: ${String(error)}`);
+      }
+    },
+    [insertImportedImage, queueKeyForPath],
+  );
+  const importImageFile = useCallback(
+    (file: File) => {
+      if (file.size > 25 * 1024 * 1024)
+        return setStatus("Images must be 25 MB or smaller.");
+      void importImage(async (notePath, libraryPath) =>
+        native.importNoteImageFromBytes(
+          notePath,
+          file.name || "pasted-image.png",
+          Array.from(new Uint8Array(await file.arrayBuffer())),
+          libraryPath,
+        ),
       );
-      insertImportedImage(activeNote.path, image);
-    } catch (error) { setStatus(`Could not import image: ${String(error)}`); }
-  }, [insertImportedImage, waitForPendingNoteSave]);
+    },
+    [importImage],
+  );
   const chooseImage = useCallback(async () => {
-    let activeNote = noteRef.current;
-    let activeLibrary = libraryRef.current;
-    if (!activeNote || !activeLibrary || !pathIsInLibrary(activeNote.path, activeLibrary)) return;
-    const selected = await open({ multiple: false, title: "Choose an image", filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp"] }] });
+    if (!noteRef.current) return;
+    const selected = await open({
+      multiple: false,
+      title: "Choose an image",
+      filters: [
+        { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp"] },
+      ],
+    });
     if (typeof selected !== "string") return;
-    try {
-      await waitForPendingNoteSave(activeNote.path);
-      activeNote = noteRef.current;
-      activeLibrary = libraryRef.current;
-      if (!activeNote || !activeLibrary || !pathIsInLibrary(activeNote.path, activeLibrary)) return;
-      const image = await native.importNoteImageFromPath(
-        activeNote.path,
-        selected,
-        activeLibrary,
-      );
-      insertImportedImage(activeNote.path, image);
-    } catch (error) { setStatus(`Could not import image: ${String(error)}`); }
-  }, [insertImportedImage, waitForPendingNoteSave]);
+    await importImage((notePath, libraryPath) =>
+      native.importNoteImageFromPath(notePath, selected, libraryPath),
+    );
+  }, [importImage]);
   const noteEditor = note ? (
     <MarkdownEditor
       key={`${note.path}-${isManagedNote ? "managed" : "external"}`}
@@ -1497,18 +1422,12 @@ export function App() {
       notePath={note.path}
       value={note.body}
       onChange={(body) => {
-        const current = noteRef.current;
-        if (!isManagedNote || current?.path !== note.path) return;
-        const draft = rememberLatestDraft({
+        if (!isManagedNote) return;
+        applyEdit(note.path, (current) => ({
           ...current,
           body,
           title: titleFromBody(body),
-        });
-        noteRef.current = draft;
-        dispatchNoteSession({
-          type: "edited",
-          draft,
-        });
+        }));
       }}
       onBlur={() => {
         // Loaded notes keep a baseline across navigation; a successful rename
@@ -1518,7 +1437,7 @@ export function App() {
             noteRef.current?.path === note.path ? noteRef.current : note,
           );
       }}
-      onImageFile={isManagedNote ? (file) => void importImageFile(file) : undefined}
+      onImageFile={isManagedNote ? importImageFile : undefined}
       autoFocus
       readOnly={!isManagedNote}
       className="markdown-editor"
@@ -1527,37 +1446,47 @@ export function App() {
   const previewMarkdown =
     mode === "split" && deferredNotePath === note?.path
       ? deferredNoteBody
-      : note?.body ?? "";
-  const togglePreviewTask = useCallback((index: number, checked: boolean) => {
-    const current = noteRef.current;
-    if (!current) return;
-    const draft = rememberLatestDraft({
-      ...current,
-      body: toggleTask(current.body, index, checked),
+      : (note?.body ?? "");
+  const revealOutlineItemInEditor = useCallback((item: OutlineItem) => {
+    const view = editor.current?.getView();
+    if (!view || item.line === undefined) return;
+    const line = view.state.doc.line(
+      Math.min(Math.max(1, item.line), view.state.doc.lines),
+    );
+    view.dispatch({
+      selection: { anchor: line.from },
+      effects: EditorView.scrollIntoView(line.from, {
+        y: "start",
+        yMargin: 24,
+      }),
     });
-    noteRef.current = draft;
-    dispatchNoteSession({
-      type: "edited",
-      draft,
-    });
-  }, [rememberLatestDraft]);
-  const showPreview = mode !== "edit";
-  const notePreview = note && showPreview ? (
-    <MemoizedMarkdownPreview
-      markdown={previewMarkdown}
-      notePath={note.path}
-      notes={notes}
-      onOpen={openLinkedNote}
-      onOpenExternalError={setStatus}
-      editable={isManagedNote}
-      onEditTable={isManagedNote ? setTableEditorIndex : () => undefined}
-      onToggleTask={isManagedNote ? togglePreviewTask : () => undefined}
-    />
-  ) : null;
-  const visibleNoteCards = useMemo(
-    () => visibleNotes.map((item) => ({ ...item, body: item.excerpt })),
-    [visibleNotes],
+    view.focus();
+  }, []);
+  const togglePreviewTask = useCallback(
+    (index: number, checked: boolean) => {
+      const current = noteRef.current;
+      if (!current) return;
+      applyEdit(current.path, (draft) => ({
+        ...draft,
+        body: toggleTask(draft.body, index, checked),
+      }));
+    },
+    [applyEdit],
   );
+  const showPreview = mode !== "edit";
+  const notePreview =
+    note && showPreview ? (
+      <MemoizedMarkdownPreview
+        markdown={previewMarkdown}
+        notePath={note.path}
+        notes={notes}
+        onOpen={openLinkedNote}
+        onOpenExternalError={setStatus}
+        editable={isManagedNote}
+        onEditTable={isManagedNote ? setTableEditorIndex : () => undefined}
+        onToggleTask={isManagedNote ? togglePreviewTask : () => undefined}
+      />
+    ) : null;
   const activeNoteDirty = Boolean(
     note && hasUnsavedChanges(note, baseline.current),
   );
@@ -1572,13 +1501,9 @@ export function App() {
       failedSaveRecoveriesRef.current.has(queueKey)
     )
       return;
-    const currentPath = savedPathAliases.current.get(note.path) ?? note.path;
-    const currentBaseline =
-      noteBaselines.current.get(currentPath) ??
-      noteBaselines.current.get(note.path) ??
-      null;
+    const currentPath = savedStateFor(note).path;
     if (
-      !hasUnsavedChanges({ ...note, path: currentPath }, currentBaseline) &&
+      !draftIsUnsaved(note) &&
       !hasUnsavedChanges(
         {
           ...ownedDraft,
@@ -1590,11 +1515,13 @@ export function App() {
     )
       retireOwnedDraft(queueKey, ownedDraft);
   }, [
+    draftIsUnsaved,
     failedSaveRecoveries,
     note,
     pendingSaveCount,
     queueKeyForPath,
     retireOwnedDraft,
+    savedStateFor,
   ]);
   const nativeDirty =
     activeNoteDirty ||
@@ -1660,9 +1587,9 @@ export function App() {
             const latestLibrary = libraryRef.current;
             const latestIsDirty = Boolean(
               latestNote &&
-                latestLibrary &&
-                pathIsInLibrary(latestNote.path, latestLibrary) &&
-                hasUnsavedChanges(latestNote, baseline.current),
+              latestLibrary &&
+              pathIsInLibrary(latestNote.path, latestLibrary) &&
+              hasUnsavedChanges(latestNote, baseline.current),
             );
             if (!latestIsDirty && saveQueues.current.size === 0) break;
           }
@@ -1698,27 +1625,8 @@ export function App() {
     };
   }, []);
   const openNote = useCallback(
-    (selected: NoteSummary) => {
-      const currentNote = noteRef.current;
-      if (currentNote) {
-        const currentPath =
-          savedPathAliases.current.get(currentNote.path) ?? currentNote.path;
-        const currentBaseline =
-          noteBaselines.current.get(currentPath) ??
-          noteBaselines.current.get(currentNote.path) ??
-          null;
-        if (
-          hasUnsavedChanges(
-            { ...currentNote, path: currentPath },
-            currentBaseline,
-          )
-        ) {
-          void enqueueSaveRef.current(currentNote);
-        }
-      }
-      setActivePath(selected.path);
-    },
-    [],
+    (selected: NoteSummary) => openNotePath(selected.path),
+    [openNotePath],
   );
   const toggleNoteFavorite = useCallback((selected: NoteSummary) => {
     setFavorites((value) =>
@@ -1732,25 +1640,36 @@ export function App() {
     (selected: NoteSummary, position: { x: number; y: number }) =>
       setNoteContextMenu({
         note: selected,
-        x: Math.min(position.x, window.innerWidth - 180),
-        y: Math.min(position.y, window.innerHeight - 100),
+        x: position.x,
+        y: position.y,
         isTrashed: isTrashFilter,
-        isDaily: /[\\/]Daily[\\/]/i.test(selected.path),
+        isDaily: isDailyFolder(selected.folder),
       }),
     [isTrashFilter],
   );
-  const renderNote = useCallback((item: NoteSummary) => (
-    <NoteListItem
-      key={item.path}
-      note={item}
-      active={item.path === activePath}
-      dirty={item.path === activePath && activeNoteDirty}
-      pinned={favorites.includes(item.path)}
-      onOpen={openNote}
-      onContextMenu={openNoteContextMenu}
-      onTogglePin={isTrashFilter ? undefined : toggleNoteFavorite}
-    />
-  ), [activeNoteDirty, activePath, favorites, isTrashFilter, openNote, openNoteContextMenu, toggleNoteFavorite]);
+  const renderNote = useCallback(
+    (item: NoteSummary) => (
+      <NoteListItem
+        key={item.path}
+        note={item}
+        active={item.path === activePath}
+        dirty={item.path === activePath && activeNoteDirty}
+        pinned={favorites.includes(item.path)}
+        onOpen={openNote}
+        onContextMenu={openNoteContextMenu}
+        onTogglePin={isTrashFilter ? undefined : toggleNoteFavorite}
+      />
+    ),
+    [
+      activeNoteDirty,
+      activePath,
+      favorites,
+      isTrashFilter,
+      openNote,
+      openNoteContextMenu,
+      toggleNoteFavorite,
+    ],
+  );
   const listTitle =
     filter.type === "folder"
       ? (filter.folder || "").split("/").filter(Boolean).slice(-1)[0] ||
@@ -1765,7 +1684,10 @@ export function App() {
   const isTrashedNote = Boolean(
     note && trashNotes.some((item) => item.path === note.path),
   );
-  const isDailyNote = Boolean(note && /[\\/]Daily[\\/]/i.test(note.path));
+  const isDailyNote = Boolean(
+    note &&
+    notes.some((item) => item.path === note.path && isDailyFolder(item.folder)),
+  );
   const resizeLibraryPane = (width: number) =>
     setLibraryPaneWidth(
       clamp(
@@ -1816,7 +1738,11 @@ export function App() {
           <span>Margin</span>
         </div>
         <label className="top-search">
-          <svg className="top-search-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <svg
+            className="top-search-icon"
+            viewBox="0 0 16 16"
+            aria-hidden="true"
+          >
             <circle cx="7" cy="7" r="4.75" />
             <path d="m10.5 10.5 3.25 3.25" />
           </svg>
@@ -1854,9 +1780,10 @@ export function App() {
         filter={filter.type}
         selectedFolder={filter.type === "folder" ? filter.folder : undefined}
         noteCount={notes.length}
-        favoriteCount={favorites.filter((path) =>
-          notes.some((note) => note.path === path),
-        ).length}
+        favoriteCount={
+          favorites.filter((path) => notes.some((note) => note.path === path))
+            .length
+        }
         trashCount={trashNotes.length}
         folders={folders}
         folderCounts={folderCounts}
@@ -1892,18 +1819,22 @@ export function App() {
       <ColumnResizeHandle
         className="library-pane-resizer"
         value={libraryPaneWidth}
+        min={180}
+        max={420}
         onChange={resizeLibraryPane}
         label="Resize library sidebar"
       />
       <ColumnResizeHandle
         className="note-pane-resizer"
         value={notePaneWidth}
+        min={220}
+        max={520}
         onChange={resizeNotePane}
         label="Resize note list"
       />
       <NoteList
         title={listTitle}
-        notes={visibleNoteCards}
+        notes={visibleNotes}
         activePath={activePath}
         folders={folders}
         rootFolder={filter.type === "folder" ? filter.folder || "" : ""}
@@ -1984,7 +1915,7 @@ export function App() {
                     right={notePreview}
                     minLeftWidth={240}
                     minRightWidth={260}
-                    persistenceKey="markdown-notes.split-ratio"
+                    persistenceKey={storageKeys.splitRatio}
                   />
                 )}
               </div>
@@ -1993,6 +1924,8 @@ export function App() {
                   <ColumnResizeHandle
                     className="outline-pane-resizer"
                     value={outlinePaneWidth}
+                    min={220}
+                    max={520}
                     onChange={resizeOutlinePane}
                     label="Resize outline"
                     direction={-1}
@@ -2002,6 +1935,7 @@ export function App() {
                     dirty={hasUnsavedChanges(note, baseline.current)}
                     width={outlinePaneWidth}
                     onClose={() => setOutlineOpen(false)}
+                    onNavigate={revealOutlineItemInEditor}
                   />
                 </>
               )}
@@ -2010,10 +1944,7 @@ export function App() {
               <aside className="backlinks">
                 <strong>Linked from</strong>
                 {backlinks.map((item) => (
-                  <button
-                    key={item.path}
-                    onClick={() => setActivePath(item.path)}
-                  >
+                  <button key={item.path} onClick={() => openNote(item)}>
                     {item.title}
                   </button>
                 ))}
@@ -2047,8 +1978,8 @@ export function App() {
           library={library}
           onClose={() => setQuickOpen(false)}
           onSelect={(selected) => {
-            setActivePath(selected.path);
             setQuickOpen(false);
+            openNote(selected);
           }}
         />
       )}
@@ -2068,7 +1999,7 @@ export function App() {
           folders={folders}
           onClose={() => setOpenedMarkdownPath(null)}
           onOpenOriginal={() => {
-            setActivePath(openedMarkdownPath);
+            openNotePath(openedMarkdownPath);
             setOpenedMarkdownPath(null);
             setStatus("Opened the original file outside your library");
           }}
@@ -2081,11 +2012,12 @@ export function App() {
           onClose={() => setTableDialogOpen(false)}
           onInsert={(rows, columns) => {
             setTableDialogOpen(false);
-            setViewMode("edit");
-            window.setTimeout(
-              () => editor.current?.insertTable(rows, columns),
-              0,
-            );
+            // Split already shows the editor; only Preview needs to switch.
+            if (mode === "preview") setViewMode("edit");
+            window.setTimeout(() => {
+              editor.current?.insertTable(rows, columns);
+              editor.current?.focus();
+            }, 0);
           }}
         />
       )}
@@ -2096,23 +2028,15 @@ export function App() {
             table={parseMarkdownTables(note.body)[tableEditorIndex]}
             onClose={() => setTableEditorIndex(null)}
             onApply={(headers, rows) => {
-              const current = noteRef.current;
-              if (current?.path === note.path) {
-                const draft = rememberLatestDraft({
-                  ...current,
-                  body: replaceMarkdownTable(
-                    current.body,
-                    tableEditorIndex,
-                    headers,
-                    rows,
-                  ),
-                });
-                noteRef.current = draft;
-                dispatchNoteSession({
-                  type: "edited",
-                  draft,
-                });
-              }
+              applyEdit(note.path, (current) => ({
+                ...current,
+                body: replaceMarkdownTable(
+                  current.body,
+                  tableEditorIndex,
+                  headers,
+                  rows,
+                ),
+              }));
               setTableEditorIndex(null);
             }}
           />
@@ -2120,7 +2044,7 @@ export function App() {
       {folderDialogOpen && (
         <FolderDialog
           onClose={() => setFolderDialogOpen(false)}
-          onCreate={(name) =>
+          onSubmit={(name) =>
             void createFolder(
               folderDialogParent ? `${folderDialogParent}/${name}` : name,
             )
@@ -2139,7 +2063,7 @@ export function App() {
         <FolderDialog
           key={folderRenameTarget}
           onClose={() => setFolderRenameTarget(null)}
-          onCreate={(name) => void renameFolder(folderRenameTarget, name)}
+          onSubmit={(name) => void renameFolder(folderRenameTarget, name)}
           title="Rename folder"
           description="This keeps the folder’s notes and subfolders together."
           placeholder="Folder name"
@@ -2151,10 +2075,9 @@ export function App() {
         <ImportDailyNoteDialog
           source={note}
           targets={notes.filter(
-            (item) =>
-              item.path !== note.path && !item.folder.startsWith("Daily"),
+            (item) => item.path !== note.path && !isDailyFolder(item.folder),
           )}
-          folders={folders.filter((folder) => !folder.startsWith("Daily"))}
+          folders={folders.filter((folder) => !isDailyFolder(folder))}
           defaultTargetPath={quickImportDefaultPath}
           onClose={() => setImportDialogOpen(false)}
           onImport={importDailyNote}
@@ -2172,13 +2095,13 @@ export function App() {
           quickCaptureStatus={quickCaptureStatus}
           library={library}
           quickImportTargets={notes.filter(
-            (item) => !item.folder.startsWith("Daily"),
+            (item) => !isDailyFolder(item.folder),
           )}
           quickImportDefaultPath={quickImportDefaultPath}
           onQuickImportDefaultPath={setQuickImportDefaultPath}
           onManageTemplates={() => setTemplateEditorOpen(true)}
-          updateState={updateState}
-          updateMessage={updateError}
+          updateState={updater.phase}
+          updateMessage={updater.message}
           onCheckForUpdates={() => void updateController.check("manual")}
           onChangeLibrary={() => void selectLibrary()}
           onClose={() => setSettingsOpen(false)}
@@ -2195,11 +2118,11 @@ export function App() {
           }}
         />
       )}
-      {updateDialogOpen && availableUpdate && (
+      {updater.dialogOpen && availableUpdate && (
         <UpdateDialog
           update={availableUpdate}
-          state={updateState}
-          error={updateError}
+          state={updater.phase}
+          error={updater.message}
           onClose={() => updateController.closeDialog()}
           onInstall={() => void updateController.install()}
           onRestart={() => void updateController.restart()}
@@ -2222,42 +2145,22 @@ export function App() {
           onRestore={restoreNote}
           onDeletePermanently={deleteNotePermanently}
           onImport={(selected) => {
-            setActivePath(selected.path);
+            openNote(selected);
             setImportDialogOpen(true);
           }}
         />
       )}
       {failedSaveRecovery && (
-        <div className="modal-backdrop">
-          <section
-            className="modal conflict"
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Unsaved draft for ${failedSaveRecovery.draft.title}`}
-          >
-            <h2>Unsaved draft needs attention</h2>
-            <p>
-              {failedSaveRecovery.draft.title} could not be saved:{" "}
-              {failedSaveRecovery.message}
-            </p>
-            <p>Margin is keeping this draft available until saving succeeds.</p>
-            <div>
-              <button
-                className="primary"
-                type="button"
-                aria-label={`Retry saving ${failedSaveRecovery.draft.title}`}
-                onClick={() =>
-                  void enqueueSave(
-                    failedSaveRecovery.draft,
-                    failedSaveRecovery.libraryPath,
-                  )
-                }
-              >
-                Retry save
-              </button>
-            </div>
-          </section>
-        </div>
+        <FailedSaveDialog
+          title={failedSaveRecovery.draft.title}
+          message={failedSaveRecovery.message}
+          onRetry={() =>
+            void enqueueSave(
+              failedSaveRecovery.draft,
+              failedSaveRecovery.libraryPath,
+            )
+          }
+        />
       )}
       {conflict && (
         <ConflictDialog
@@ -2304,598 +2207,3 @@ export function App() {
     </main>
   );
 }
-
-function NoteContextMenu({
-  note,
-  x,
-  y,
-  isTrashed,
-  isDaily,
-  folders,
-  onClose,
-  onDuplicate,
-  onMove,
-  onReveal,
-  onTrash,
-  onRestore,
-  onDeletePermanently,
-  onImport,
-}: {
-  note: NoteSummary;
-  x: number;
-  y: number;
-  isTrashed: boolean;
-  isDaily: boolean;
-  folders: string[];
-  onClose: () => void;
-  onDuplicate: (note: NoteSummary) => Promise<void>;
-  onMove: (note: NoteSummary, folder: string) => Promise<void>;
-  onReveal: (note: NoteSummary) => Promise<void>;
-  onTrash: (note: NoteSummary) => Promise<void>;
-  onRestore: (note: NoteSummary) => Promise<void>;
-  onDeletePermanently: (note: NoteSummary) => Promise<void>;
-  onImport: (note: NoteSummary) => void;
-}) {
-  return (
-    <div
-      className="note-context-menu"
-      role="menu"
-      aria-label={`Actions for ${note.title}`}
-      style={{ left: x, top: y }}
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      <p>{note.title}</p>
-      {isTrashed ? (
-        <>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onClose();
-              void onRestore(note);
-            }}
-          >
-            Restore
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="danger"
-            onClick={() => {
-              onClose();
-              void onDeletePermanently(note);
-            }}
-          >
-            Delete permanently
-          </button>
-        </>
-      ) : (
-        <>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onClose();
-              void onDuplicate(note);
-            }}
-          >
-            Duplicate
-          </button>
-          <label className="note-context-move">
-            Move to folder
-            <select
-              aria-label="Move note to folder"
-              defaultValue=""
-              onChange={(event) => {
-                const folder = event.target.value;
-                if (!folder) return;
-                onClose();
-                void onMove(note, folder === "__top_level__" ? "" : folder);
-              }}
-            >
-              <option value="" disabled>
-                Choose folder…
-              </option>
-              <option value="__top_level__">Top level</option>
-              <CascadingFolderOptions folders={folders} />
-            </select>
-          </label>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onClose();
-              void onReveal(note);
-            }}
-          >
-            Show in {isMac ? "Finder" : "File Explorer"}
-          </button>
-          {isDaily && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                onClose();
-                onImport(note);
-              }}
-            >
-              Import captures
-            </button>
-          )}
-          <button
-            type="button"
-            role="menuitem"
-            className="danger"
-            onClick={() => {
-              onClose();
-              void onTrash(note);
-            }}
-          >
-            Move to Trash
-          </button>
-        </>
-      )}
-    </div>
-  );
-}
-function ColumnResizeHandle({
-  className,
-  value,
-  onChange,
-  label,
-  direction = 1,
-}: {
-  className: string;
-  value: number;
-  onChange: (value: number) => void;
-  label: string;
-  direction?: 1 | -1;
-}) {
-  const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = value;
-    const resize = (move: PointerEvent) =>
-      onChange(startWidth + (move.clientX - startX) * direction);
-    const stop = () => {
-      window.removeEventListener("pointermove", resize);
-      window.removeEventListener("pointerup", stop);
-    };
-    window.addEventListener("pointermove", resize);
-    window.addEventListener("pointerup", stop, { once: true });
-  };
-  return (
-    <div
-      className={`sidebar-resizer ${className}`}
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={label}
-      aria-valuemin={220}
-      aria-valuemax={520}
-      aria-valuenow={value}
-      tabIndex={0}
-      onPointerDown={startResize}
-      onKeyDown={(event) => {
-        if (event.key === "ArrowLeft") {
-          event.preventDefault();
-          onChange(value - 16 * direction);
-        }
-        if (event.key === "ArrowRight") {
-          event.preventDefault();
-          onChange(value + 16 * direction);
-        }
-      }}
-    />
-  );
-}
-export function UpdateDialog({
-  update,
-  state,
-  error,
-  onClose,
-  onInstall,
-  onRestart,
-  onSkip,
-}: {
-  update: AppUpdate;
-  state: UpdateState;
-  error: string;
-  onClose: () => void;
-  onInstall: () => void;
-  onRestart: () => void;
-  onSkip: () => void;
-}) {
-  const ready = state === "ready";
-  const restarting = state === "restarting";
-  const installing = state === "downloading";
-  const busy = installing || restarting;
-  const failed = state === "error";
-  const eyebrow = restarting
-    ? "Restarting Margin"
-    : ready
-      ? "Update installed"
-      : installing
-        ? "Installing update"
-        : "Update available";
-  const heading = restarting
-    ? `Margin ${update.version} is restarting`
-    : ready
-      ? `Margin ${update.version} is ready`
-      : `Margin ${update.version}`;
-  return (
-    <div className="modal-backdrop">
-      <section
-        className="modal update-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Margin update"
-        aria-busy={busy}
-      >
-        <header>
-          <div>
-            <p className="eyebrow">{eyebrow}</p>
-            <h2>{heading}</h2>
-          </div>
-          <button aria-label="Close update" onClick={onClose}>
-            ×
-          </button>
-        </header>
-        <p>{update.body || "A newer version of Margin is ready to install."}</p>
-        {error && (
-          <p className="update-status" role="alert">
-            {error}
-          </p>
-        )}
-        {installing && (
-          <p className="update-status" role="status" aria-live="polite">
-            Downloading and verifying the update…
-          </p>
-        )}
-        {ready && (
-          <p className="update-status" role="status" aria-live="polite">
-            Update installed. Restart Margin when you’re ready.
-          </p>
-        )}
-        {restarting && (
-          <p className="update-status" role="status" aria-live="polite">
-            Restarting Margin…
-          </p>
-        )}
-        <div>
-          {!ready && !restarting && (
-            <>
-              <button type="button" onClick={onSkip} disabled={busy}>
-                Skip this version
-              </button>
-              <button
-                className="primary"
-                type="button"
-                onClick={onInstall}
-                disabled={busy}
-              >
-                {busy ? "Updating…" : failed ? "Try again" : "Update now"}
-              </button>
-            </>
-          )}
-          {(ready || restarting) && (
-            <button
-              className="primary"
-              type="button"
-              onClick={onRestart}
-              disabled={restarting}
-            >
-              {restarting ? "Restarting Margin…" : "Restart Margin"}
-            </button>
-          )}
-        </div>
-      </section>
-    </div>
-  );
-}
-function FolderDialog({
-  onClose,
-  onCreate,
-  title = "New folder",
-  description = "Folders are normal folders inside your notes library.",
-  placeholder = "Projects/Website",
-  submitLabel = "Create folder",
-  initialValue = "",
-}: {
-  onClose: () => void;
-  onCreate: (folder: string) => void;
-  title?: string;
-  description?: string;
-  placeholder?: string;
-  submitLabel?: string;
-  initialValue?: string;
-}) {
-  const [folder, setFolder] = useState(initialValue);
-  return (
-    <div className="modal-backdrop">
-      <form
-        className="modal table-dialog"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onCreate(folder);
-        }}
-      >
-        <h2>{title}</h2>
-        <p>{description}</p>
-        <label>
-          Name
-          <input
-            autoFocus
-            placeholder={placeholder}
-            value={folder}
-            onChange={(event) => setFolder(event.target.value)}
-          />
-        </label>
-        <div>
-          <button type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="primary" disabled={!folder.trim()}>
-            {submitLabel}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-function QuickCaptureDialog({
-  session = 0,
-  shortcut,
-  status,
-  onClose,
-  onSave,
-}: {
-  session?: number;
-  shortcut: string;
-  status: string;
-  onClose: () => void;
-  onSave: (text: string) => boolean | Promise<boolean>;
-}) {
-  return (
-    <div className="modal-backdrop quick-capture-backdrop">
-      <CaptureComposer
-        session={session}
-        shortcut={shortcut}
-        status={status}
-        disabled={false}
-        onClose={onClose}
-        onSave={onSave}
-      />
-    </div>
-  );
-}
-function ImportDailyNoteDialog({
-  source,
-  targets,
-  folders,
-  defaultTargetPath,
-  onClose,
-  onImport,
-  onImportNew,
-}: {
-  source: NoteDocument;
-  targets: NoteSummary[];
-  folders: string[];
-  defaultTargetPath: string;
-  onClose: () => void;
-  onImport: (target: NoteSummary) => void;
-  onImportNew: (folder: string, title: string) => void;
-}) {
-  const initialTarget = targets.some((item) => item.path === defaultTargetPath)
-    ? defaultTargetPath
-    : targets[0]?.path || "";
-  const [destination, setDestination] = useState<"note" | "new">("note");
-  const [targetPath, setTargetPath] = useState(initialTarget);
-  const [folder, setFolder] = useState("");
-  const [title, setTitle] = useState(`${source.title} captures`);
-  const target = targets.find((item) => item.path === targetPath);
-  return (
-    <div className="modal-backdrop">
-      <form
-        className="modal import-dialog"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (destination === "note" && target) onImport(target);
-          if (destination === "new") onImportNew(folder, title);
-        }}
-      >
-        <h2>Import captures</h2>
-        <p>
-          Keep your Daily note intact and choose where this capture set should
-          go.
-        </p>
-        <fieldset className="import-destination">
-          <legend>Destination</legend>
-          <label>
-            <input
-              type="radio"
-              name="import-destination"
-              checked={destination === "note"}
-              onChange={() => setDestination("note")}
-            />{" "}
-            Append to an existing note
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="import-destination"
-              checked={destination === "new"}
-              onChange={() => setDestination("new")}
-            />{" "}
-            Create a separate note in a folder
-          </label>
-        </fieldset>
-        {destination === "note" ? (
-          <label>
-            Note
-            <select
-              value={targetPath}
-              onChange={(event) => setTargetPath(event.target.value)}
-            >
-              <CascadingNoteOptions targets={targets} folders={folders} />
-            </select>
-          </label>
-        ) : (
-          <>
-            <label>
-              Folder
-              <select
-                value={folder}
-                onChange={(event) => setFolder(event.target.value)}
-              >
-                <option value="">Top level</option>
-                <CascadingFolderOptions folders={folders} />
-              </select>
-            </label>
-            <label>
-              New note title
-              <input
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-              />
-            </label>
-          </>
-        )}
-        {destination === "note" &&
-          defaultTargetPath &&
-          targetPath === defaultTargetPath && (
-            <p className="default-import-note">
-              Using your default import note.
-            </p>
-          )}
-        {destination === "note" && !targets.length && (
-          <p>
-            No non-Daily notes are available yet. Create a separate note
-            instead.
-          </p>
-        )}
-        <div>
-          <button type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            className="primary"
-            disabled={destination === "note" ? !target : !title.trim()}
-          >
-            Import captures
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-function OpenedMarkdownDialog({
-  path,
-  library,
-  folders,
-  onClose,
-  onOpenOriginal,
-  onImport,
-  onChooseLibrary,
-}: {
-  path: string;
-  library: string | null;
-  folders: string[];
-  onClose: () => void;
-  onOpenOriginal: () => void;
-  onImport: (folder: string) => void;
-  onChooseLibrary: () => void;
-}) {
-  const [folder, setFolder] = useState("");
-  return (
-    <div className="modal-backdrop">
-      <section
-        className="modal import-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Opened Markdown file"
-      >
-        <h2>Open Markdown file</h2>
-        <p title={path}>
-          {fileStem(path)}.md is outside your current library. Margin will never
-          change it unless you choose to open and edit the original.
-        </p>
-        {library ? (
-          <label>
-            Import a copy to
-            <select
-              value={folder}
-              onChange={(event) => setFolder(event.target.value)}
-            >
-              <option value="">Top level</option>
-              <CascadingFolderOptions folders={folders} />
-            </select>
-          </label>
-        ) : (
-          <p>
-            Choose a notes folder to import a copy. You can still open the
-            original file without one.
-          </p>
-        )}
-        <div>
-          <button type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button type="button" onClick={onOpenOriginal}>
-            Open original
-          </button>
-          {library ? (
-            <button
-              className="primary"
-              type="button"
-              onClick={() => onImport(folder)}
-            >
-              Import copy
-            </button>
-          ) : (
-            <button className="primary" type="button" onClick={onChooseLibrary}>
-              Choose library
-            </button>
-          )}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function ConflictDialog({
-  conflict,
-  onChoose,
-}: {
-  conflict: Conflict;
-  onChoose: (choice: "mine" | "disk") => void;
-}) {
-  return (
-    <div className="modal-backdrop">
-      <section className="modal conflict">
-        <h2>This note changed outside the app</h2>
-        <p>
-          Your unsaved edits have not been overwritten. Choose which version to
-          keep.
-        </p>
-        <details>
-          <summary>Compare versions</summary>
-          <div className="compare">
-            <pre>{conflict.mine.body}</pre>
-            <pre>{conflict.disk.body}</pre>
-          </div>
-        </details>
-        <div>
-          <button onClick={() => onChoose("disk")}>Use disk version</button>
-          <button className="primary" onClick={() => onChoose("mine")}>
-            Keep my edits
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-export {
-  ConflictDialog,
-  createRefreshCoordinator,
-  QuickCaptureDialog,
-};

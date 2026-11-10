@@ -67,13 +67,13 @@ vi.mock("./MermaidDiagram", () => ({
   ),
 }));
 
+import { App } from "./app/App";
 import {
-  App,
   ConflictDialog,
-  createRefreshCoordinator,
   QuickCaptureDialog,
   UpdateDialog,
-} from "./app/App";
+} from "./app/dialogs";
+import { createRefreshCoordinator } from "./app/refresh-coordinator";
 import {
   CascadingNoteOptions,
   FolderNoteTree,

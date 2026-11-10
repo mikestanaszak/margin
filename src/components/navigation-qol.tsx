@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { NoteSummary } from "../app/types";
 import { useLibrarySearch } from "../features/search/useLibrarySearch";
+import { useModalLayer } from "./Modal";
 import "./navigation-qol.css";
 
 export interface QuickSwitcherProps {
@@ -40,6 +41,7 @@ export function QuickSwitcher({
   const search = useLibrarySearch({ library, query, scope: "all" });
   const results = search.results.slice(0, Math.max(0, maxResults));
 
+  useModalLayer(onClose);
   useEffect(() => setActiveIndex(0), [query]);
   useEffect(() => inputRef.current?.focus(), []);
 
@@ -119,9 +121,9 @@ export interface NoteListItemData {
   title: string;
   tags: readonly string[];
   updated: number | string | Date;
+  /** Plain-text summary from the native index; `body` is accepted too. */
+  excerpt?: string;
   body?: string;
-  searchableText?: string;
-  searchable_text?: string;
 }
 
 export interface NoteListItemProps<T extends NoteListItemData = NoteListItemData> {
@@ -161,7 +163,7 @@ export function formatRelativeDate(value: NoteListItemData["updated"], now = Dat
 }
 
 function bodyExcerpt(note: NoteListItemData) {
-  const source = note.body ?? note.searchableText ?? note.searchable_text ?? "";
+  const source = note.excerpt ?? note.body ?? "";
   return source
     .replace(/^---[\s\S]*?---\s*/m, "")
     .replace(/^#{1,6}\s+.*$/gm, "")

@@ -157,6 +157,26 @@ describe("Markdown editor formatting", () => {
     expect(view.state.doc.toString()).toBe("Make Margin calm");
   });
 
+  it("toggles italic with asterisks without disturbing bold", () => {
+    const word = editor("unbelievable", 2, 10);
+    wrapSelection(word, "*");
+    expect(word.state.doc.toString()).toBe("un*believab*le");
+
+    const bold = editor("**bold**", 2, 6);
+    wrapSelection(bold, "*");
+    expect(bold.state.doc.toString()).toBe("***bold***");
+    wrapSelection(bold, "*");
+    expect(bold.state.doc.toString()).toBe("**bold**");
+
+    const wholeBold = editor("**bold**", 0, 8);
+    wrapSelection(wholeBold, "*");
+    expect(wholeBold.state.doc.toString()).toBe("***bold***");
+
+    const both = editor("***both***", 3, 7);
+    wrapSelection(both, "**");
+    expect(both.state.doc.toString()).toBe("*both*");
+  });
+
   it("inserts a Markdown link with its cursor in the URL", () => {
     const view = editor("Open Margin", 5, 11);
     insertLink(view);
@@ -179,6 +199,14 @@ describe("Markdown editor formatting", () => {
     expect(view.state.selection.main.head).toBe(10);
   });
 
+  it("inserts a table after selected text instead of replacing it", () => {
+    const view = editor("Keep this text", 5, 9);
+    insertTable(view, 1, 1);
+    expect(view.state.doc.toString()).toBe(
+      "Keep this\n\n| Column 1 |\n| --- |\n|   |\n\n text",
+    );
+  });
+
   it("does not apply formatting shortcuts to read-only documents", () => {
     const onChange = vi.fn();
     const { container } = render(
@@ -196,6 +224,38 @@ describe("Markdown editor formatting", () => {
 
     expect(content).toHaveTextContent("Read-only external note");
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("applies italic, bold, and link shortcuts ahead of default bindings", () => {
+    const editorRef = createRef<MarkdownEditorHandle>();
+    const onChange = vi.fn();
+    const { container } = render(
+      createElement(MarkdownEditor, {
+        ref: editorRef,
+        notePath: "format.md",
+        value: "Make Margin calm",
+        onChange,
+      }),
+    );
+    const content = container.querySelector<HTMLElement>(".cm-content")!;
+    const view = editorRef.current!.getView()!;
+    const press = (key: string) =>
+      fireEvent.keyDown(content, { key, ctrlKey: !isMac, metaKey: isMac });
+    const bubbledToWindow = vi.fn();
+    window.addEventListener("keydown", bubbledToWindow);
+
+    try {
+      act(() => view.dispatch({ selection: { anchor: 5, head: 11 } }));
+      press("i");
+      expect(view.state.doc.toString()).toBe("Make *Margin* calm");
+      press("b");
+      expect(view.state.doc.toString()).toBe("Make ***Margin*** calm");
+      press("k");
+      expect(view.state.doc.toString()).toContain("[Margin]()");
+    } finally {
+      window.removeEventListener("keydown", bubbledToWindow);
+    }
+    expect(bubbledToWindow).not.toHaveBeenCalled();
   });
 
   it("keeps the primary Select All shortcut inside the editable note", () => {

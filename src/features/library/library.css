@@ -63,4 +63,3 @@
 .note-context-move { display: grid; gap: 4px; padding: 7px 8px; color: var(--muted); font-size: 11px; }.note-context-move select { width: 100%; padding: 5px 6px; color: var(--text); background: var(--surface-soft); border: 1px solid var(--border); border-radius: 5px; font-size: 12px; }
 .nr-note-item.nr-is-active { border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); background: color-mix(in srgb, var(--accent-soft) 74%, var(--surface)); box-shadow: inset 3px 0 var(--accent); }.nr-note-unsaved { position: absolute; top: 8px; right: 9px; width: 6px; height: 6px; background: #e6a94d; border-radius: 999px; box-shadow: 0 0 0 2px color-mix(in srgb, #e6a94d 18%, transparent); }.nr-note-item.nr-has-unsaved .nr-note-pin { top: 16px; }
  .sidebar-hidden .sidebar { padding-inline: 0; overflow: hidden; }
-@media (max-width: 800px) { .note-list { display: none; } }

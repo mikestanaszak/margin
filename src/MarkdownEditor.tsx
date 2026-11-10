@@ -32,10 +32,10 @@ import {
 import {
   EditorView,
   keymap,
+  type KeyBinding,
   placeholder as placeholderExtension,
 } from "@codemirror/view";
 import { all as highlightLanguages } from "lowlight";
-import { primaryShortcutPressed } from "./platform";
 
 export type MarkdownEditorProps = {
   /** Stable filesystem path (or another stable note ID) used for view restoration. */
@@ -267,14 +267,45 @@ function selectedRange(
     : EditorSelection.range(from, to);
 }
 
+/**
+ * Whether a run of `*` delimiters around text already applies `marker`.
+ * Single `*` is italic and `**` bold, so `**bold**` is not italic while
+ * `***both***` is.
+ */
+function asteriskRunHasMarker(run: number, marker: string) {
+  return marker === "*" ? run % 2 === 1 : run >= 2;
+}
+
+function asteriskRun(text: string, fromEnd: boolean) {
+  const match = fromEnd ? /\**$/.exec(text) : /^\**/.exec(text);
+  return Math.min(3, match?.[0].length ?? 0);
+}
+
 export function wrapSelection(view: EditorView, left: string, right = left): boolean {
   const { state } = view;
+  const asterisks = left === right && /^\*{1,2}$/.test(left);
   const transaction = state.changeByRange((range) => {
     const selected = state.sliceDoc(range.from, range.to);
     const backwards = range.anchor > range.head;
+    const selectionHasMarker = asterisks
+      ? asteriskRunHasMarker(
+          Math.min(asteriskRun(selected, false), asteriskRun(selected, true)),
+          left,
+        ) && selected.length > 2 * asteriskRun(selected, false)
+      : true;
+    const surroundingHasMarker = asterisks
+      ? asteriskRunHasMarker(
+          Math.min(
+            asteriskRun(state.sliceDoc(Math.max(0, range.from - 3), range.from), true),
+            asteriskRun(state.sliceDoc(range.to, range.to + 3), false),
+          ),
+          left,
+        )
+      : true;
 
     if (
       !range.empty &&
+      selectionHasMarker &&
       selected.startsWith(left) &&
       selected.endsWith(right) &&
       selected.length >= left.length + right.length
@@ -291,6 +322,7 @@ export function wrapSelection(view: EditorView, left: string, right = left): boo
     }
 
     const hasSurroundingMarkers =
+      surroundingHasMarker &&
       range.from >= left.length &&
       range.to + right.length <= state.doc.length &&
       state.sliceDoc(range.from - left.length, range.from) === left &&
@@ -391,7 +423,9 @@ export function applyHeading(view: EditorView, level: number): boolean {
 export function insertTable(view: EditorView, requestedRows = 3, requestedColumns = 3): boolean {
   const rows = Math.min(12, Math.max(1, Math.floor(requestedRows)));
   const columns = Math.min(8, Math.max(1, Math.floor(requestedColumns)));
-  const range = view.state.selection.main;
+  // Insert after any selected text rather than replacing it.
+  const at = view.state.selection.main.to;
+  const range = { from: at, to: at };
   const header = Array.from({ length: columns }, (_, index) => ` Column ${index + 1} `);
   const divider = Array.from({ length: columns }, () => " --- ");
   const body = Array.from({ length: rows }, () => Array.from({ length: columns }, () => "   "));
@@ -408,6 +442,22 @@ export function insertTable(view: EditorView, requestedRows = 3, requestedColumn
     userEvent: "input",
   });
   return true;
+}
+
+function formattingKeys(readOnly: boolean): KeyBinding[] {
+  if (readOnly) return [];
+  const binding = (key: string, run: (view: EditorView) => boolean) => ({
+    key,
+    run,
+    preventDefault: true,
+    stopPropagation: true,
+  });
+  return [
+    binding("Mod-b", (view) => wrapSelection(view, "**")),
+    // `*` also works inside words, where CommonMark ignores `_`.
+    binding("Mod-i", (view) => wrapSelection(view, "*")),
+    binding("Mod-k", insertLink),
+  ];
 }
 
 function saveViewState(notePath: string, view: EditorView): void {
@@ -464,15 +514,26 @@ export const MarkdownEditor = forwardRef<
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    const toolbarWidth = 200;
     const updateToolbarPosition = (view: EditorView) => {
       const selection = view.state.selection.main;
-      if (selection.empty) return setToolbarPosition(null);
+      if (selection.empty || readOnly) return setToolbarPosition(null);
       const coordinates = view.coordsAtPos(selection.to);
       const bounds = host.getBoundingClientRect();
-      if (!coordinates || !bounds.width) return setToolbarPosition(null);
+      const top = coordinates ? coordinates.top - bounds.top : -1;
+      // Hide rather than float over unrelated text once the selection
+      // scrolls out of view.
+      if (!coordinates || !bounds.width || top < 0 || top > bounds.height)
+        return setToolbarPosition(null);
       setToolbarPosition({
-        left: Math.min(bounds.width - 236, Math.max(8, coordinates.left - bounds.left - 82)),
-        top: Math.max(8, coordinates.top - bounds.top - 46),
+        left: Math.max(
+          8,
+          Math.min(
+            bounds.width - toolbarWidth - 8,
+            coordinates.left - bounds.left - 82,
+          ),
+        ),
+        top: Math.max(8, top - 46),
       });
     };
 
@@ -500,21 +561,9 @@ export const MarkdownEditor = forwardRef<
       }),
       EditorView.domEventHandlers({
         blur: () => {
+          setToolbarPosition(null);
           onBlurRef.current?.();
           return false;
-        },
-        keydown: (event, editorView) => {
-          if (readOnly) return false;
-          if (!primaryShortcutPressed(event) || event.altKey) return false;
-          const key = event.key.toLowerCase();
-          if (key !== "b" && key !== "i" && key !== "k") return false;
-
-          // Keep app-level shortcuts (notably Cmd/Ctrl+K) from also firing.
-          event.preventDefault();
-          event.stopPropagation();
-          if (key === "b") return wrapSelection(editorView, "**");
-          if (key === "i") return wrapSelection(editorView, "_");
-          return insertLink(editorView);
         },
         paste: (event) => {
           const image = imageFileFromDataTransfer(event.clipboardData);
@@ -537,6 +586,10 @@ export const MarkdownEditor = forwardRef<
         },
       }),
       keymap.of([
+        // Formatting precedes the default keymap, which binds Mod-i to
+        // syntax selection. stopPropagation keeps app shortcuts (notably
+        // Mod-k for search) from also firing.
+        ...formattingKeys(readOnly),
         {
           key: "Mod-a",
           run: selectAll,
@@ -562,6 +615,14 @@ export const MarkdownEditor = forwardRef<
       }),
     });
     viewRef.current = view;
+    let scrollFrame = 0;
+    const followScroll = () => {
+      window.cancelAnimationFrame(scrollFrame);
+      scrollFrame = window.requestAnimationFrame(() =>
+        updateToolbarPosition(view),
+      );
+    };
+    view.scrollDOM.addEventListener("scroll", followScroll, { passive: true });
 
     restoreFrameRef.current = window.requestAnimationFrame(() => {
       view.scrollDOM.scrollTop = saved?.scrollTop ?? 0;
@@ -572,6 +633,8 @@ export const MarkdownEditor = forwardRef<
       if (restoreFrameRef.current !== null) {
         window.cancelAnimationFrame(restoreFrameRef.current);
       }
+      window.cancelAnimationFrame(scrollFrame);
+      view.scrollDOM.removeEventListener("scroll", followScroll);
       saveViewState(notePathRef.current, view);
       view.destroy();
       viewRef.current = null;
@@ -586,6 +649,7 @@ export const MarkdownEditor = forwardRef<
     if (!view) return;
 
     if (notePathRef.current !== notePath) {
+      setToolbarPosition(null);
       saveViewState(notePathRef.current, view);
       notePathRef.current = notePath;
       // A title edit can rename the current file. When its document is
@@ -630,7 +694,7 @@ export const MarkdownEditor = forwardRef<
   }, [notePath, value]);
 
   return (
-      <div
+    <div
       ref={hostRef}
       className={className}
       style={{ minHeight: 0, ...style }}
@@ -641,9 +705,8 @@ export const MarkdownEditor = forwardRef<
         <button type="button" title="Heading 3" onClick={() => viewRef.current && applyHeading(viewRef.current, 3)}>H3</button>
         <span aria-hidden="true" />
         <button type="button" title="Bold" onClick={() => viewRef.current && wrapSelection(viewRef.current, "**")}>B</button>
-        <button type="button" title="Italic" onClick={() => viewRef.current && wrapSelection(viewRef.current, "_")}>I</button>
+        <button type="button" title="Italic" onClick={() => viewRef.current && wrapSelection(viewRef.current, "*")}>I</button>
         <button type="button" title="Link" onClick={() => viewRef.current && insertLink(viewRef.current)}>↗</button>
-        <button type="button" title="Insert 3 by 3 table" onClick={() => viewRef.current && insertTable(viewRef.current)}>▦</button>
       </div>}
     </div>
   );

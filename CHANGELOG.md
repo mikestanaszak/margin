@@ -2,6 +2,25 @@
 
 All notable user-facing changes to Margin are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Checking a task in Preview no longer toggles an example task inside a code block that appears earlier in the note; tasks inside block quotes are counted correctly.
+- Lines inside fenced code (such as `# install` shell comments) no longer become the note title, outline headings, or tables.
+- `[[ ... ]]` inside code blocks and inline code stays literal instead of turning into a note link.
+- A link or image path with a stray `%` no longer breaks Preview.
+- Edits made just before switching notes (for example a task checked in Preview, then a link, backlink, or Quick Open result) are saved instead of waiting until the note is reopened.
+- Cmd/Ctrl+I now italicizes the selection. Italic uses `*`, which also works inside words, and toggling italic leaves bold text intact.
+- Inserting a table no longer replaces selected text, and inserting one from Split view stays in Split view. The selection toolbar no longer offers a table button that replaced the selection.
+- The selection toolbar hides when the selection scrolls out of view or the editor loses focus.
+- Choosing an outline heading in Edit view moves the editor to that heading, and the outline matches setext and quoted headings.
+- With the outline open, jumping to a heading in Edit view no longer shifts the whole window upward.
+- Escape closes the topmost dialog only (for example Templates, leaving Settings open), and app shortcuts no longer act behind open dialogs.
+- The note context menu always stays fully on screen and supports arrow-key navigation.
+- The table editor keeps rows with missing cells and offers an Add row button even when a table has no rows.
+- Import captures is only offered for notes in the library's Daily folder, matching where imports are accepted.
+
 ## 0.5.4 — 2026-11-09
 
 ### Improved
