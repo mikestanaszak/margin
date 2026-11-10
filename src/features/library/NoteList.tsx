@@ -5,7 +5,10 @@ import { FolderNoteTree } from "./LibraryNavigation";
 export const noteListVirtualizationThreshold = 120;
 export const virtualNoteRowHeight = 92;
 
-export function shouldVirtualizeNoteList(count: number, isHierarchicalFolderView: boolean) {
+export function shouldVirtualizeNoteList(
+  count: number,
+  isHierarchicalFolderView: boolean,
+) {
   return !isHierarchicalFolderView && count >= noteListVirtualizationThreshold;
 }
 
@@ -33,7 +36,7 @@ export function NoteList({
   renderNote,
 }: NoteListProps) {
   return (
-    <section className="note-list">
+    <section className="note-list" onKeyDown={moveBetweenNotes}>
       <header>
         <h1>{title}</h1>
         <span>{notes.length}</span>
@@ -57,12 +60,30 @@ export function NoteList({
             notes.map(renderNote)
           )}
           {librarySelected && !notes.length && (
-            <p className="empty-list" role="status">{emptyMessage}</p>
+            <p className="empty-list" role="status">
+              {emptyMessage}
+            </p>
           )}
         </div>
       )}
     </section>
   );
+}
+
+/** Up and Down move focus between note cards; Enter opens the focused one. */
+function moveBetweenNotes(event: React.KeyboardEvent<HTMLElement>) {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+  const target = event.target as HTMLElement;
+  if (!target.classList.contains("nr-note-main")) return;
+  const cards = [
+    ...event.currentTarget.querySelectorAll<HTMLElement>(".nr-note-main"),
+  ];
+  const next =
+    cards[cards.indexOf(target) + (event.key === "ArrowDown" ? 1 : -1)];
+  if (!next) return;
+  event.preventDefault();
+  next.focus();
+  next.scrollIntoView({ block: "nearest" });
 }
 
 export function VirtualNoteList({

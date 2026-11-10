@@ -8,12 +8,13 @@ import {
   nativeShortcut,
   normalizedKey,
   parseMarkdownTables,
+  rebaseServerRewrite,
   replaceMarkdownTable,
   splitTableCells,
   titleFromBody,
   toggleTask,
-  wikiTargets,
 } from "./note-utils";
+import { extractOutlineItems } from "./features/preview/Outline";
 
 describe("note identity and navigation helpers", () => {
   it("uses the first level-one heading as the title", () => {
@@ -23,11 +24,10 @@ describe("note identity and navigation helpers", () => {
     expect(fileStem("/notes/README.MD")).toBe("README");
   });
 
-  it("finds wiki-link targets while ignoring aliases", () => {
-    expect(wikiTargets("[[Project Alpha]] and [[Café Notes|the café]]")).toEqual([
-      "Project Alpha",
-      "Café Notes",
-    ]);
+  it("ignores headings inside fenced code and bare hash lines", () => {
+    expect(titleFromBody("```bash\n# install\n```\n# Real title")).toBe("Real title");
+    expect(titleFromBody("~~~~\n# code\n~~~\n# still code\n~~~~")).toBe("Untitled");
+    expect(titleFromBody("#\n\nBody text")).toBe("Untitled");
   });
 
   it("detects every persisted field that can be dirty", () => {
@@ -70,6 +70,35 @@ describe("interactive Markdown transformations", () => {
     expect(toggleTask(markdown, 99, true)).toBe(markdown);
   });
 
+  it("skips example tasks inside code and counts quoted tasks like the preview", () => {
+    const markdown = "```md\n- [ ] example\n```\n> - [ ] quoted\n- [ ] real";
+    expect(toggleTask(markdown, 0, true)).toBe(
+      "```md\n- [ ] example\n```\n> - [x] quoted\n- [ ] real",
+    );
+    expect(toggleTask(markdown, 1, true)).toBe(
+      "```md\n- [ ] example\n```\n> - [ ] quoted\n- [x] real",
+    );
+  });
+
+  it("lists only rendered headings in the outline, with source lines", () => {
+    const markdown = [
+      "# Plan ##",
+      "```sh",
+      "# not a heading",
+      "```",
+      "Setext title",
+      "============",
+      "> ## Quoted",
+      "- item",
+      "---",
+    ].join("\n");
+    expect(extractOutlineItems(markdown)).toEqual([
+      { index: 0, level: 1, title: "Plan", line: 1 },
+      { index: 1, level: 1, title: "Setext title", line: 5 },
+      { index: 2, level: 2, title: "Quoted", line: 7 },
+    ]);
+  });
+
   it("parses tables, alignment dividers, and escaped pipes", () => {
     expect(splitTableCells("| Name | A\\|B |")).toEqual(["Name", "A|B"]);
     const markdown = [
@@ -88,6 +117,13 @@ describe("interactive Markdown transformations", () => {
     ]);
   });
 
+  it("keeps short rows in the table and ignores tables inside code", () => {
+    const markdown = "```\n| a | b |\n| - | - |\n```\n| A | B |\n| --- | --- |\n| 1 |\n| 2 | 3 | 4 |";
+    expect(parseMarkdownTables(markdown)).toEqual([
+      { start: 4, end: 8, headers: ["A", "B"], rows: [["1", ""], ["2", "3"]] },
+    ]);
+  });
+
   it("replaces one table and safely escapes edited cell content", () => {
     const markdown = "# Plan\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nAfter";
     expect(
@@ -102,5 +138,27 @@ describe("layout bounds", () => {
     expect(clamp(100, 180, 520)).toBe(180);
     expect(clamp(700, 180, 520)).toBe(520);
     expect(clamp(320, 180, 520)).toBe(320);
+  });
+});
+
+describe("server rewrites after a rename", () => {
+  const sent = "# Trip\n![p](<Trip.assets/p.png>)\nText";
+  const saved = "# Trip\n![p](<Trip 2.assets/p.png>)\nText";
+
+  it("adopts the rewrite when nothing changed during the save", () => {
+    expect(rebaseServerRewrite(sent, saved, sent)).toBe(saved);
+    expect(rebaseServerRewrite(sent, sent, "# Edited")).toBe("# Edited");
+  });
+
+  it("keeps edits made during the save, even when lines moved", () => {
+    expect(
+      rebaseServerRewrite(sent, saved, "# Trip\nNew line\n![p](<Trip.assets/p.png>)\nText!"),
+    ).toBe("# Trip\nNew line\n![p](<Trip 2.assets/p.png>)\nText!");
+  });
+
+  it("leaves a line the user rewrote during the save alone", () => {
+    expect(rebaseServerRewrite(sent, saved, "# Trip\n![q](<Trip.assets/q.png>)\nText")).toBe(
+      "# Trip\n![q](<Trip.assets/q.png>)\nText",
+    );
   });
 });

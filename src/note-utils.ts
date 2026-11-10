@@ -14,8 +14,62 @@ export type MarkdownTable = {
   rows: string[][];
 };
 
+const fencePattern = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+export type FenceLine = "open" | "inside" | "close" | null;
+
+/** Classifies each line as a code-fence opener, closer, code, or prose. */
+export function scanFences(lines: readonly string[]): FenceLine[] {
+  let open: { marker: string; length: number } | null = null;
+  return lines.map((line) => {
+    const fence = fencePattern.exec(line);
+    if (open) {
+      if (
+        fence &&
+        fence[1][0] === open.marker &&
+        fence[1].length >= open.length &&
+        !fence[2].trim()
+      ) {
+        open = null;
+        return "close";
+      }
+      return "inside";
+    }
+    // A backtick fence's info string cannot itself contain a backtick.
+    if (fence && !(fence[1][0] === "`" && fence[2].includes("`"))) {
+      open = { marker: fence[1][0], length: fence[1].length };
+      return "open";
+    }
+    return null;
+  });
+}
+
+/**
+ * Marks every line that belongs to a fenced code block, including the fences.
+ * Content inside code is literal text: it never contributes a title, heading,
+ * task, or table, matching both the preview and the native title logic.
+ */
+export function fencedCodeLines(lines: readonly string[]): boolean[] {
+  return scanFences(lines).map((kind) => kind !== null);
+}
+
+/** Mirrors the native rule: the first `# ` line outside code is the title. */
 export function titleFromBody(body: string) {
-  return body.match(/^#\s+(.+)$/m)?.[1]?.trim() || "Untitled";
+  const lines = body.split("\n");
+  const fenced = fencedCodeLines(lines);
+  const index = lines.findIndex(
+    (line, lineIndex) => !fenced[lineIndex] && line.startsWith("# "),
+  );
+  return (index >= 0 && lines[index].slice(2).trim()) || "Untitled";
+}
+
+/** Decodes a URL component, keeping malformed escapes literal. */
+export function safeDecodeURIComponent(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 export function fileStem(path: string) {
@@ -24,12 +78,6 @@ export function fileStem(path: string) {
 
 export function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum);
-}
-
-export function wikiTargets(body: string) {
-  return [...body.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g)].map((match) =>
-    match[1].trim(),
-  );
 }
 
 export function hasUnsavedChanges(
@@ -43,6 +91,38 @@ export function hasUnsavedChanges(
     draft.body !== original.body ||
     draft.tags.join("\0") !== original.tags.join("\0")
   );
+}
+
+/**
+ * Applies a save's server-side rewrite to a draft that may have changed since.
+ *
+ * Renaming a note rewrites some lines of its body (companion image folders and
+ * self links) without adding or removing lines. Each rewritten line is carried
+ * into `current` at the nearest identical line, so edits made while the save
+ * was in flight are kept and the rewrite is not undone by the next save.
+ */
+export function rebaseServerRewrite(
+  sent: string,
+  saved: string,
+  current: string,
+) {
+  if (sent === saved) return current;
+  if (current === sent) return saved;
+  const sentLines = sent.split("\n");
+  const savedLines = saved.split("\n");
+  if (sentLines.length !== savedLines.length) return current;
+  const lines = current.split("\n");
+  sentLines.forEach((line, index) => {
+    if (line === savedLines[index]) return;
+    let match = -1;
+    for (let distance = 0; distance < lines.length; distance += 1) {
+      if (lines[index - distance] === line) match = index - distance;
+      else if (lines[index + distance] === line) match = index + distance;
+      if (match >= 0) break;
+    }
+    if (match >= 0) lines[match] = savedLines[index];
+  });
+  return lines.join("\n");
 }
 
 export function normalizedKey(
@@ -100,15 +180,27 @@ export function nativeShortcut(binding: string) {
     .join("+");
 }
 
-export function toggleTask(markdown: string, taskIndex: number, checked: boolean) {
+const taskPattern = /^((?:\s*>)*\s*(?:[-+*]|\d+[.)])\s+\[)[ xX](\])/;
+
+/** Sets the n-th task (in preview order) without touching code examples. */
+export function toggleTask(
+  markdown: string,
+  taskIndex: number,
+  checked: boolean,
+) {
+  const lines = markdown.split("\n");
+  const fenced = fencedCodeLines(lines);
   let current = 0;
-  return markdown.replace(
-    /^(\s*(?:[-+*]|\d+\.)\s+\[)[ xX](\])/gm,
-    (whole, before, after) =>
-      current++ === taskIndex
-        ? `${before}${checked ? "x" : " "}${after}`
-        : whole,
-  );
+  for (let index = 0; index < lines.length; index += 1) {
+    if (fenced[index] || !taskPattern.test(lines[index])) continue;
+    if (current++ !== taskIndex) continue;
+    lines[index] = lines[index].replace(
+      taskPattern,
+      (_, before, after) => `${before}${checked ? "x" : " "}${after}`,
+    );
+    return lines.join("\n");
+  }
+  return markdown;
 }
 
 export function splitTableCells(line: string) {
@@ -137,16 +229,28 @@ function isTableDivider(line: string) {
 
 export function parseMarkdownTables(markdown: string): MarkdownTable[] {
   const lines = markdown.split("\n");
+  const fenced = fencedCodeLines(lines);
   const tables: MarkdownTable[] = [];
   for (let index = 0; index < lines.length - 1; index += 1) {
-    if (!lines[index].includes("|") || !isTableDivider(lines[index + 1])) continue;
+    if (
+      fenced[index] ||
+      !lines[index].includes("|") ||
+      !isTableDivider(lines[index + 1])
+    )
+      continue;
     const headers = splitTableCells(lines[index]);
     let end = index + 2;
     const rows: string[][] = [];
-    while (end < lines.length && lines[end].includes("|") && !/^\s*$/.test(lines[end])) {
+    while (
+      end < lines.length &&
+      !fenced[end] &&
+      lines[end].includes("|") &&
+      !/^\s*$/.test(lines[end])
+    ) {
+      // GFM pads short rows and drops extra cells; the editor must keep them
+      // as part of the same table so applying an edit never leaves strays.
       const cells = splitTableCells(lines[end]);
-      if (cells.length < headers.length) break;
-      rows.push(cells.slice(0, headers.length));
+      rows.push(headers.map((_, column) => cells[column] ?? ""));
       end += 1;
     }
     tables.push({ start: index, end, headers, rows });
@@ -163,9 +267,14 @@ export function replaceMarkdownTable(
 ) {
   const table = parseMarkdownTables(markdown)[index];
   if (!table) return markdown;
-  const escape = (value: string) => value.replace(/\|/g, "\\|").replace(/\n/g, " ");
+  const escape = (value: string) =>
+    value.replace(/\|/g, "\\|").replace(/\n/g, " ");
   const line = (cells: string[]) => `| ${cells.map(escape).join(" | ")} |`;
-  const next = [line(headers), line(headers.map(() => "---")), ...rows.map(line)];
+  const next = [
+    line(headers),
+    line(headers.map(() => "---")),
+    ...rows.map(line),
+  ];
   const lines = markdown.split("\n");
   lines.splice(table.start, table.end - table.start, ...next);
   return lines.join("\n");

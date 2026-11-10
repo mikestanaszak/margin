@@ -106,19 +106,82 @@ fn split_front_matter(raw: &str) -> (FrontMatter, String) {
         .unwrap_or_else(|_| (FrontMatter::default(), front_matter_body(raw)))
 }
 
+/// Returns the opening fence's marker byte, run length, and remaining text.
+fn fence_marker(line: &str) -> Option<(u8, usize, &str)> {
+    let line = line.trim_end_matches(['\r', '\n']);
+    let indentation = line
+        .as_bytes()
+        .iter()
+        .take_while(|byte| **byte == b' ')
+        .count();
+    if indentation > 3 {
+        return None;
+    }
+    let content = &line[indentation..];
+    let marker = *content.as_bytes().first()?;
+    if !matches!(marker, b'`' | b'~') {
+        return None;
+    }
+    let run = content
+        .as_bytes()
+        .iter()
+        .take_while(|byte| **byte == marker)
+        .count();
+    (run >= 3).then_some((marker, run, &content[run..]))
+}
+
+/// Tracks fenced code blocks line by line. `consume` returns true when the
+/// line is a fence or inside fenced code, so it is literal text.
+#[derive(Default)]
+struct FenceTracker {
+    open: Option<(u8, usize)>,
+}
+
+impl FenceTracker {
+    fn consume(&mut self, line: &str) -> bool {
+        let marker = fence_marker(line);
+        if let Some((open_marker, open_length)) = self.open {
+            if let Some((marker, length, suffix)) = marker {
+                if marker == open_marker
+                    && length >= open_length
+                    && suffix.trim_matches([' ', '\t']).is_empty()
+                {
+                    self.open = None;
+                }
+            }
+            return true;
+        }
+        if let Some((marker, length, suffix)) = marker {
+            if marker == b'~' || !suffix.contains('`') {
+                self.open = Some((marker, length));
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// The first `# ` line outside fenced code is the note title.
+fn title_line_index<S: AsRef<str>>(lines: &[S]) -> Option<usize> {
+    let mut fences = FenceTracker::default();
+    lines.iter().position(|line| {
+        let line = line.as_ref();
+        !fences.consume(line) && line.starts_with("# ")
+    })
+}
+
 fn title_from_body(body: &str, fallback: &str) -> String {
-    body.lines()
-        .find_map(|line| {
-            line.strip_prefix("# ")
-                .map(|title| title.trim().to_string())
-        })
+    let lines = body.lines().collect::<Vec<_>>();
+    title_line_index(&lines)
+        .and_then(|index| lines[index].strip_prefix("# "))
+        .map(|title| title.trim().to_string())
         .filter(|title| !title.is_empty())
         .unwrap_or_else(|| fallback.to_string())
 }
 
 pub(crate) fn body_with_title(body: &str, title: &str) -> String {
     let mut lines = body.lines().map(str::to_string).collect::<Vec<_>>();
-    if let Some(index) = lines.iter().position(|line| line.starts_with("# ")) {
+    if let Some(index) = title_line_index(&lines) {
         lines[index] = format!("# {}", title);
     } else {
         lines.insert(0, format!("# {}", title));
@@ -132,9 +195,11 @@ pub(crate) fn body_with_title(body: &str, title: &str) -> String {
 }
 
 pub(crate) fn note_excerpt(body: &str) -> String {
+    let mut fences = FenceTracker::default();
     body.lines()
+        .filter(|line| !fences.consume(line))
         .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with("```"))
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .map(|line| line.trim_start_matches(['>', '-', '*', ' ']).trim())
         .collect::<Vec<_>>()
         .join(" ")
@@ -453,29 +518,6 @@ pub(crate) struct ScannedLink {
 /// Scans Markdown body text once for links that are visible to readers.
 /// Targets inside fenced or inline code are intentionally excluded.
 pub(crate) fn scan_markdown_links(body: &str) -> Vec<ScannedLink> {
-    fn fence_marker(line: &str) -> Option<(u8, usize, &str)> {
-        let line = line.trim_end_matches(['\r', '\n']);
-        let indentation = line
-            .as_bytes()
-            .iter()
-            .take_while(|byte| **byte == b' ')
-            .count();
-        if indentation > 3 {
-            return None;
-        }
-        let content = &line[indentation..];
-        let marker = *content.as_bytes().first()?;
-        if !matches!(marker, b'`' | b'~') {
-            return None;
-        }
-        let run = content
-            .as_bytes()
-            .iter()
-            .take_while(|byte| **byte == marker)
-            .count();
-        (run >= 3).then_some((marker, run, &content[run..]))
-    }
-
     fn is_inside_inline_code(line: &str, offset: usize) -> bool {
         let bytes = line.as_bytes();
         let mut cursor = 0;
@@ -500,28 +542,11 @@ pub(crate) fn scan_markdown_links(body: &str) -> Vec<ScannedLink> {
     }
 
     let mut links = Vec::new();
-    let mut fence = None;
+    let mut fences = FenceTracker::default();
     let mut line_start = 0;
 
     for line in body.split_inclusive('\n') {
-        if let Some((open_marker, open_length)) = fence {
-            if let Some((marker, length, suffix)) = fence_marker(line) {
-                if marker == open_marker
-                    && length >= open_length
-                    && suffix.trim_matches([' ', '\t']).is_empty()
-                {
-                    fence = None;
-                }
-            }
-            line_start += line.len();
-            continue;
-        }
-
-        if let Some((marker, length, suffix)) = fence_marker(line) {
-            let valid_opener = marker == b'~' || !suffix.contains('`');
-            if valid_opener {
-                fence = Some((marker, length));
-            }
+        if fences.consume(line) {
             line_start += line.len();
             continue;
         }
@@ -1526,7 +1551,7 @@ mod tests {
         rename_file_safely_with_forced_link_failure, rename_file_safely_with_hook, rename_folder,
         rename_note, resolve_relative_markdown_target, restore_note_from_trash, save_note,
         save_note_document, scan_markdown_links, split_front_matter, stage_file_updates,
-        LinkRewrite, LinkTarget, StagedUpdatePhase,
+        title_from_body, LinkRewrite, LinkTarget, StagedUpdatePhase,
     };
     #[cfg(unix)]
     use crate::library::load_library;
@@ -1570,6 +1595,31 @@ mod tests {
             "```md\n[[First-line fenced]]\n[First-line](First-line.md)\n```\n"
         )
         .is_empty());
+    }
+
+    #[test]
+    fn excerpts_skip_fenced_code() {
+        assert_eq!(
+            super::note_excerpt("# T\n\n```bash\nnpm install\n```\n~~~\nmore\n~~~\nProse here.\n"),
+            "Prose here."
+        );
+    }
+
+    #[test]
+    fn titles_ignore_headings_inside_fenced_code() {
+        let body = "```bash\n# install dependencies\n```\n\n# Real title\n";
+        assert_eq!(title_from_body(body, "Fallback"), "Real title");
+        assert_eq!(
+            body_with_title(body, "Renamed"),
+            "```bash\n# install dependencies\n```\n\n# Renamed\n"
+        );
+
+        let code_only = "~~~\n# not a title\n~~~\n";
+        assert_eq!(title_from_body(code_only, "Fallback"), "Fallback");
+        assert_eq!(
+            body_with_title(code_only, "Named"),
+            "# Named\n\n~~~\n# not a title\n~~~\n"
+        );
     }
 
     #[test]

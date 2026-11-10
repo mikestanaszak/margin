@@ -7,10 +7,38 @@ import remarkGfm from "remark-gfm";
 import { all as highlightLanguages } from "lowlight";
 import MermaidDiagram from "../../MermaidDiagram";
 import type { NoteSummary } from "../../app/types";
-import { parseMarkdownTables } from "../../note-utils";
-import { native } from "../../services/native";
+import { parseMarkdownTables, safeDecodeURIComponent } from "../../note-utils";
+import {
+  noteForMarkdownLink,
+  noteForWikiTitle,
+  openExternalLink,
+} from "./links";
 
-type MarkdownNode = { type?: string; lang?: string | null; checked?: boolean | null; children?: MarkdownNode[]; data?: { hProperties?: Record<string, unknown> } };
+type MarkdownNode = {
+  type?: string;
+  lang?: string | null;
+  checked?: boolean | null;
+  value?: string;
+  url?: string;
+  children?: MarkdownNode[];
+  position?: { start?: { line?: number } };
+  data?: { hProperties?: Record<string, unknown> };
+};
+type HeadingTag = "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
+
+const headingTags: HeadingTag[] = ["h1", "h2", "h3", "h4", "h5", "h6"];
+/** Headings expose their source line so the outline can find them exactly. */
+const headingComponents = Object.fromEntries(
+  headingTags.map((Tag) => [
+    Tag,
+    ({
+      node,
+      ...props
+    }: React.ComponentPropsWithoutRef<HeadingTag> & {
+      node?: MarkdownNode;
+    }) => <Tag {...props} data-source-line={node?.position?.start?.line} />,
+  ]),
+);
 
 export function MarkdownPreview({
   markdown,
@@ -31,30 +59,20 @@ export function MarkdownPreview({
   onToggleTask: (index: number, checked: boolean) => void;
   editable?: boolean;
 }) {
-  const resolved = useMemo(
-    () =>
-      markdown.replace(
-        /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
-        (_, title, label) =>
-          `[${label || title}](note:${encodeURIComponent(title.trim())})`,
-      ),
-    [markdown],
-  );
   const directory = notePath.replace(/[\\/][^\\/]+$/, "");
   const localAsset = (src?: string) => {
     if (!src || /^(https?:|data:|asset:)/i.test(src)) return src;
     const separator = directory.includes("\\") ? "\\" : "/";
     const parent = directory.replace(/[\\/]+$/, "");
-    let decoded = src;
-    try {
-      decoded = decodeURIComponent(src);
-    } catch {
-      // Keep malformed escapes literal so a bad Markdown URL cannot break preview.
-    }
+    // Keep malformed escapes literal so a bad Markdown URL cannot break preview.
+    const decoded = safeDecodeURIComponent(src);
     // Tauri's asset protocol rejects paths containing parent components.
     // Resolve them before conversion, preserving drive and UNC roots; native
     // asset scope checks still decide whether the final file may be read.
-    const root = parent.match(/^(?:\\\\\?\\UNC\\[^\\]+\\[^\\]+|\\\\\?\\[a-z]:|\\\\[^\\]+\\[^\\]+|[a-z]:|\/)/i)?.[0] ?? "";
+    const root =
+      parent.match(
+        /^(?:\\\\\?\\UNC\\[^\\]+\\[^\\]+|\\\\\?\\[a-z]:|\\\\[^\\]+\\[^\\]+|[a-z]:|\/)/i,
+      )?.[0] ?? "";
     const parts = parent.slice(root.length).split(/[\\/]/).filter(Boolean);
     for (const part of decoded.split(/[\\/]/)) {
       if (!part || part === ".") continue;
@@ -63,58 +81,14 @@ export function MarkdownPreview({
         parts.pop();
       } else parts.push(part);
     }
-    return convertFileSrc(`${root}${root.endsWith(separator) ? "" : separator}${parts.join(separator)}`);
-  };
-  const markdownTables = useMemo(() => parseMarkdownTables(markdown), [markdown]);
-  const normalizePath = (path: string) => {
-    const parts: string[] = [];
-    for (const part of path.replace(/\\/g, "/").split("/")) {
-      if (!part || part === ".") continue;
-      if (part === "..") {
-        parts.pop();
-        continue;
-      }
-      parts.push(part);
-    }
-    return parts.join("/").toLowerCase();
-  };
-  const markdownLinkTarget = (href?: string) => {
-    const relativePath = href?.split(/[?#]/, 1)[0];
-    if (
-      !relativePath ||
-      !/\.md$/i.test(relativePath) ||
-      /^[a-z][a-z\d+.-]*:/i.test(relativePath)
-    )
-      return undefined;
-    const targetPath = /^[\\/]|^[a-z]:[\\/]/i.test(relativePath)
-      ? relativePath
-      : `${directory}/${decodeURIComponent(relativePath)}`;
-    return notes.find(
-      (item) => normalizePath(item.path) === normalizePath(targetPath),
+    return convertFileSrc(
+      `${root}${root.endsWith(separator) ? "" : separator}${parts.join(separator)}`,
     );
   };
-  const externalUrl = (href?: string) => {
-    const value = href?.trim();
-    if (!value) return undefined;
-    if (/^(https?:|mailto:|tel:)/i.test(value)) return value;
-    return /^(?:www\.)?[a-z\d](?:[a-z\d-]*[a-z\d])?(?:\.[a-z\d-]+)+(?:[/?#].*)?$/i.test(
-      value,
-    )
-      ? `https://${value}`
-      : undefined;
-  };
-  const openExternal = (href?: string) => {
-    const url = externalUrl(href);
-    if (!url) {
-      onOpenExternalError(
-        "Could not open link: use a full web address such as https://example.com",
-      );
-      return;
-    }
-    void native.openExternalUrl(url).catch((error) =>
-      onOpenExternalError(String(error)),
-    );
-  };
+  const markdownTables = useMemo(
+    () => parseMarkdownTables(markdown),
+    [markdown],
+  );
   const togglePreviewTask = (event: React.MouseEvent<HTMLElement>) => {
     const input =
       event.target instanceof HTMLInputElement &&
@@ -147,9 +121,15 @@ export function MarkdownPreview({
         urlTransform={(url) =>
           url.startsWith("note:") ? url : defaultUrlTransform(url)
         }
-        remarkPlugins={[remarkGfm, annotateTaskIndexes, normalizeCodeLanguages]}
+        remarkPlugins={[
+          remarkGfm,
+          wikiLinks,
+          annotateTaskIndexes,
+          normalizeCodeLanguages,
+        ]}
         rehypePlugins={[[rehypeHighlight, { languages: highlightLanguages }]]}
         components={{
+          ...headingComponents,
           pre: ({ children, node: _node, ...props }) => {
             const child = React.Children.toArray(children)[0];
             if (
@@ -168,10 +148,8 @@ export function MarkdownPreview({
           },
           a: ({ href, children }) => {
             if (href?.startsWith("note:")) {
-              const title = decodeURIComponent(href.slice(5));
-              const target = notes.find(
-                (item) => item.title.toLowerCase() === title.toLowerCase(),
-              );
+              const title = safeDecodeURIComponent(href.slice(5));
+              const target = noteForWikiTitle(title, notes);
               return (
                 <a
                   href={href}
@@ -184,7 +162,7 @@ export function MarkdownPreview({
                 </a>
               );
             }
-            const target = markdownLinkTarget(href);
+            const target = noteForMarkdownLink(href, notePath, notes);
             if (target)
               return (
                 <a
@@ -202,7 +180,7 @@ export function MarkdownPreview({
                 href={href}
                 onClick={(event) => {
                   event.preventDefault();
-                  openExternal(href);
+                  openExternalLink(href, onOpenExternalError);
                 }}
               >
                 {children}
@@ -255,7 +233,7 @@ export function MarkdownPreview({
           },
         }}
       >
-        {resolved}
+        {markdown}
       </ReactMarkdown>
     </article>
   );
@@ -295,7 +273,9 @@ function PreviewCodeBlock({
 
   return (
     <div className="preview-code-block">
-      <pre ref={preRef} {...props}>{children}</pre>
+      <pre ref={preRef} {...props}>
+        {children}
+      </pre>
       <button
         type="button"
         className="preview-code-copy"
@@ -318,6 +298,51 @@ export function normalizeCodeLanguages() {
     visit(tree);
   };
 }
+const wikiLinkPattern = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
+
+/**
+ * Turns `[[Title]]` and `[[Title|label]]` in prose into note links. Running on
+ * the syntax tree keeps code blocks and inline code literal, so shell tests
+ * such as `[[ -f file ]]` render unchanged.
+ */
+export function wikiLinks() {
+  const linkify = (text: string): MarkdownNode[] => {
+    const nodes: MarkdownNode[] = [];
+    let cursor = 0;
+    for (const match of text.matchAll(wikiLinkPattern)) {
+      const start = match.index ?? 0;
+      if (start > cursor)
+        nodes.push({ type: "text", value: text.slice(cursor, start) });
+      nodes.push({
+        type: "link",
+        url: `note:${encodeURIComponent(match[1].trim())}`,
+        children: [{ type: "text", value: match[2] || match[1] }],
+      });
+      cursor = start + match[0].length;
+    }
+    if (cursor < text.length)
+      nodes.push({ type: "text", value: text.slice(cursor) });
+    return nodes;
+  };
+  return (tree: MarkdownNode) => {
+    const visit = (node: MarkdownNode) => {
+      if (
+        !node.children ||
+        node.type === "link" ||
+        node.type === "linkReference"
+      )
+        return;
+      node.children = node.children.flatMap((child) =>
+        child.type === "text" && child.value?.includes("[[")
+          ? linkify(child.value)
+          : [child],
+      );
+      node.children.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
 export function annotateTaskIndexes() {
   return (tree: MarkdownNode) => {
     let index = 0;

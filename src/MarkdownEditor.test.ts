@@ -3,6 +3,7 @@ import { EditorView } from "@codemirror/view";
 import { history, undo, undoDepth } from "@codemirror/commands";
 import {
   CompletionContext,
+  type Completion,
   completionStatus,
   startCompletion,
 } from "@codemirror/autocomplete";
@@ -13,12 +14,17 @@ import { createElement, createRef } from "react";
 import {
   applyHeading,
   captureViewState,
+  closeCodeFence,
+  exitEmptyListItem,
   insertLink,
   insertTable,
+  linkAt,
   MarkdownEditor,
   type MarkdownEditorHandle,
   codeFenceLanguageCompletions,
   selectionFromSaved,
+  toggleTaskAtCursor,
+  wikiLinkCompletions,
   wrapSelection,
 } from "./MarkdownEditor";
 import { isMac } from "./platform";
@@ -157,6 +163,87 @@ describe("Markdown editor formatting", () => {
     expect(view.state.doc.toString()).toBe("Make Margin calm");
   });
 
+  it("toggles italic with asterisks without disturbing bold", () => {
+    const word = editor("unbelievable", 2, 10);
+    wrapSelection(word, "*");
+    expect(word.state.doc.toString()).toBe("un*believab*le");
+
+    const bold = editor("**bold**", 2, 6);
+    wrapSelection(bold, "*");
+    expect(bold.state.doc.toString()).toBe("***bold***");
+    wrapSelection(bold, "*");
+    expect(bold.state.doc.toString()).toBe("**bold**");
+
+    const wholeBold = editor("**bold**", 0, 8);
+    wrapSelection(wholeBold, "*");
+    expect(wholeBold.state.doc.toString()).toBe("***bold***");
+
+    const both = editor("***both***", 3, 7);
+    wrapSelection(both, "**");
+    expect(both.state.doc.toString()).toBe("*both*");
+  });
+
+  it("closes a new code fence on Enter, but not one that is already closed", () => {
+    const open = editor("Intro\n  ~~~js", 13);
+    expect(closeCodeFence(open)).toBe(true);
+    expect(open.state.doc.toString()).toBe("Intro\n  ~~~js\n  \n  ~~~");
+    expect(open.state.selection.main.head).toBe(16);
+
+    const closed = editor("```\ncode\n```", 3);
+    expect(closeCodeFence(closed)).toBe(false);
+    expect(closeCodeFence(editor("```\ncode\n```", 12))).toBe(false);
+  });
+
+  it("ends a list with a blank line when Enter is pressed on an empty item", () => {
+    const view = editor("- one\n- two\n- ", 14);
+    expect(exitEmptyListItem(view)).toBe(true);
+    expect(view.state.doc.toString()).toBe("- one\n- two\n\n");
+    expect(view.state.selection.main.head).toBe(13);
+
+    expect(exitEmptyListItem(editor("- ", 2))).toBe(false);
+    expect(exitEmptyListItem(editor("- one\n  - ", 10))).toBe(false);
+    expect(exitEmptyListItem(editor("- one\n- two", 11))).toBe(false);
+  });
+
+  it("finds the link under the pointer", () => {
+    const line = "See [[Plan|the plan]], [docs](<Work/Read me.md>), ![img](a.png) or www.example.com.";
+    expect(linkAt(line, 8)).toEqual({ kind: "wiki", title: "Plan" });
+    expect(linkAt(line, 26)).toEqual({ kind: "href", href: "Work/Read me.md" });
+    expect(linkAt(line, 55)).toBeNull();
+    expect(linkAt(line, 70)).toEqual({ kind: "href", href: "www.example.com" });
+    expect(linkAt(line, 1)).toBeNull();
+  });
+
+  it("toggles tasks and turns list items and plain lines into tasks", () => {
+    const view = editor("- [ ] one\n> 2. two\nthree\n\n  - [x] four", 0, 34);
+    toggleTaskAtCursor(view);
+    expect(view.state.doc.toString()).toBe(
+      "- [x] one\n> 2. [ ] two\n- [ ] three\n\n  - [ ] four",
+    );
+  });
+
+  it("completes wiki links with note titles and closes the brackets", async () => {
+    const source = wikiLinkCompletions(() => ["Project Alpha", "Reading"]);
+    const view = editor("See [[pro", 9);
+    const result = await source(
+      new CompletionContext(view.state, 9, false),
+    );
+    expect(result?.from).toBe(6);
+    const option = result!.options[0] as Completion & {
+      apply: (view: EditorView, completion: Completion, from: number, to: number) => void;
+    };
+    option.apply(view, option, 6, 9);
+    expect(view.state.doc.toString()).toBe("See [[Project Alpha]]");
+    expect(view.state.selection.main.head).toBe(21);
+
+    const closed = editor("[[Re]] after", 4);
+    const closedOption = (await source(new CompletionContext(closed.state, 4, false)))!
+      .options[1] as typeof option;
+    closedOption.apply(closed, closedOption, 2, 4);
+    expect(closed.state.doc.toString()).toBe("[[Reading]] after");
+    expect(source(new CompletionContext(editor("[x]", 2).state, 2, false))).toBeNull();
+  });
+
   it("inserts a Markdown link with its cursor in the URL", () => {
     const view = editor("Open Margin", 5, 11);
     insertLink(view);
@@ -179,6 +266,14 @@ describe("Markdown editor formatting", () => {
     expect(view.state.selection.main.head).toBe(10);
   });
 
+  it("inserts a table after selected text instead of replacing it", () => {
+    const view = editor("Keep this text", 5, 9);
+    insertTable(view, 1, 1);
+    expect(view.state.doc.toString()).toBe(
+      "Keep this\n\n| Column 1 |\n| --- |\n|   |\n\n text",
+    );
+  });
+
   it("does not apply formatting shortcuts to read-only documents", () => {
     const onChange = vi.fn();
     const { container } = render(
@@ -196,6 +291,38 @@ describe("Markdown editor formatting", () => {
 
     expect(content).toHaveTextContent("Read-only external note");
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("applies italic, bold, and link shortcuts ahead of default bindings", () => {
+    const editorRef = createRef<MarkdownEditorHandle>();
+    const onChange = vi.fn();
+    const { container } = render(
+      createElement(MarkdownEditor, {
+        ref: editorRef,
+        notePath: "format.md",
+        value: "Make Margin calm",
+        onChange,
+      }),
+    );
+    const content = container.querySelector<HTMLElement>(".cm-content")!;
+    const view = editorRef.current!.getView()!;
+    const press = (key: string) =>
+      fireEvent.keyDown(content, { key, ctrlKey: !isMac, metaKey: isMac });
+    const bubbledToWindow = vi.fn();
+    window.addEventListener("keydown", bubbledToWindow);
+
+    try {
+      act(() => view.dispatch({ selection: { anchor: 5, head: 11 } }));
+      press("i");
+      expect(view.state.doc.toString()).toBe("Make *Margin* calm");
+      press("b");
+      expect(view.state.doc.toString()).toBe("Make ***Margin*** calm");
+      press("k");
+      expect(view.state.doc.toString()).toContain("[Margin]()");
+    } finally {
+      window.removeEventListener("keydown", bubbledToWindow);
+    }
+    expect(bubbledToWindow).not.toHaveBeenCalled();
   });
 
   it("keeps the primary Select All shortcut inside the editable note", () => {
@@ -352,6 +479,7 @@ describe("Markdown editor formatting", () => {
     });
 
     act(() => {
+      view?.focus();
       view?.dispatch({ selection: { anchor: 0, head: 6 } });
     });
 
@@ -366,6 +494,39 @@ describe("Markdown editor formatting", () => {
 });
 
 describe("editor view-state restoration", () => {
+  it("keeps the selection and undo history when the note is renamed", () => {
+    const editorRef = createRef<MarkdownEditorHandle>();
+    const props = { ref: editorRef, onChange: vi.fn() };
+    const { rerender } = render(
+      createElement(MarkdownEditor, { ...props, notePath: "Trip.md", value: "# Trip" }),
+    );
+    const view = editorRef.current!.getView()!;
+    act(() => {
+      view.dispatch({ changes: { from: 6, insert: " to" }, selection: { anchor: 9 } });
+    });
+    rerender(
+      createElement(MarkdownEditor, { ...props, notePath: "Trip to.md", value: "# Trip to" }),
+    );
+    expect(editorRef.current!.getView()).toBe(view);
+    expect(view.state.selection.main.head).toBe(9);
+    expect(undoDepth(view.state)).toBe(1);
+  });
+
+  it("applies external text changes without moving the cursor", () => {
+    const editorRef = createRef<MarkdownEditorHandle>();
+    const props = { ref: editorRef, onChange: vi.fn(), notePath: "a.md" };
+    const { rerender } = render(
+      createElement(MarkdownEditor, { ...props, value: "![x](<A.assets/x.png>)\nEnd" }),
+    );
+    const view = editorRef.current!.getView()!;
+    act(() => view.dispatch({ selection: { anchor: view.state.doc.length } }));
+    rerender(
+      createElement(MarkdownEditor, { ...props, value: "![x](<Longer.assets/x.png>)\nEnd" }),
+    );
+    expect(view.state.selection.main.head).toBe(view.state.doc.length);
+    expect(props.onChange).not.toHaveBeenCalled();
+  });
+
   it("captures scroll and clamps restored selections after external edits", () => {
     const view = editor("0123456789", 8, 10);
     view.scrollDOM.scrollTop = 120;

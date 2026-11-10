@@ -54,6 +54,7 @@ describe("noteSessionReducer", () => {
         draft,
         conflict,
         error: null,
+        editorSession: 1,
       },
       { type: "loadRequested" },
     );
@@ -148,5 +149,40 @@ describe("noteSessionReducer", () => {
         previousPath: "C:/Notes/Example.md",
       }),
     ).toEqual(initialNoteSessionState);
+  });
+
+  it("keeps the editor session across a rename and carries server rewrites", () => {
+    const opened = noteSessionReducer(initialNoteSessionState, {
+      type: "loadSucceeded",
+      note: note("# Trip\n![p](<Trip.assets/p.png>)"),
+    });
+    const sent = { ...opened.draft!, body: "# Trip to\n![p](<Trip.assets/p.png>)" };
+    const typing = noteSessionReducer(opened, {
+      type: "edited",
+      draft: { ...sent, body: "# Trip to Lisbon\n![p](<Trip.assets/p.png>)" },
+    });
+    const saved = noteSessionReducer(typing, {
+      type: "saveSucceeded",
+      previousPath: opened.draft!.path,
+      savedDraft: sent,
+      note: {
+        ...sent,
+        path: "C:/Notes/Trip to.md",
+        revision: "revision-2",
+        body: "# Trip to\n![p](<Trip to.assets/p.png>)",
+      },
+    });
+
+    expect(saved.editorSession).toBe(opened.editorSession);
+    expect(saved.phase).toBe("dirty");
+    expect(saved.draft?.body).toBe(
+      "# Trip to Lisbon\n![p](<Trip to.assets/p.png>)",
+    );
+
+    const other = noteSessionReducer(saved, {
+      type: "loadSucceeded",
+      note: { ...note("# Other"), path: "C:/Notes/Other.md" },
+    });
+    expect(other.editorSession).toBe(saved.editorSession + 1);
   });
 });
