@@ -16,12 +16,10 @@ export type MarkdownTable = {
 
 const fencePattern = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
-/**
- * Marks every line that belongs to a fenced code block, including the fences.
- * Content inside code is literal text: it never contributes a title, heading,
- * task, or table, matching both the preview and the native title logic.
- */
-export function fencedCodeLines(lines: readonly string[]): boolean[] {
+export type FenceLine = "open" | "inside" | "close" | null;
+
+/** Classifies each line as a code-fence opener, closer, code, or prose. */
+export function scanFences(lines: readonly string[]): FenceLine[] {
   let open: { marker: string; length: number } | null = null;
   return lines.map((line) => {
     const fence = fencePattern.exec(line);
@@ -31,17 +29,28 @@ export function fencedCodeLines(lines: readonly string[]): boolean[] {
         fence[1][0] === open.marker &&
         fence[1].length >= open.length &&
         !fence[2].trim()
-      )
+      ) {
         open = null;
-      return true;
+        return "close";
+      }
+      return "inside";
     }
     // A backtick fence's info string cannot itself contain a backtick.
     if (fence && !(fence[1][0] === "`" && fence[2].includes("`"))) {
       open = { marker: fence[1][0], length: fence[1].length };
-      return true;
+      return "open";
     }
-    return false;
+    return null;
   });
+}
+
+/**
+ * Marks every line that belongs to a fenced code block, including the fences.
+ * Content inside code is literal text: it never contributes a title, heading,
+ * task, or table, matching both the preview and the native title logic.
+ */
+export function fencedCodeLines(lines: readonly string[]): boolean[] {
+  return scanFences(lines).map((kind) => kind !== null);
 }
 
 /** Mirrors the native rule: the first `# ` line outside code is the title. */
@@ -82,6 +91,38 @@ export function hasUnsavedChanges(
     draft.body !== original.body ||
     draft.tags.join("\0") !== original.tags.join("\0")
   );
+}
+
+/**
+ * Applies a save's server-side rewrite to a draft that may have changed since.
+ *
+ * Renaming a note rewrites some lines of its body (companion image folders and
+ * self links) without adding or removing lines. Each rewritten line is carried
+ * into `current` at the nearest identical line, so edits made while the save
+ * was in flight are kept and the rewrite is not undone by the next save.
+ */
+export function rebaseServerRewrite(
+  sent: string,
+  saved: string,
+  current: string,
+) {
+  if (sent === saved) return current;
+  if (current === sent) return saved;
+  const sentLines = sent.split("\n");
+  const savedLines = saved.split("\n");
+  if (sentLines.length !== savedLines.length) return current;
+  const lines = current.split("\n");
+  sentLines.forEach((line, index) => {
+    if (line === savedLines[index]) return;
+    let match = -1;
+    for (let distance = 0; distance < lines.length; distance += 1) {
+      if (lines[index - distance] === line) match = index - distance;
+      else if (lines[index + distance] === line) match = index + distance;
+      if (match >= 0) break;
+    }
+    if (match >= 0) lines[match] = savedLines[index];
+  });
+  return lines.join("\n");
 }
 
 export function normalizedKey(

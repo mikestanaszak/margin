@@ -69,7 +69,6 @@ export function useModalLayer(onClose?: () => void) {
         previouslyFocused.focus({ preventScroll: true });
     };
     // A layer's depth is fixed for its lifetime.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return depth;
 }

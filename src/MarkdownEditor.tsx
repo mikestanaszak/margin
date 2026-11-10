@@ -11,6 +11,7 @@ import {
   closeBrackets,
   closeBracketsKeymap,
   completionKeymap,
+  completionStatus,
   type CompletionSource,
 } from "@codemirror/autocomplete";
 import {
@@ -21,21 +22,32 @@ import {
   selectAll,
 } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import {
+  HighlightStyle,
+  syntaxHighlighting,
+  syntaxTree,
+} from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import {
   EditorSelection,
   EditorState,
+  Prec,
+  RangeSetBuilder,
   Transaction,
   type Extension,
 } from "@codemirror/state";
 import {
+  Decoration,
   EditorView,
   keymap,
+  ViewPlugin,
+  type DecorationSet,
   type KeyBinding,
+  type ViewUpdate,
   placeholder as placeholderExtension,
 } from "@codemirror/view";
 import { all as highlightLanguages } from "lowlight";
+import { scanFences } from "./note-utils";
 
 export type MarkdownEditorProps = {
   /** Stable filesystem path (or another stable note ID) used for view restoration. */
@@ -118,10 +130,9 @@ const commonHighlightAliases = [
   "zsh",
 ];
 
-const codeFenceLanguageOptions = [...new Set([
-  ...Object.keys(highlightLanguages),
-  ...commonHighlightAliases,
-])]
+const codeFenceLanguageOptions = [
+  ...new Set([...Object.keys(highlightLanguages), ...commonHighlightAliases]),
+]
   .sort()
   .map((label) => ({ label, type: "keyword" }));
 
@@ -139,8 +150,7 @@ export const codeFenceLanguageCompletions: CompletionSource = (context) => {
 
 function isImageFile(file: File) {
   return (
-    file.type.startsWith("image/") ||
-    /\.(png|jpe?g|gif|webp)$/i.test(file.name)
+    file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(file.name)
   );
 }
 
@@ -173,8 +183,18 @@ function hasImageDataTransfer(data: DataTransfer | null) {
 
 // Colors come from the active palette so highlighting follows every theme.
 const markdownHighlightStyle = HighlightStyle.define([
-  { tag: tags.heading1, fontWeight: "750", fontSize: "1.25em", color: "var(--text)" },
-  { tag: tags.heading2, fontWeight: "720", fontSize: "1.12em", color: "var(--text)" },
+  {
+    tag: tags.heading1,
+    fontWeight: "750",
+    fontSize: "1.25em",
+    color: "var(--text)",
+  },
+  {
+    tag: tags.heading2,
+    fontWeight: "720",
+    fontSize: "1.12em",
+    color: "var(--text)",
+  },
   {
     tag: [tags.heading3, tags.heading4, tags.heading5, tags.heading6],
     fontWeight: "700",
@@ -182,7 +202,11 @@ const markdownHighlightStyle = HighlightStyle.define([
   },
   { tag: tags.strong, fontWeight: "700" },
   { tag: tags.emphasis, fontStyle: "italic" },
-  { tag: tags.strikethrough, textDecoration: "line-through", color: "var(--muted)" },
+  {
+    tag: tags.strikethrough,
+    textDecoration: "line-through",
+    color: "var(--muted)",
+  },
   { tag: [tags.link, tags.url], color: "var(--accent)" },
   { tag: tags.monospace, color: "var(--accent-strong)" },
   { tag: tags.quote, color: "var(--muted)", fontStyle: "italic" },
@@ -191,6 +215,56 @@ const markdownHighlightStyle = HighlightStyle.define([
     color: "var(--faint)",
   },
 ]);
+
+const codeLine = Decoration.line({ class: "cm-code-line" });
+
+/** Shades the lines of code blocks so they stand apart from prose. */
+function codeBlockLines(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  let lastLine = 0;
+  for (const { from, to } of view.visibleRanges) {
+    syntaxTree(view.state).iterate({
+      from,
+      to,
+      enter: (node) => {
+        if (node.name !== "FencedCode" && node.name !== "CodeBlock") return;
+        const first = view.state.doc.lineAt(node.from).number;
+        const last = view.state.doc.lineAt(node.to).number;
+        for (
+          let number = Math.max(first, lastLine + 1);
+          number <= last;
+          number++
+        )
+          builder.add(
+            view.state.doc.line(number).from,
+            view.state.doc.line(number).from,
+            codeLine,
+          );
+        lastLine = Math.max(lastLine, last);
+        return false;
+      },
+    });
+  }
+  return builder.finish();
+}
+
+const codeBlockShading = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) {
+      this.decorations = codeBlockLines(view);
+    }
+    update(update: ViewUpdate) {
+      if (
+        update.docChanged ||
+        update.viewportChanged ||
+        syntaxTree(update.startState) !== syntaxTree(update.state)
+      )
+        this.decorations = codeBlockLines(update.view);
+    }
+  },
+  { decorations: (plugin) => plugin.decorations },
+);
 
 const editorTheme = EditorView.theme({
   "&": {
@@ -215,10 +289,16 @@ const editorTheme = EditorView.theme({
     caretColor: "var(--accent)",
   },
   ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
-    backgroundColor: "color-mix(in srgb, var(--accent) 22%, transparent) !important",
+    backgroundColor:
+      "color-mix(in srgb, var(--accent) 22%, transparent) !important",
   },
   ".cm-placeholder": { color: "var(--faint)" },
   ".cm-line": { padding: "0" },
+  ".cm-line.cm-code-line": {
+    padding: "0 10px",
+    margin: "0 -10px",
+    backgroundColor: "var(--surface-soft)",
+  },
   ".cm-tooltip": {
     backgroundColor: "var(--surface)",
     border: "1px solid var(--border)",
@@ -248,7 +328,8 @@ export function selectionFromSaved(
   if (!saved?.ranges.length) {
     return EditorSelection.create([EditorSelection.cursor(0)]);
   }
-  const clamp = (position: number) => Math.max(0, Math.min(position, docLength));
+  const clamp = (position: number) =>
+    Math.max(0, Math.min(position, docLength));
   return EditorSelection.create(
     saved.ranges.map(({ anchor, head }) =>
       EditorSelection.range(clamp(anchor), clamp(head)),
@@ -281,7 +362,11 @@ function asteriskRun(text: string, fromEnd: boolean) {
   return Math.min(3, match?.[0].length ?? 0);
 }
 
-export function wrapSelection(view: EditorView, left: string, right = left): boolean {
+export function wrapSelection(
+  view: EditorView,
+  left: string,
+  right = left,
+): boolean {
   const { state } = view;
   const asterisks = left === right && /^\*{1,2}$/.test(left);
   const transaction = state.changeByRange((range) => {
@@ -296,7 +381,10 @@ export function wrapSelection(view: EditorView, left: string, right = left): boo
     const surroundingHasMarker = asterisks
       ? asteriskRunHasMarker(
           Math.min(
-            asteriskRun(state.sliceDoc(Math.max(0, range.from - 3), range.from), true),
+            asteriskRun(
+              state.sliceDoc(Math.max(0, range.from - 3), range.from),
+              true,
+            ),
             asteriskRun(state.sliceDoc(range.to, range.to + 3), false),
           ),
           left,
@@ -313,11 +401,7 @@ export function wrapSelection(view: EditorView, left: string, right = left): boo
       const inner = selected.slice(left.length, selected.length - right.length);
       return {
         changes: { from: range.from, to: range.to, insert: inner },
-        range: selectedRange(
-          range.from,
-          range.from + inner.length,
-          backwards,
-        ),
+        range: selectedRange(range.from, range.from + inner.length, backwards),
       };
     }
 
@@ -396,7 +480,12 @@ export function insertImage(view: EditorView, image: ImportedImage): boolean {
       range: EditorSelection.cursor(range.from + insert.length),
     };
   });
-  view.dispatch({ changes: transaction.changes, selection: transaction.selection, scrollIntoView: true, userEvent: "input" });
+  view.dispatch({
+    changes: transaction.changes,
+    selection: transaction.selection,
+    scrollIntoView: true,
+    userEvent: "input",
+  });
   return true;
 }
 
@@ -413,31 +502,105 @@ export function applyHeading(view: EditorView, level: number): boolean {
 
   view.dispatch({
     changes: { from: start.from, to: end.to, insert: replacement },
-    selection: EditorSelection.range(start.from, start.from + replacement.length),
+    selection: EditorSelection.range(
+      start.from,
+      start.from + replacement.length,
+    ),
     scrollIntoView: true,
     userEvent: "input",
   });
   return true;
 }
 
-export function insertTable(view: EditorView, requestedRows = 3, requestedColumns = 3): boolean {
+export function insertTable(
+  view: EditorView,
+  requestedRows = 3,
+  requestedColumns = 3,
+): boolean {
   const rows = Math.min(12, Math.max(1, Math.floor(requestedRows)));
   const columns = Math.min(8, Math.max(1, Math.floor(requestedColumns)));
   // Insert after any selected text rather than replacing it.
   const at = view.state.selection.main.to;
   const range = { from: at, to: at };
-  const header = Array.from({ length: columns }, (_, index) => ` Column ${index + 1} `);
+  const header = Array.from(
+    { length: columns },
+    (_, index) => ` Column ${index + 1} `,
+  );
   const divider = Array.from({ length: columns }, () => " --- ");
-  const body = Array.from({ length: rows }, () => Array.from({ length: columns }, () => "   "));
-  const table = [header, divider, ...body].map((cells) => `|${cells.join("|")}|`).join("\n");
-  const before = range.from > 0 && view.state.sliceDoc(range.from - 1, range.from) !== "\n" ? "\n\n" : "";
-  const after = range.to < view.state.doc.length && view.state.sliceDoc(range.to, range.to + 1) !== "\n" ? "\n\n" : "";
+  const body = Array.from({ length: rows }, () =>
+    Array.from({ length: columns }, () => "   "),
+  );
+  const table = [header, divider, ...body]
+    .map((cells) => `|${cells.join("|")}|`)
+    .join("\n");
+  const before =
+    range.from > 0 && view.state.sliceDoc(range.from - 1, range.from) !== "\n"
+      ? "\n\n"
+      : "";
+  const after =
+    range.to < view.state.doc.length &&
+    view.state.sliceDoc(range.to, range.to + 1) !== "\n"
+      ? "\n\n"
+      : "";
   const replacement = `${before}${table}${after}`;
   const cellStart = range.from + before.length + 2;
 
   view.dispatch({
     changes: { from: range.from, to: range.to, insert: replacement },
     selection: EditorSelection.cursor(cellStart),
+    scrollIntoView: true,
+    userEvent: "input",
+  });
+  return true;
+}
+
+/** True when the cursor is a single caret at the end of its line. */
+function caretAtLineEnd(view: EditorView) {
+  const { selection } = view.state;
+  const range = selection.main;
+  if (selection.ranges.length > 1 || !range.empty) return null;
+  const line = view.state.doc.lineAt(range.head);
+  return range.head === line.to ? line : null;
+}
+
+/**
+ * Enter after an opening code fence that is never closed adds the closing
+ * fence, so the rest of the note does not turn into code while typing.
+ */
+export function closeCodeFence(view: EditorView): boolean {
+  const line = caretAtLineEnd(view);
+  if (!line || completionStatus(view.state) === "active") return false;
+  const fence = /^( {0,3})(`{3,}|~{3,})/.exec(line.text);
+  if (!fence) return false;
+  const kinds = scanFences(view.state.doc.toString().split("\n"));
+  const index = line.number - 1;
+  if (kinds[index] !== "open" || kinds.slice(index + 1).includes("close"))
+    return false;
+  const [, indent, marker] = fence;
+  view.dispatch({
+    changes: { from: line.to, insert: `\n${indent}\n${indent}${marker}` },
+    selection: { anchor: line.to + 1 + indent.length },
+    scrollIntoView: true,
+    userEvent: "input",
+  });
+  return true;
+}
+
+const emptyListItem = /^(?:[-*+]|\d+[.)])(?: \[[ xX]\])?[ \t]*$/;
+const listLine = /^\s*(?:[-*+]|\d+[.)])(?:\s|$)|^\s+\S/;
+
+/**
+ * Enter on an empty top-level list item ends the list and leaves a blank
+ * line, so the next paragraph is not absorbed into the last item.
+ */
+export function exitEmptyListItem(view: EditorView): boolean {
+  const line = caretAtLineEnd(view);
+  if (!line || line.number === 1 || !emptyListItem.test(line.text))
+    return false;
+  if (!listLine.test(view.state.doc.line(line.number - 1).text)) return false;
+  view.dispatch({
+    changes: { from: line.from, to: line.to, insert: "\n" },
+    selection: { anchor: line.from + 1 },
     scrollIntoView: true,
     userEvent: "input",
   });
@@ -458,6 +621,24 @@ function formattingKeys(readOnly: boolean): KeyBinding[] {
     binding("Mod-i", (view) => wrapSelection(view, "*")),
     binding("Mod-k", insertLink),
   ];
+}
+
+function commonPrefixLength(left: string, right: string) {
+  const limit = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < limit && left[index] === right[index]) index += 1;
+  return index;
+}
+
+function commonSuffixLength(left: string, right: string, prefix: number) {
+  const limit = Math.min(left.length, right.length) - prefix;
+  let length = 0;
+  while (
+    length < limit &&
+    left[left.length - 1 - length] === right[right.length - 1 - length]
+  )
+    length += 1;
+  return length;
 }
 
 function saveViewState(notePath: string, view: EditorView): void {
@@ -493,7 +674,10 @@ export const MarkdownEditor = forwardRef<
   const onImageFileRef = useRef(onImageFile);
   const applyingControlledValueRef = useRef(false);
   const restoreFrameRef = useRef<number | null>(null);
-  const [toolbarPosition, setToolbarPosition] = useState<{ left: number; top: number } | null>(null);
+  const [toolbarPosition, setToolbarPosition] = useState<{
+    left: number;
+    top: number;
+  } | null>(null);
 
   onChangeRef.current = onChange;
   onBlurRef.current = onBlur;
@@ -540,6 +724,7 @@ export const MarkdownEditor = forwardRef<
     const extensions: Extension[] = [
       markdown(),
       syntaxHighlighting(markdownHighlightStyle),
+      codeBlockShading,
       autocompletion({ override: [codeFenceLanguageCompletions] }),
       history({ minDepth: 500, newGroupDelay: 300 }),
       closeBrackets(),
@@ -557,7 +742,8 @@ export const MarkdownEditor = forwardRef<
         if (update.docChanged && !applyingControlledValueRef.current) {
           onChangeRef.current(update.state.doc.toString());
         }
-        if (update.selectionSet || update.docChanged) updateToolbarPosition(update.view);
+        if (update.selectionSet || update.docChanged)
+          updateToolbarPosition(update.view);
       }),
       EditorView.domEventHandlers({
         blur: () => {
@@ -573,7 +759,11 @@ export const MarkdownEditor = forwardRef<
           return true;
         },
         dragover: (event) => {
-          if (!onImageFileRef.current || !hasImageDataTransfer(event.dataTransfer)) return false;
+          if (
+            !onImageFileRef.current ||
+            !hasImageDataTransfer(event.dataTransfer)
+          )
+            return false;
           event.preventDefault();
           return true;
         },
@@ -585,6 +775,20 @@ export const MarkdownEditor = forwardRef<
           return true;
         },
       }),
+      // Ahead of the Markdown keymap's own Enter (list continuation).
+      Prec.highest(
+        keymap.of(
+          readOnly
+            ? []
+            : [
+                {
+                  key: "Enter",
+                  run: (view) =>
+                    closeCodeFence(view) || exitEmptyListItem(view),
+                },
+              ],
+        ),
+      ),
       keymap.of([
         // Formatting precedes the default keymap, which binds Mod-i to
         // syntax selection. stopPropagation keeps app shortcuts (notably
@@ -641,50 +845,33 @@ export const MarkdownEditor = forwardRef<
     };
     // Editor configuration is fixed for this instance. Mutable callbacks use refs;
     // note and value updates are synchronized by the effect below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;
 
+    // The parent remounts the editor for a different note, so a new path on
+    // a mounted editor is the same document renamed (for example after its
+    // title changed). Keep the selection, scroll, and undo history.
     if (notePathRef.current !== notePath) {
-      setToolbarPosition(null);
-      saveViewState(notePathRef.current, view);
+      savedViewStates.delete(notePathRef.current);
       notePathRef.current = notePath;
-      // A title edit can rename the current file. When its document is
-      // unchanged, carry the active view state to the new path rather than
-      // treating it as a different note and jumping back to the top.
-      const currentViewState = captureViewState(view);
-      const renamedInPlace = view.state.doc.toString() === value;
-      const saved = savedViewStates.get(notePath) ?? (renamedInPlace ? currentViewState : undefined);
-
-      // A fresh EditorState prevents undo history from crossing note boundaries.
-      view.setState(
-        EditorState.create({
-          doc: value,
-          selection: selectionFromSaved(saved, value.length),
-          extensions: extensionsRef.current,
-        }),
-      );
-
-      if (restoreFrameRef.current !== null) {
-        window.cancelAnimationFrame(restoreFrameRef.current);
-      }
-      restoreFrameRef.current = window.requestAnimationFrame(() => {
-        view.scrollDOM.scrollTop = saved?.scrollTop ?? 0;
-      });
-      return;
     }
 
     const currentValue = view.state.doc.toString();
     if (currentValue !== value) {
-      const currentViewState = captureViewState(view);
+      // Apply only the changed span so the cursor and history map through it.
+      const prefix = commonPrefixLength(currentValue, value);
+      const suffix = commonSuffixLength(currentValue, value, prefix);
       applyingControlledValueRef.current = true;
       try {
         view.dispatch({
-          changes: { from: 0, to: view.state.doc.length, insert: value },
-          selection: selectionFromSaved(currentViewState, value.length),
+          changes: {
+            from: prefix,
+            to: currentValue.length - suffix,
+            insert: value.slice(prefix, value.length - suffix),
+          },
           annotations: Transaction.addToHistory.of(false),
         });
       } finally {
@@ -700,14 +887,56 @@ export const MarkdownEditor = forwardRef<
       style={{ minHeight: 0, ...style }}
       data-note-path={notePath}
     >
-      {!readOnly && toolbarPosition && <div className="markdown-editor-toolbar" style={toolbarPosition} role="toolbar" aria-label="Format selected text" onMouseDown={event => event.preventDefault()}>
-        <button type="button" title="Heading 2" onClick={() => viewRef.current && applyHeading(viewRef.current, 2)}>H2</button>
-        <button type="button" title="Heading 3" onClick={() => viewRef.current && applyHeading(viewRef.current, 3)}>H3</button>
-        <span aria-hidden="true" />
-        <button type="button" title="Bold" onClick={() => viewRef.current && wrapSelection(viewRef.current, "**")}>B</button>
-        <button type="button" title="Italic" onClick={() => viewRef.current && wrapSelection(viewRef.current, "*")}>I</button>
-        <button type="button" title="Link" onClick={() => viewRef.current && insertLink(viewRef.current)}>↗</button>
-      </div>}
+      {!readOnly && toolbarPosition && (
+        <div
+          className="markdown-editor-toolbar"
+          style={toolbarPosition}
+          role="toolbar"
+          aria-label="Format selected text"
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          <button
+            type="button"
+            title="Heading 2"
+            onClick={() => viewRef.current && applyHeading(viewRef.current, 2)}
+          >
+            H2
+          </button>
+          <button
+            type="button"
+            title="Heading 3"
+            onClick={() => viewRef.current && applyHeading(viewRef.current, 3)}
+          >
+            H3
+          </button>
+          <span aria-hidden="true" />
+          <button
+            type="button"
+            title="Bold"
+            onClick={() =>
+              viewRef.current && wrapSelection(viewRef.current, "**")
+            }
+          >
+            B
+          </button>
+          <button
+            type="button"
+            title="Italic"
+            onClick={() =>
+              viewRef.current && wrapSelection(viewRef.current, "*")
+            }
+          >
+            I
+          </button>
+          <button
+            type="button"
+            title="Link"
+            onClick={() => viewRef.current && insertLink(viewRef.current)}
+          >
+            ↗
+          </button>
+        </div>
+      )}
     </div>
   );
 });

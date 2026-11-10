@@ -8,6 +8,7 @@ import {
   nativeShortcut,
   normalizedKey,
   parseMarkdownTables,
+  rebaseServerRewrite,
   replaceMarkdownTable,
   splitTableCells,
   titleFromBody,
@@ -137,5 +138,27 @@ describe("layout bounds", () => {
     expect(clamp(100, 180, 520)).toBe(180);
     expect(clamp(700, 180, 520)).toBe(520);
     expect(clamp(320, 180, 520)).toBe(320);
+  });
+});
+
+describe("server rewrites after a rename", () => {
+  const sent = "# Trip\n![p](<Trip.assets/p.png>)\nText";
+  const saved = "# Trip\n![p](<Trip 2.assets/p.png>)\nText";
+
+  it("adopts the rewrite when nothing changed during the save", () => {
+    expect(rebaseServerRewrite(sent, saved, sent)).toBe(saved);
+    expect(rebaseServerRewrite(sent, sent, "# Edited")).toBe("# Edited");
+  });
+
+  it("keeps edits made during the save, even when lines moved", () => {
+    expect(
+      rebaseServerRewrite(sent, saved, "# Trip\nNew line\n![p](<Trip.assets/p.png>)\nText!"),
+    ).toBe("# Trip\nNew line\n![p](<Trip 2.assets/p.png>)\nText!");
+  });
+
+  it("leaves a line the user rewrote during the save alone", () => {
+    expect(rebaseServerRewrite(sent, saved, "# Trip\n![q](<Trip.assets/q.png>)\nText")).toBe(
+      "# Trip\n![q](<Trip.assets/q.png>)\nText",
+    );
   });
 });

@@ -195,9 +195,11 @@ pub(crate) fn body_with_title(body: &str, title: &str) -> String {
 }
 
 pub(crate) fn note_excerpt(body: &str) -> String {
+    let mut fences = FenceTracker::default();
     body.lines()
+        .filter(|line| !fences.consume(line))
         .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with("```"))
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .map(|line| line.trim_start_matches(['>', '-', '*', ' ']).trim())
         .collect::<Vec<_>>()
         .join(" ")
@@ -1593,6 +1595,14 @@ mod tests {
             "```md\n[[First-line fenced]]\n[First-line](First-line.md)\n```\n"
         )
         .is_empty());
+    }
+
+    #[test]
+    fn excerpts_skip_fenced_code() {
+        assert_eq!(
+            super::note_excerpt("# T\n\n```bash\nnpm install\n```\n~~~\nmore\n~~~\nProse here.\n"),
+            "Prose here."
+        );
     }
 
     #[test]

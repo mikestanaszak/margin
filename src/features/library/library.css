@@ -30,16 +30,16 @@
 .folder-row.selected .folder-icon { opacity: 1; stroke-width: 1.9; }
 .folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .folder-button small { padding-left: 6px; color: var(--faint); font-size: 11px; font-weight: 550; font-variant-numeric: tabular-nums; }
-.folder-delete, .folder-add, .folder-rename { flex: 0 0 22px; width: 22px; height: 22px; padding: 0; color: var(--faint); background: transparent; border: 0; border-radius: 5px; line-height: 1; opacity: 0; }
-.folder-delete { font-size: 16px; }.folder-add { font-size: 17px; }.folder-rename { font-size: 14px; }
+.folder-delete, .folder-add { flex: 0 0 22px; width: 22px; height: 22px; padding: 0; color: var(--faint); background: transparent; border: 0; border-radius: 5px; line-height: 1; opacity: 0; }
+.folder-delete { font-size: 16px; }.folder-add { font-size: 17px; }
 /* Hover actions overlay the count instead of permanently reserving width. */
 .folder-add, .folder-delete { position: absolute; top: 50%; transform: translateY(-50%); }
 .folder-add { right: 28px; }.folder-delete { right: 4px; }
 .folder-row:hover .folder-button, .folder-row:focus-within .folder-button { padding-right: 52px; }
 .folder-row:hover .folder-button small, .folder-row:focus-within .folder-button small { visibility: hidden; }
-.folder-row:hover .folder-delete, .folder-row:focus-within .folder-delete, .folder-row:hover .folder-add, .folder-row:focus-within .folder-add, .folder-row:hover .folder-rename, .folder-row:focus-within .folder-rename { opacity: 1; }
+.folder-row:hover .folder-delete, .folder-row:focus-within .folder-delete, .folder-row:hover .folder-add, .folder-row:focus-within .folder-add { opacity: 1; }
 .folder-delete:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
-.folder-add:hover, .folder-rename:hover { color: var(--accent-strong); background: var(--accent-soft); }
+.folder-add:hover { color: var(--accent-strong); background: var(--accent-soft); }
 .library-control { display: grid; gap: 7px; margin-top: auto; padding: 13px 5px 0; border-top: 1px solid var(--border); }
 .library-control button { width: fit-content; padding: 0; color: var(--accent); background: transparent; border: 0; font-size: 12px; }
 .library-control p { margin: 0; overflow: hidden; color: var(--faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }

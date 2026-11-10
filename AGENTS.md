@@ -4,8 +4,9 @@
 
 This is a local-first Markdown notes desktop application built with Tauri 2, React, TypeScript, and Rust.
 
-- `src/main.tsx` contains the React UI, state management, and calls to native commands; `src/styles.css` contains the application styles.
-- `src-tauri/src/lib.rs` implements Tauri commands for reading, indexing, creating, saving, moving, and renaming Markdown notes. `src-tauri/src/main.rs` boots the native app.
+- `src/app/App.tsx` composes the workspace and owns note sessions, autosave queues, and library state; `src/app/dialogs.tsx` and `src/app/preferences.ts` hold its dialogs and persisted preferences. `src/main.tsx` and `src/capture.tsx` are the main and Quick Capture window entries.
+- `src/features/` contains feature modules (library navigation, preview and outline, search, settings, templates, capture, updater, note session); `src/components/` holds shared UI such as `Modal`. `src/MarkdownEditor.tsx` is the CodeMirror editor, `src/note-utils.ts` the Markdown helpers, and `src/services/native.ts` the typed `invoke` boundary. Feature CSS lives beside its feature; `src/styles.css` holds palettes and shared defaults.
+- `src-tauri/src/lib.rs` registers the Tauri commands, implemented in `notes.rs` (note files, renames, link repair), `library.rs` (index, search, backlinks), `assets.rs` (companion images), `capture.rs` (Quick Capture and Daily imports), `windows.rs` (windows, tray, shortcuts, quit), and `paths.rs` (library containment and filenames). `src-tauri/src/main.rs` boots the native app.
 - `src-tauri/tauri.conf.json` and `src-tauri/capabilities/` configure Tauri; `src-tauri/icons/` holds generated platform icons.
 - `PRODUCT_SPEC.md` defines product behavior and the roadmap. Update it when a feature changes its documented scope.
 

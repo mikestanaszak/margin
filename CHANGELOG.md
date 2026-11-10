@@ -4,8 +4,19 @@ All notable user-facing changes to Margin are documented here.
 
 ## Unreleased
 
+### Improved
+
+- New notes open in Edit view with the title selected, ready to type.
+- Pressing Enter after an opening code fence adds the closing fence; Enter on an empty list item ends the list with a blank line so the next paragraph stands on its own.
+- Code blocks are shaded in the editor so they stand apart from prose.
+- Switching from Preview to Edit places the cursor where you were reading, so typing does not jump back to an earlier position.
+- In the search field, Enter opens the top result, Escape clears the search, and Down moves into the note list; Up and Down move between notes in the list.
+- Note card excerpts no longer show code-block contents or image syntax.
+
 ### Fixed
 
+- Pausing while typing a title no longer moves the cursor to the top of the note. The rename that follows keeps the cursor, scroll position, and undo history.
+- Renaming a note through its title keeps the editor in step with the rewritten image paths, so a later autosave no longer restores the old paths and lets cleanup remove the note's images.
 - Checking a task in Preview no longer toggles an example task inside a code block that appears earlier in the note; tasks inside block quotes are counted correctly.
 - Lines inside fenced code (such as `# install` shell comments) no longer become the note title, outline headings, or tables.
 - `[[ ... ]]` inside code blocks and inline code stays literal instead of turning into a note link.

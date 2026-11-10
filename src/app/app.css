@@ -43,10 +43,6 @@
 .actions { display: flex; flex: none; align-items: center; gap: 8px; }
 .actions > button { padding: 6px 7px; color: var(--muted); background: transparent; border: 0; border-radius: 6px; font-size: 12px; }
 .actions > button:hover { color: var(--text); background: var(--surface-soft); }
-.actions .danger, .actions .permanent-delete { color: var(--danger); }
-.actions .active-pin, .actions .active-outline { color: var(--accent-strong); background: var(--accent-soft); font-weight: 700; }
-.actions .permanent-delete { padding-inline: 8px; margin-left: 3px; border-left: 1px solid var(--border); }
-.actions .permanent-delete:hover { background: color-mix(in srgb, var(--danger) 11%, transparent); }
 .editor-tools { display: flex; align-items: center; gap: 2px; padding-right: 8px; margin-right: 2px; border-right: 1px solid var(--border); }
 .insert-table, .insert-image { min-height: 28px; padding: 4px 9px; color: var(--muted); background: transparent; border: 0; border-radius: 6px; font-size: 12px; }
 .insert-table:hover, .insert-image:hover { color: var(--accent-strong); background: var(--accent-soft); }

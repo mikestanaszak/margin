@@ -84,6 +84,7 @@ import {
   matchesShortcut,
   nativeShortcut,
   parseMarkdownTables,
+  rebaseServerRewrite,
   replaceMarkdownTable,
   titleFromBody,
   toggleTask,
@@ -134,6 +135,22 @@ function pathIsInLibrary(path: string, library: string) {
 /** True for `folder` itself and every folder nested inside it. */
 function inFolder(candidate: string, folder: string) {
   return candidate === folder || candidate.startsWith(`${folder}/`);
+}
+/**
+ * After restoring a scroll position, move an off-screen caret to the first
+ * visible line so typing continues where the reader was looking.
+ */
+function keepCaretInView(view: EditorView) {
+  const bounds = view.scrollDOM.getBoundingClientRect();
+  const caret = view.coordsAtPos(view.state.selection.main.head);
+  if (
+    !caret ||
+    !bounds.height ||
+    (caret.top >= bounds.top && caret.bottom <= bounds.bottom)
+  )
+    return;
+  const line = view.lineBlockAtHeight(bounds.top + 24 - view.documentTop);
+  view.dispatch({ selection: { anchor: line.from } });
 }
 /** Daily imports are only accepted from the library's top-level Daily folder. */
 function isDailyFolder(folder: string) {
@@ -188,10 +205,8 @@ export function App() {
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [tableDialogOpen, setTableDialogOpen] = useState(false);
   const [tableEditorIndex, setTableEditorIndex] = useState<number | null>(null);
-  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
-  const [folderDialogParent, setFolderDialogParent] = useState<string | null>(
-    null,
-  );
+  // The parent folder for a new folder; "" creates one at the top level.
+  const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
   const [folderRenameTarget, setFolderRenameTarget] = useState<string | null>(
     null,
   );
@@ -287,6 +302,8 @@ export function App() {
   const activeQuitRequestId = useRef<number | null>(null);
   const quitFlushTail = useRef(Promise.resolve());
   const internallyMovedPath = useRef<string | null>(null);
+  // A freshly created blank note opens with its title selected for typing.
+  const selectTitleOf = useRef<string | null>(null);
   const registeredCaptureShortcut = useRef(defaultShortcuts.quickCapture);
   const viewScrollRatios = useRef(new Map<string, number>());
   const setFailedSaveRecovery = useCallback(
@@ -759,10 +776,21 @@ export function App() {
             target.scrollTop =
               ratio * Math.max(0, target.scrollHeight - target.clientHeight);
         }
+        const view = editor.current?.getView();
+        if (view && mode !== "preview") keepCaretInView(view);
       }),
     );
     return () => window.cancelAnimationFrame(frame);
   }, [mode, note?.path]);
+  useEffect(() => {
+    const view = editor.current?.getView();
+    if (!note || !view || selectTitleOf.current !== note.path) return;
+    selectTitleOf.current = null;
+    const title = view.state.doc.line(1);
+    if (title.text.startsWith("# "))
+      view.dispatch({ selection: { anchor: title.from + 2, head: title.to } });
+    view.focus();
+  }, [mode, note?.path, noteSession.editorSession]);
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       // Dialogs own the keyboard while open; app shortcuts must not act
@@ -872,6 +900,10 @@ export function App() {
         else throw new Error(result.message);
       }
       await refresh();
+      if (!body) {
+        selectTitleOf.current = saved.path;
+        setMode((current) => (current === "preview" ? "edit" : current));
+      }
       setActivePath(saved.path);
       setStatus(folder ? `New note created in ${folder}` : "New note created");
     } catch (error) {
@@ -896,7 +928,7 @@ export function App() {
       const created = await native.createFolder(library, folder);
       await refresh();
       setFilter({ type: "folder", folder: created });
-      setFolderDialogOpen(false);
+      setNewFolderParent(null);
     } catch (error) {
       setStatus(`Could not create folder: ${String(error)}`);
     }
@@ -1017,6 +1049,11 @@ export function App() {
       if (ownedDraft)
         latestSaveDrafts.current.set(queueKey, {
           ...ownedDraft,
+          body: rebaseServerRewrite(
+            noteToSave.body,
+            saved.body,
+            ownedDraft.body,
+          ),
           path: saved.path,
           revision: saved.revision,
           updated: saved.updated,
@@ -1417,7 +1454,7 @@ export function App() {
   }, [importImage]);
   const noteEditor = note ? (
     <MarkdownEditor
-      key={`${note.path}-${isManagedNote ? "managed" : "external"}`}
+      key={`${noteSession.editorSession}-${isManagedNote ? "managed" : "external"}`}
       ref={editor}
       notePath={note.path}
       value={note.body}
@@ -1750,6 +1787,20 @@ export function App() {
             id="note-search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && visibleNotes[0]) {
+                event.preventDefault();
+                openNote(visibleNotes[0]);
+              } else if (event.key === "Escape" && query) {
+                event.preventDefault();
+                setQuery("");
+              } else if (event.key === "ArrowDown") {
+                event.preventDefault();
+                document
+                  .querySelector<HTMLElement>(".note-list .nr-note-main")
+                  ?.focus();
+              }
+            }}
             placeholder="Search notes"
           />
           <kbd>{formatShortcut(shortcuts.search)}</kbd>
@@ -1797,8 +1848,7 @@ export function App() {
         onShowFavorites={() => setFilter({ type: "favorites" })}
         onShowTrash={() => setFilter({ type: "trash" })}
         onCreateFolder={() => {
-          setFolderDialogParent(null);
-          setFolderDialogOpen(true);
+          setNewFolderParent("");
         }}
         onSelectFolder={(folder) => setFilter({ type: "folder", folder })}
         onToggleFolder={(folder) =>
@@ -1809,8 +1859,7 @@ export function App() {
           )
         }
         onAddSubfolder={(folder) => {
-          setFolderDialogParent(folder);
-          setFolderDialogOpen(true);
+          setNewFolderParent(folder);
         }}
         onRenameFolder={setFolderRenameTarget}
         onDeleteFolder={(folder) => void deleteFolder(folder)}
@@ -2041,22 +2090,22 @@ export function App() {
             }}
           />
         )}
-      {folderDialogOpen && (
+      {newFolderParent !== null && (
         <FolderDialog
-          onClose={() => setFolderDialogOpen(false)}
+          onClose={() => setNewFolderParent(null)}
           onSubmit={(name) =>
             void createFolder(
-              folderDialogParent ? `${folderDialogParent}/${name}` : name,
+              newFolderParent ? `${newFolderParent}/${name}` : name,
             )
           }
-          title={folderDialogParent ? "Add subfolder" : "New folder"}
+          title={newFolderParent ? "Add subfolder" : "New folder"}
           description={
-            folderDialogParent
-              ? `Create a folder inside ${folderDialogParent}.`
+            newFolderParent
+              ? `Create a folder inside ${newFolderParent}.`
               : "Folders are normal folders inside your notes library."
           }
-          placeholder={folderDialogParent ? "Folder name" : "Projects/Website"}
-          submitLabel={folderDialogParent ? "Add subfolder" : "Create folder"}
+          placeholder={newFolderParent ? "Folder name" : "Projects/Website"}
+          submitLabel={newFolderParent ? "Add subfolder" : "Create folder"}
         />
       )}
       {folderRenameTarget && (

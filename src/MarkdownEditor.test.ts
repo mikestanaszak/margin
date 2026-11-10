@@ -13,6 +13,8 @@ import { createElement, createRef } from "react";
 import {
   applyHeading,
   captureViewState,
+  closeCodeFence,
+  exitEmptyListItem,
   insertLink,
   insertTable,
   MarkdownEditor,
@@ -175,6 +177,28 @@ describe("Markdown editor formatting", () => {
     const both = editor("***both***", 3, 7);
     wrapSelection(both, "**");
     expect(both.state.doc.toString()).toBe("*both*");
+  });
+
+  it("closes a new code fence on Enter, but not one that is already closed", () => {
+    const open = editor("Intro\n  ~~~js", 13);
+    expect(closeCodeFence(open)).toBe(true);
+    expect(open.state.doc.toString()).toBe("Intro\n  ~~~js\n  \n  ~~~");
+    expect(open.state.selection.main.head).toBe(16);
+
+    const closed = editor("```\ncode\n```", 3);
+    expect(closeCodeFence(closed)).toBe(false);
+    expect(closeCodeFence(editor("```\ncode\n```", 12))).toBe(false);
+  });
+
+  it("ends a list with a blank line when Enter is pressed on an empty item", () => {
+    const view = editor("- one\n- two\n- ", 14);
+    expect(exitEmptyListItem(view)).toBe(true);
+    expect(view.state.doc.toString()).toBe("- one\n- two\n\n");
+    expect(view.state.selection.main.head).toBe(13);
+
+    expect(exitEmptyListItem(editor("- ", 2))).toBe(false);
+    expect(exitEmptyListItem(editor("- one\n  - ", 10))).toBe(false);
+    expect(exitEmptyListItem(editor("- one\n- two", 11))).toBe(false);
   });
 
   it("inserts a Markdown link with its cursor in the URL", () => {
@@ -426,6 +450,39 @@ describe("Markdown editor formatting", () => {
 });
 
 describe("editor view-state restoration", () => {
+  it("keeps the selection and undo history when the note is renamed", () => {
+    const editorRef = createRef<MarkdownEditorHandle>();
+    const props = { ref: editorRef, onChange: vi.fn() };
+    const { rerender } = render(
+      createElement(MarkdownEditor, { ...props, notePath: "Trip.md", value: "# Trip" }),
+    );
+    const view = editorRef.current!.getView()!;
+    act(() => {
+      view.dispatch({ changes: { from: 6, insert: " to" }, selection: { anchor: 9 } });
+    });
+    rerender(
+      createElement(MarkdownEditor, { ...props, notePath: "Trip to.md", value: "# Trip to" }),
+    );
+    expect(editorRef.current!.getView()).toBe(view);
+    expect(view.state.selection.main.head).toBe(9);
+    expect(undoDepth(view.state)).toBe(1);
+  });
+
+  it("applies external text changes without moving the cursor", () => {
+    const editorRef = createRef<MarkdownEditorHandle>();
+    const props = { ref: editorRef, onChange: vi.fn(), notePath: "a.md" };
+    const { rerender } = render(
+      createElement(MarkdownEditor, { ...props, value: "![x](<A.assets/x.png>)\nEnd" }),
+    );
+    const view = editorRef.current!.getView()!;
+    act(() => view.dispatch({ selection: { anchor: view.state.doc.length } }));
+    rerender(
+      createElement(MarkdownEditor, { ...props, value: "![x](<Longer.assets/x.png>)\nEnd" }),
+    );
+    expect(view.state.selection.main.head).toBe(view.state.doc.length);
+    expect(props.onChange).not.toHaveBeenCalled();
+  });
+
   it("captures scroll and clamps restored selections after external edits", () => {
     const view = editor("0123456789", 8, 10);
     view.scrollDOM.scrollTop = 120;
