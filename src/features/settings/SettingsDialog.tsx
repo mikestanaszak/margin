@@ -65,6 +65,8 @@ function ShortcutRecorder({
 export function SettingsDialog({
   theme,
   onTheme,
+  editorFont,
+  onEditorFont,
   palette,
   onPalette,
   shortcuts,
@@ -83,6 +85,8 @@ export function SettingsDialog({
 }: {
   theme: "system" | "light" | "dark";
   onTheme: (theme: "system" | "light" | "dark") => void;
+  editorFont: "mono" | "sans";
+  onEditorFont: (font: "mono" | "sans") => void;
   palette: Palette;
   onPalette: (palette: Palette) => void;
   shortcuts: Shortcuts;
@@ -128,6 +132,18 @@ export function SettingsDialog({
           <option value="system">System</option>
           <option value="light">Light</option>
           <option value="dark">Dark</option>
+        </select>
+      </label>
+      <label className="setting-row">
+        Editor font
+        <select
+          value={editorFont}
+          onChange={(event) =>
+            onEditorFont(event.target.value === "sans" ? "sans" : "mono")
+          }
+        >
+          <option value="mono">Monospace</option>
+          <option value="sans">Sans-serif</option>
         </select>
       </label>
       <fieldset className="palette-picker">

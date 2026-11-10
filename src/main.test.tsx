@@ -984,7 +984,7 @@ describe("navigation structures and safety dialogs", () => {
 
   it("closes settings with Escape while retaining a scrollable settings panel", () => {
     const onClose = vi.fn();
-    render(<SettingsDialog theme="system" onTheme={() => undefined} palette="mint" onPalette={() => undefined} shortcuts={{ newNote: "ctrl+n", search: "ctrl+k", switcher: "ctrl+p", save: "ctrl+s", view: "ctrl+e", sidebar: "ctrl+\\", outline: "ctrl+shift+o", quickCapture: "ctrl+alt+shift+space" }} onShortcuts={() => undefined} quickCaptureStatus="Ready" library="C:/Notes" quickImportTargets={notes} quickImportDefaultPath="" onQuickImportDefaultPath={() => undefined} updateState="idle" updateMessage="" onCheckForUpdates={() => undefined} onChangeLibrary={() => undefined} onClose={onClose} />);
+    render(<SettingsDialog theme="system" onTheme={() => undefined} editorFont="mono" onEditorFont={() => undefined} palette="mint" onPalette={() => undefined} shortcuts={{ newNote: "ctrl+n", search: "ctrl+k", switcher: "ctrl+p", save: "ctrl+s", view: "ctrl+e", sidebar: "ctrl+\\", outline: "ctrl+shift+o", quickCapture: "ctrl+alt+shift+space" }} onShortcuts={() => undefined} quickCaptureStatus="Ready" library="C:/Notes" quickImportTargets={notes} quickImportDefaultPath="" onQuickImportDefaultPath={() => undefined} updateState="idle" updateMessage="" onCheckForUpdates={() => undefined} onChangeLibrary={() => undefined} onClose={onClose} />);
     expect(screen.getByRole("button", { name: "Change library" })).toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "Settings" }).parentElement).toHaveClass("settings-backdrop");
     fireEvent.keyDown(window, { key: "Escape" });
@@ -995,7 +995,7 @@ describe("navigation structures and safety dialogs", () => {
     render(
       <SettingsDialog
         theme="system"
-        onTheme={() => undefined}
+        onTheme={() => undefined} editorFont="mono" onEditorFont={() => undefined}
         palette="mint"
         onPalette={() => undefined}
         shortcuts={{
@@ -1671,6 +1671,8 @@ describe("navigation structures and safety dialogs", () => {
         onPalette={() => undefined}
         theme="system"
         onTheme={() => undefined}
+        editorFont="mono"
+        onEditorFont={() => undefined}
         shortcuts={{ newNote: "ctrl+n", search: "ctrl+k", switcher: "ctrl+p", save: "ctrl+s", view: "ctrl+e", sidebar: "ctrl+\\", outline: "ctrl+shift+o", quickCapture: "ctrl+alt+shift+space" }}
         onShortcuts={() => undefined}
         quickCaptureStatus="Ready"

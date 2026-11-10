@@ -48,6 +48,8 @@ import {
 } from "@codemirror/view";
 import { all as highlightLanguages } from "lowlight";
 import { scanFences } from "./note-utils";
+import { isMac } from "./platform";
+import { search, searchKeymap } from "@codemirror/search";
 
 export type MarkdownEditorProps = {
   /** Stable filesystem path (or another stable note ID) used for view restoration. */
@@ -63,7 +65,15 @@ export type MarkdownEditorProps = {
   autoFocus?: boolean;
   spellCheck?: boolean;
   readOnly?: boolean;
+  /** Note titles offered after typing `[[`. */
+  linkTargets?: readonly string[];
+  /** Called for Cmd/Ctrl+click on a link. */
+  onFollowLink?: (link: EditorLink) => void;
 };
+
+export type EditorLink =
+  | { kind: "wiki"; title: string }
+  | { kind: "href"; href: string };
 
 export type MarkdownEditorHandle = {
   focus: () => void;
@@ -208,7 +218,11 @@ const markdownHighlightStyle = HighlightStyle.define([
     color: "var(--muted)",
   },
   { tag: [tags.link, tags.url], color: "var(--accent)" },
-  { tag: tags.monospace, color: "var(--accent-strong)" },
+  {
+    tag: tags.monospace,
+    color: "var(--accent-strong)",
+    fontFamily: "var(--mono-font)",
+  },
   { tag: tags.quote, color: "var(--muted)", fontStyle: "italic" },
   {
     tag: [tags.processingInstruction, tags.meta, tags.contentSeparator],
@@ -277,10 +291,10 @@ const editorTheme = EditorView.theme({
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": {
     overflow: "auto",
-    fontFamily:
-      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+    // Chosen in Settings; code always stays monospace.
+    fontFamily: "var(--editor-font)",
     lineHeight: "1.7",
-    fontSize: "14px",
+    fontSize: "var(--editor-font-size)",
   },
   ".cm-content": {
     minHeight: "100%",
@@ -295,6 +309,7 @@ const editorTheme = EditorView.theme({
   ".cm-placeholder": { color: "var(--faint)" },
   ".cm-line": { padding: "0" },
   ".cm-line.cm-code-line": {
+    fontFamily: "var(--mono-font)",
     padding: "0 10px",
     margin: "0 -10px",
     backgroundColor: "var(--surface-soft)",
@@ -310,6 +325,56 @@ const editorTheme = EditorView.theme({
     color: "var(--text)",
   },
   ".cm-completionDetail": { color: "var(--muted)" },
+  ".cm-panels": {
+    backgroundColor: "var(--surface-soft)",
+    color: "var(--text)",
+  },
+  ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--border)" },
+  ".cm-search": {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "6px",
+    padding: "8px 12px",
+    fontFamily: "inherit",
+    fontSize: "12px",
+  },
+  ".cm-search br": { flexBasis: "100%", height: "0" },
+  ".cm-search label": {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    color: "var(--muted)",
+  },
+  ".cm-textfield": {
+    minWidth: "180px",
+    padding: "5px 8px",
+    color: "var(--text)",
+    backgroundColor: "var(--surface)",
+    border: "1px solid var(--border)",
+    borderRadius: "6px",
+    fontSize: "12px",
+  },
+  ".cm-button": {
+    padding: "4px 9px",
+    color: "var(--text)",
+    backgroundImage: "none",
+    backgroundColor: "var(--surface)",
+    border: "1px solid var(--border)",
+    borderRadius: "6px",
+    fontSize: "12px",
+  },
+  ".cm-search button[name=close]": {
+    marginLeft: "auto",
+    color: "var(--muted)",
+    fontSize: "16px",
+  },
+  ".cm-searchMatch": {
+    backgroundColor: "color-mix(in srgb, var(--accent) 18%, transparent)",
+  },
+  ".cm-searchMatch.cm-searchMatch-selected": {
+    backgroundColor: "color-mix(in srgb, var(--accent) 38%, transparent)",
+  },
 });
 
 export function captureViewState(view: EditorView): SavedViewState {
@@ -554,6 +619,111 @@ export function insertTable(
   return true;
 }
 
+// CodeMirror's search panel labels, in the app's sentence case.
+const searchPhrases = {
+  Find: "Find",
+  Replace: "Replace",
+  next: "Next",
+  previous: "Previous",
+  all: "All",
+  "match case": "Match case",
+  regexp: "Regex",
+  "by word": "Whole word",
+  replace: "Replace",
+  "replace all": "Replace all",
+  close: "Close",
+};
+
+function linkMatchAt(
+  text: string,
+  offset: number,
+  pattern: RegExp,
+): RegExpMatchArray | null {
+  for (const match of text.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    if (offset >= start && offset <= start + match[0].length) return match;
+  }
+  return null;
+}
+
+/** The wiki link, Markdown link, or bare URL at `offset` within a line. */
+export function linkAt(text: string, offset: number): EditorLink | null {
+  const wiki = linkMatchAt(text, offset, /\[\[([^\]|\n]+)(?:\|[^\]\n]+)?\]\]/g);
+  if (wiki) return { kind: "wiki", title: wiki[1].trim() };
+  const markdown = linkMatchAt(
+    text,
+    offset,
+    /(!?)\[[^\]\n]*\]\(\s*(<[^>\n]*>|[^)\s]+)(?:\s+"[^"]*")?\s*\)/g,
+  );
+  // Images are not links to follow.
+  if (markdown && !markdown[1])
+    return { kind: "href", href: markdown[2].replace(/^<|>$/g, "") };
+  const url = linkMatchAt(text, offset, /\b(?:https?:\/\/|www\.)[^\s<>()\]]+/g);
+  // Sentence punctuation after a bare URL is not part of it.
+  return url ? { kind: "href", href: url[0].replace(/[.,;:!?]+$/, "") } : null;
+}
+
+const wikiLinkStart = /\[\[[^[\]|\n]*$/;
+
+/** Suggests note titles inside `[[...]]`, completing the closing brackets. */
+export function wikiLinkCompletions(
+  titles: () => readonly string[],
+): CompletionSource {
+  return (context) => {
+    const match = context.matchBefore(wikiLinkStart);
+    if (!match) return null;
+    const from = match.from + 2;
+    return {
+      from,
+      validFor: /^[^[\]|\n]*$/,
+      options: titles().map((title) => ({
+        label: title,
+        type: "text",
+        apply: (view, _completion, start, end) => {
+          const closed = view.state.sliceDoc(end, end + 2) === "]]";
+          const insert = closed ? title : `${title}]]`;
+          view.dispatch({
+            changes: { from: start, to: end, insert },
+            selection: { anchor: start + title.length + 2 },
+            userEvent: "input.complete",
+          });
+        },
+      })),
+    };
+  };
+}
+
+const taskLine = /^(\s*(?:>\s*)*)(?:([-+*]|\d+[.)])(\s+))?(?:\[([ xX])\]\s?)?/;
+
+/**
+ * Toggles the checkbox on each selected line. A list item without a
+ * checkbox gains one, and a plain line becomes a task.
+ */
+export function toggleTaskAtCursor(view: EditorView): boolean {
+  const { state } = view;
+  const lines = new Set<number>();
+  for (const range of state.selection.ranges) {
+    const first = state.doc.lineAt(range.from).number;
+    const last = state.doc.lineAt(range.to).number;
+    for (let number = first; number <= last; number++) lines.add(number);
+  }
+  const changes = [...lines].flatMap((number) => {
+    const line = state.doc.line(number);
+    if (!line.text.trim()) return [];
+    const [whole, quote, marker, gap, box] = taskLine.exec(line.text)!;
+    if (box !== undefined) {
+      const at = line.from + whole.indexOf("[") + 1;
+      return [{ from: at, to: at + 1, insert: box === " " ? "x" : " " }];
+    }
+    const at =
+      line.from + quote.length + (marker ? marker.length + gap.length : 0);
+    return [{ from: at, insert: marker ? "[ ] " : "- [ ] " }];
+  });
+  if (!changes.length) return false;
+  view.dispatch({ changes, scrollIntoView: true, userEvent: "input" });
+  return true;
+}
+
 /** True when the cursor is a single caret at the end of its line. */
 function caretAtLineEnd(view: EditorView) {
   const { selection } = view.state;
@@ -620,6 +790,7 @@ function formattingKeys(readOnly: boolean): KeyBinding[] {
     // `*` also works inside words, where CommonMark ignores `_`.
     binding("Mod-i", (view) => wrapSelection(view, "*")),
     binding("Mod-k", insertLink),
+    binding("Mod-Enter", toggleTaskAtCursor),
   ];
 }
 
@@ -662,6 +833,8 @@ export const MarkdownEditor = forwardRef<
     autoFocus = false,
     spellCheck = true,
     readOnly = false,
+    linkTargets = [],
+    onFollowLink,
   },
   ref,
 ) {
@@ -672,6 +845,8 @@ export const MarkdownEditor = forwardRef<
   const onChangeRef = useRef(onChange);
   const onBlurRef = useRef(onBlur);
   const onImageFileRef = useRef(onImageFile);
+  const linkTargetsRef = useRef(linkTargets);
+  const onFollowLinkRef = useRef(onFollowLink);
   const applyingControlledValueRef = useRef(false);
   const restoreFrameRef = useRef<number | null>(null);
   const [toolbarPosition, setToolbarPosition] = useState<{
@@ -682,6 +857,8 @@ export const MarkdownEditor = forwardRef<
   onChangeRef.current = onChange;
   onBlurRef.current = onBlur;
   onImageFileRef.current = onImageFile;
+  linkTargetsRef.current = linkTargets;
+  onFollowLinkRef.current = onFollowLink;
 
   useImperativeHandle(
     ref,
@@ -701,7 +878,10 @@ export const MarkdownEditor = forwardRef<
     const toolbarWidth = 200;
     const updateToolbarPosition = (view: EditorView) => {
       const selection = view.state.selection.main;
-      if (selection.empty || readOnly) return setToolbarPosition(null);
+      // Search and other panels also move the selection; the toolbar is
+      // only for text the writer selected in the editor itself.
+      if (selection.empty || readOnly || !view.hasFocus)
+        return setToolbarPosition(null);
       const coordinates = view.coordsAtPos(selection.to);
       const bounds = host.getBoundingClientRect();
       const top = coordinates ? coordinates.top - bounds.top : -1;
@@ -725,7 +905,14 @@ export const MarkdownEditor = forwardRef<
       markdown(),
       syntaxHighlighting(markdownHighlightStyle),
       codeBlockShading,
-      autocompletion({ override: [codeFenceLanguageCompletions] }),
+      autocompletion({
+        override: [
+          codeFenceLanguageCompletions,
+          wikiLinkCompletions(() => linkTargetsRef.current),
+        ],
+      }),
+      search({ top: true }),
+      EditorState.phrases.of(searchPhrases),
       history({ minDepth: 500, newGroupDelay: 300 }),
       closeBrackets(),
       EditorView.lineWrapping,
@@ -746,6 +933,25 @@ export const MarkdownEditor = forwardRef<
           updateToolbarPosition(update.view);
       }),
       EditorView.domEventHandlers({
+        mousedown: (event, view) => {
+          const follow = onFollowLinkRef.current;
+          if (!follow || !(isMac ? event.metaKey : event.ctrlKey)) return false;
+          const position = view.posAtCoords({
+            x: event.clientX,
+            y: event.clientY,
+          });
+          if (position === null) return false;
+          const line = view.state.doc.lineAt(position);
+          const link = linkAt(line.text, position - line.from);
+          if (!link) return false;
+          event.preventDefault();
+          follow(link);
+          return true;
+        },
+        focus: (_event, view) => {
+          updateToolbarPosition(view);
+          return false;
+        },
         blur: () => {
           setToolbarPosition(null);
           onBlurRef.current?.();
@@ -804,6 +1010,7 @@ export const MarkdownEditor = forwardRef<
         ...completionKeymap,
         ...closeBracketsKeymap,
         ...historyKeymap,
+        ...searchKeymap,
         ...defaultKeymap,
       ]),
     ];

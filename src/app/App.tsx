@@ -17,8 +17,14 @@ import { EditorView } from "@codemirror/view";
 import {
   insertImage,
   MarkdownEditor,
+  type EditorLink,
   type MarkdownEditorHandle,
 } from "../MarkdownEditor";
+import {
+  noteForMarkdownLink,
+  noteForWikiTitle,
+  openExternalLink,
+} from "../features/preview/links";
 import type { ImportedImageResponse, NoteDocument, NoteSummary } from "./types";
 import {
   NoteListItem,
@@ -104,6 +110,8 @@ import {
 import {
   dailyTemplate,
   defaultShortcuts,
+  type EditorFont,
+  loadEditorFont,
   loadFavorites,
   loadPaneWidth,
   loadShortcuts,
@@ -272,6 +280,7 @@ export function App() {
     loadPalette(localStorage.getItem(paletteStorageKey)),
   );
   const [shortcuts, setShortcuts] = useState<Shortcuts>(loadShortcuts);
+  const [editorFont, setEditorFont] = useState<EditorFont>(loadEditorFont);
   const [quickImportDefaultPath, setQuickImportDefaultPath] = useState(
     () => localStorage.getItem(storageKeys.quickImportDefault) || "",
   );
@@ -498,6 +507,10 @@ export function App() {
     applyAppearance(appearance);
     storeAppearance(appearance);
   }, [palette, theme]);
+  useEffect(() => {
+    document.documentElement.dataset.editorFont = editorFont;
+  }, [editorFont]);
+  usePersistedPreference(storageKeys.editorFont, editorFont);
   usePersistedPreference(storageKeys.favorites, favorites);
   usePersistedPreference(storageKeys.shortcuts, shortcuts);
   usePersistedPreference(
@@ -1452,6 +1465,30 @@ export function App() {
       native.importNoteImageFromPath(notePath, selected, libraryPath),
     );
   }, [importImage]);
+  const followEditorLink = useCallback(
+    (link: EditorLink) => {
+      const current = noteRef.current;
+      if (!current) return;
+      if (link.kind === "wiki") {
+        const target = noteForWikiTitle(link.title, notes);
+        if (target) openLinkedNote(target);
+        else setStatus(`No note is titled “${link.title}”`);
+        return;
+      }
+      const target = noteForMarkdownLink(link.href, current.path, notes);
+      if (target) openLinkedNote(target);
+      else if (!link.href.startsWith("#"))
+        openExternalLink(link.href, setStatus);
+    },
+    [notes, openLinkedNote],
+  );
+  const linkTargets = useMemo(
+    () =>
+      [...new Set(notes.map((item) => item.title))].sort((left, right) =>
+        left.localeCompare(right),
+      ),
+    [notes],
+  );
   const noteEditor = note ? (
     <MarkdownEditor
       key={`${noteSession.editorSession}-${isManagedNote ? "managed" : "external"}`}
@@ -1477,6 +1514,8 @@ export function App() {
       onImageFile={isManagedNote ? importImageFile : undefined}
       autoFocus
       readOnly={!isManagedNote}
+      linkTargets={linkTargets}
+      onFollowLink={followEditorLink}
       className="markdown-editor"
     />
   ) : null;
@@ -2137,6 +2176,8 @@ export function App() {
         <SettingsDialog
           theme={theme}
           onTheme={setTheme}
+          editorFont={editorFont}
+          onEditorFont={setEditorFont}
           palette={palette}
           onPalette={setPalette}
           shortcuts={shortcuts}

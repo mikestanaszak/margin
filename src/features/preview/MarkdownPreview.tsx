@@ -7,11 +7,12 @@ import remarkGfm from "remark-gfm";
 import { all as highlightLanguages } from "lowlight";
 import MermaidDiagram from "../../MermaidDiagram";
 import type { NoteSummary } from "../../app/types";
+import { parseMarkdownTables, safeDecodeURIComponent } from "../../note-utils";
 import {
-  parseMarkdownTables,
-  safeDecodeURIComponent,
-} from "../../note-utils";
-import { native } from "../../services/native";
+  noteForMarkdownLink,
+  noteForWikiTitle,
+  openExternalLink,
+} from "./links";
 
 type MarkdownNode = {
   type?: string;
@@ -33,9 +34,9 @@ const headingComponents = Object.fromEntries(
     ({
       node,
       ...props
-    }: React.ComponentPropsWithoutRef<HeadingTag> & { node?: MarkdownNode }) => (
-      <Tag {...props} data-source-line={node?.position?.start?.line} />
-    ),
+    }: React.ComponentPropsWithoutRef<HeadingTag> & {
+      node?: MarkdownNode;
+    }) => <Tag {...props} data-source-line={node?.position?.start?.line} />,
   ]),
 );
 
@@ -68,7 +69,10 @@ export function MarkdownPreview({
     // Tauri's asset protocol rejects paths containing parent components.
     // Resolve them before conversion, preserving drive and UNC roots; native
     // asset scope checks still decide whether the final file may be read.
-    const root = parent.match(/^(?:\\\\\?\\UNC\\[^\\]+\\[^\\]+|\\\\\?\\[a-z]:|\\\\[^\\]+\\[^\\]+|[a-z]:|\/)/i)?.[0] ?? "";
+    const root =
+      parent.match(
+        /^(?:\\\\\?\\UNC\\[^\\]+\\[^\\]+|\\\\\?\\[a-z]:|\\\\[^\\]+\\[^\\]+|[a-z]:|\/)/i,
+      )?.[0] ?? "";
     const parts = parent.slice(root.length).split(/[\\/]/).filter(Boolean);
     for (const part of decoded.split(/[\\/]/)) {
       if (!part || part === ".") continue;
@@ -77,58 +81,14 @@ export function MarkdownPreview({
         parts.pop();
       } else parts.push(part);
     }
-    return convertFileSrc(`${root}${root.endsWith(separator) ? "" : separator}${parts.join(separator)}`);
-  };
-  const markdownTables = useMemo(() => parseMarkdownTables(markdown), [markdown]);
-  const normalizePath = (path: string) => {
-    const parts: string[] = [];
-    for (const part of path.replace(/\\/g, "/").split("/")) {
-      if (!part || part === ".") continue;
-      if (part === "..") {
-        parts.pop();
-        continue;
-      }
-      parts.push(part);
-    }
-    return parts.join("/").toLowerCase();
-  };
-  const markdownLinkTarget = (href?: string) => {
-    const relativePath = href?.split(/[?#]/, 1)[0];
-    if (
-      !relativePath ||
-      !/\.md$/i.test(relativePath) ||
-      /^[a-z][a-z\d+.-]*:/i.test(relativePath)
-    )
-      return undefined;
-    const targetPath = /^[\\/]|^[a-z]:[\\/]/i.test(relativePath)
-      ? relativePath
-      : `${directory}/${safeDecodeURIComponent(relativePath)}`;
-    return notes.find(
-      (item) => normalizePath(item.path) === normalizePath(targetPath),
+    return convertFileSrc(
+      `${root}${root.endsWith(separator) ? "" : separator}${parts.join(separator)}`,
     );
   };
-  const externalUrl = (href?: string) => {
-    const value = href?.trim();
-    if (!value) return undefined;
-    if (/^(https?:|mailto:|tel:)/i.test(value)) return value;
-    return /^(?:www\.)?[a-z\d](?:[a-z\d-]*[a-z\d])?(?:\.[a-z\d-]+)+(?:[/?#].*)?$/i.test(
-      value,
-    )
-      ? `https://${value}`
-      : undefined;
-  };
-  const openExternal = (href?: string) => {
-    const url = externalUrl(href);
-    if (!url) {
-      onOpenExternalError(
-        "Could not open link: use a full web address such as https://example.com",
-      );
-      return;
-    }
-    void native.openExternalUrl(url).catch((error) =>
-      onOpenExternalError(String(error)),
-    );
-  };
+  const markdownTables = useMemo(
+    () => parseMarkdownTables(markdown),
+    [markdown],
+  );
   const togglePreviewTask = (event: React.MouseEvent<HTMLElement>) => {
     const input =
       event.target instanceof HTMLInputElement &&
@@ -189,9 +149,7 @@ export function MarkdownPreview({
           a: ({ href, children }) => {
             if (href?.startsWith("note:")) {
               const title = safeDecodeURIComponent(href.slice(5));
-              const target = notes.find(
-                (item) => item.title.toLowerCase() === title.toLowerCase(),
-              );
+              const target = noteForWikiTitle(title, notes);
               return (
                 <a
                   href={href}
@@ -204,7 +162,7 @@ export function MarkdownPreview({
                 </a>
               );
             }
-            const target = markdownLinkTarget(href);
+            const target = noteForMarkdownLink(href, notePath, notes);
             if (target)
               return (
                 <a
@@ -222,7 +180,7 @@ export function MarkdownPreview({
                 href={href}
                 onClick={(event) => {
                   event.preventDefault();
-                  openExternal(href);
+                  openExternalLink(href, onOpenExternalError);
                 }}
               >
                 {children}
@@ -315,7 +273,9 @@ function PreviewCodeBlock({
 
   return (
     <div className="preview-code-block">
-      <pre ref={preRef} {...props}>{children}</pre>
+      <pre ref={preRef} {...props}>
+        {children}
+      </pre>
       <button
         type="button"
         className="preview-code-copy"
@@ -366,7 +326,11 @@ export function wikiLinks() {
   };
   return (tree: MarkdownNode) => {
     const visit = (node: MarkdownNode) => {
-      if (!node.children || node.type === "link" || node.type === "linkReference")
+      if (
+        !node.children ||
+        node.type === "link" ||
+        node.type === "linkReference"
+      )
         return;
       node.children = node.children.flatMap((child) =>
         child.type === "text" && child.value?.includes("[[")

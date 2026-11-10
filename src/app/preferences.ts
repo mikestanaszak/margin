@@ -15,7 +15,16 @@ export const storageKeys = {
   notePaneWidth: "markdown-notes.note-pane-width",
   outlinePaneWidth: "markdown-notes.outline-pane-width",
   splitRatio: "markdown-notes.split-ratio",
+  editorFont: "margin.editor-font",
 } as const;
+
+export type EditorFont = "mono" | "sans";
+
+export function loadEditorFont(): EditorFont {
+  return localStorage.getItem(storageKeys.editorFont) === "sans"
+    ? "sans"
+    : "mono";
+}
 
 export const defaultShortcuts: Shortcuts = {
   newNote: isMac ? "meta+n" : "ctrl+n",

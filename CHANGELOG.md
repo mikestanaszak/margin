@@ -4,6 +4,14 @@ All notable user-facing changes to Margin are documented here.
 
 ## Unreleased
 
+### Added
+
+- Find and replace in the editor with Cmd/Ctrl+F, including match case, regex, and whole-word options.
+- Typing `[[` suggests note titles and completes the closing brackets.
+- Cmd/Ctrl+Enter toggles the task checkbox on the current lines, turning list items and plain lines into tasks.
+- Cmd/Ctrl+click follows a wiki link, Markdown link, or web address from the editor.
+- Settings offers a sans-serif editor font; code stays monospace.
+
 ### Improved
 
 - New notes open in Edit view with the title selected, ready to type.
@@ -24,7 +32,7 @@ All notable user-facing changes to Margin are documented here.
 - Edits made just before switching notes (for example a task checked in Preview, then a link, backlink, or Quick Open result) are saved instead of waiting until the note is reopened.
 - Cmd/Ctrl+I now italicizes the selection. Italic uses `*`, which also works inside words, and toggling italic leaves bold text intact.
 - Inserting a table no longer replaces selected text, and inserting one from Split view stays in Split view. The selection toolbar no longer offers a table button that replaced the selection.
-- The selection toolbar hides when the selection scrolls out of view or the editor loses focus.
+- The selection toolbar hides when the selection scrolls out of view or the editor loses focus, and no longer covers search matches.
 - Choosing an outline heading in Edit view moves the editor to that heading, and the outline matches setext and quoted headings.
 - With the outline open, jumping to a heading in Edit view no longer shifts the whole window upward.
 - Escape closes the topmost dialog only (for example Templates, leaving Settings open), and app shortcuts no longer act behind open dialogs.

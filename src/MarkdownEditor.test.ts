@@ -3,6 +3,7 @@ import { EditorView } from "@codemirror/view";
 import { history, undo, undoDepth } from "@codemirror/commands";
 import {
   CompletionContext,
+  type Completion,
   completionStatus,
   startCompletion,
 } from "@codemirror/autocomplete";
@@ -17,10 +18,13 @@ import {
   exitEmptyListItem,
   insertLink,
   insertTable,
+  linkAt,
   MarkdownEditor,
   type MarkdownEditorHandle,
   codeFenceLanguageCompletions,
   selectionFromSaved,
+  toggleTaskAtCursor,
+  wikiLinkCompletions,
   wrapSelection,
 } from "./MarkdownEditor";
 import { isMac } from "./platform";
@@ -199,6 +203,45 @@ describe("Markdown editor formatting", () => {
     expect(exitEmptyListItem(editor("- ", 2))).toBe(false);
     expect(exitEmptyListItem(editor("- one\n  - ", 10))).toBe(false);
     expect(exitEmptyListItem(editor("- one\n- two", 11))).toBe(false);
+  });
+
+  it("finds the link under the pointer", () => {
+    const line = "See [[Plan|the plan]], [docs](<Work/Read me.md>), ![img](a.png) or www.example.com.";
+    expect(linkAt(line, 8)).toEqual({ kind: "wiki", title: "Plan" });
+    expect(linkAt(line, 26)).toEqual({ kind: "href", href: "Work/Read me.md" });
+    expect(linkAt(line, 55)).toBeNull();
+    expect(linkAt(line, 70)).toEqual({ kind: "href", href: "www.example.com" });
+    expect(linkAt(line, 1)).toBeNull();
+  });
+
+  it("toggles tasks and turns list items and plain lines into tasks", () => {
+    const view = editor("- [ ] one\n> 2. two\nthree\n\n  - [x] four", 0, 34);
+    toggleTaskAtCursor(view);
+    expect(view.state.doc.toString()).toBe(
+      "- [x] one\n> 2. [ ] two\n- [ ] three\n\n  - [ ] four",
+    );
+  });
+
+  it("completes wiki links with note titles and closes the brackets", async () => {
+    const source = wikiLinkCompletions(() => ["Project Alpha", "Reading"]);
+    const view = editor("See [[pro", 9);
+    const result = await source(
+      new CompletionContext(view.state, 9, false),
+    );
+    expect(result?.from).toBe(6);
+    const option = result!.options[0] as Completion & {
+      apply: (view: EditorView, completion: Completion, from: number, to: number) => void;
+    };
+    option.apply(view, option, 6, 9);
+    expect(view.state.doc.toString()).toBe("See [[Project Alpha]]");
+    expect(view.state.selection.main.head).toBe(21);
+
+    const closed = editor("[[Re]] after", 4);
+    const closedOption = (await source(new CompletionContext(closed.state, 4, false)))!
+      .options[1] as typeof option;
+    closedOption.apply(closed, closedOption, 2, 4);
+    expect(closed.state.doc.toString()).toBe("[[Reading]] after");
+    expect(source(new CompletionContext(editor("[x]", 2).state, 2, false))).toBeNull();
   });
 
   it("inserts a Markdown link with its cursor in the URL", () => {
@@ -436,6 +479,7 @@ describe("Markdown editor formatting", () => {
     });
 
     act(() => {
+      view?.focus();
       view?.dispatch({ selection: { anchor: 0, head: 6 } });
     });
 
