@@ -12,13 +12,13 @@ Margin is a calm, local-first desktop workspace for ordinary Markdown notes. Pic
 
 | Area | What it does |
 | --- | --- |
-| Write | Preview, Edit, and Split views; Markdown formatting tools; spell check in Edit; autosave; and a heading outline. |
+| Write | Preview, Edit, and Split views; Markdown formatting tools; find and replace; `[[` note suggestions; spell check in Edit; autosave; and a heading outline. |
 | Preview | GitHub-flavored Markdown, syntax-highlighted code, Mermaid diagrams, interactive tasks, image rendering, and editable tables. |
 | Organize | Real nested folders, read-only YAML front-matter tag labels, All notes, Favorites, Trash, ranked search, Quick Open, and per-folder note counts. |
 | Navigate | Relative Markdown links and `[[wiki links]]` open notes and share one **Linked from** backlink graph. |
 | Capture | Global Quick Capture with a dedicated lightweight window and in-app fallback, dated Daily notes, and reusable Markdown templates with `{{date}}` and `{{time}}`. |
 | Background | Closing the window keeps Quick Capture available; the tray can show Margin, open capture, or quit after pending saves finish. |
-| Customize | System, light, and dark appearance; Ink, Mint, Linen, and Paper palettes; configurable shortcuts; update checks; and a library picker. |
+| Customize | System, light, and dark appearance; Ink, Mint, Linen, and Paper palettes; a monospace or sans-serif editor font; configurable shortcuts; update checks; and a library picker. |
 
 ## Images stay beside their note
 
@@ -51,6 +51,8 @@ Notes can also be opened from their file manager. A Markdown file already in the
 ### Editing and preview
 
 - The top Edit bar inserts headings, emphasis, links, tables, and images. Select text for the smaller contextual formatting controls.
+- **Cmd/Ctrl+F** finds and replaces in the note. **Cmd/Ctrl+Enter** toggles the task checkbox on the current lines, and **Cmd/Ctrl+click** follows a link from the editor. Typing `[[` suggests note titles.
+- Lists continue on Enter; Enter on an empty item ends the list. Pressing Enter after an opening code fence adds its closing fence.
 - Type after an opening `` ``` `` fence to choose a code language. Press Enter to accept the highlighted language; Tab dismisses the list and indents the fence. The list includes Highlight.js languages and common aliases, but custom identifiers still work.
 - Preview code blocks have a Copy button. Tables open an editor for adding, removing, filling, and reordering rows and columns.
 - Checkboxes can be toggled from Preview and save back to Markdown. Mermaid diagrams render locally and retain a visible source fallback if a diagram is invalid.
@@ -115,9 +117,9 @@ The shortcut list is configurable in Settings.
 
 ## Privacy and safety
 
-Margin stores your writing as ordinary UTF-8 `.md` files with optional YAML front matter in the library you choose. Version 0.5.4 does not add a database, account, migration, or proprietary note format. Margin checks for signed updates and verifies manual downloads against the release checksum manifest before installation. For safety, Margin does not follow symlinks inside a library; select the real notes folder and keep linked files as normal external files.
+Margin stores your writing as ordinary UTF-8 `.md` files with optional YAML front matter in the library you choose. Version 0.6.0 does not add a database, account, migration, or proprietary note format. Margin checks for signed updates and verifies manual downloads against the release checksum manifest before installation. For safety, Margin does not follow symlinks inside a library; select the real notes folder and keep linked files as normal external files.
 
-AI integrations, Git history, importers, graph views, synchronization, unresolved-link note creation, tag editing, and tag filtering remain future work and are not part of 0.5.4.
+AI integrations, Git history, importers, graph views, synchronization, unresolved-link note creation, tag editing, and tag filtering remain future work and are not part of 0.6.0.
 
 ## Build from source
 

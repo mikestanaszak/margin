@@ -3,16 +3,16 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("toolchain configuration", () => {
-  it("keeps every packaged application version at 0.5.4", () => {
+  it("keeps every packaged application version at 0.6.0", () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8"));
     const tauri = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8"));
     const cargo = readFileSync("src-tauri/Cargo.toml", "utf8");
     const cargoVersion = /^version = "([^"]+)"$/m.exec(cargo)?.[1];
 
     expect([pkg.version, tauri.version, cargoVersion]).toEqual([
-      "0.5.4",
-      "0.5.4",
-      "0.5.4",
+      "0.6.0",
+      "0.6.0",
+      "0.6.0",
     ]);
   });
 
